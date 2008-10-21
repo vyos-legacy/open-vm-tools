@@ -29,7 +29,9 @@ SRCROOT = .
 VM_UNAME = $(shell uname -r)
 
 # Header directory for the running kernel
-HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
+#HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
+HEADER_DIR = $(KINCLUDE_DIR)
+
 
 BUILD_DIR = $(HEADER_DIR)/..
 
