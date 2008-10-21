@@ -96,7 +96,6 @@ VMGuestLibDumpData(VMGuestLibDataV2 *data) // IN
 }
 #endif
 
-
 /*
  *-----------------------------------------------------------------------------
  *
@@ -223,20 +222,20 @@ VMGuestLib_OpenHandle(VMGuestLibHandle *handle) // OUT
 {
    VMGuestLibDataV2 *data;
 
-#ifndef ALLOW_TOOLS_IN_FOREIGN_VM
-   if (!VmCheck_IsVirtualWorld()) {
-      Debug("VMGuestLib_OpenHandle: Not in a VM.\n");
-      return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
-   }
-#endif
-
+/* #ifndef ALLOW_TOOLS_IN_FOREIGN_VM
+*   if (!VmCheck_IsVirtualWorld()) {
+*      Debug("VMGuestLib_OpenHandle: Not in a VM.\n"); 
+*      return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
+*   }
+*#endif
+*/
    if (NULL == handle) {
       return VMGUESTLIB_ERROR_INVALID_ARG;
    }
 
    data = calloc(1, sizeof *data);
    if (!data) {
-      Debug("VMGuestLib_OpenHandle: Unable to allocate memory\n");
+      /* Debug("VMGuestLib_OpenHandle: Unable to allocate memory\n"); */
       return VMGUESTLIB_ERROR_MEMORY;
    }
 
@@ -313,23 +312,23 @@ VMGuestLibUpdateInfo(VMGuestLibDataV2 *data) // IN
 
    /* Actually send the request. */
    if (!RpcOut_sendOne(&reply, &replyLen, commandBuf)) {
-      Debug("Failed to retrieve info: %s\n", reply ? reply : "NULL");
+      /* Debug("Failed to retrieve info: %s\n", reply ? reply : "NULL"); */
       free(reply);
       return VMGUESTLIB_ERROR_NOT_ENABLED;
    }
 
    /* Sanity check the results. */
    if (replyLen < sizeof data->version) {
-      Debug("Unable to retrieve version\n");
+      /* Debug("Unable to retrieve version\n"); */
       return VMGUESTLIB_ERROR_OTHER;
    }
    newData = (VMGuestLibDataV2 *)reply;
    if (newData->version != VMGUESTLIB_DATA_VERSION) {
-      Debug("Incorrect version returned\n");
+      /* Debug("Incorrect version returned\n"); */
       return VMGUESTLIB_ERROR_OTHER;
    }
    if (replyLen != sizeof *data) {
-      Debug("Incorrect data size returned\n");
+      /* Debug("Incorrect data size returned\n"); */
       return VMGUESTLIB_ERROR_OTHER;
    }
 
@@ -376,7 +375,7 @@ VMGuestLib_UpdateInfo(VMGuestLibHandle handle) // IN
 
    error = VMGuestLibUpdateInfo((VMGuestLibDataV2 *)handle);
    if (error != VMGUESTLIB_ERROR_SUCCESS) {
-      Debug("VMGuestLibUpdateInfo failed: %d\n", error);
+      /* Debug("VMGuestLibUpdateInfo failed: %d\n", error); */
       return error;
    }
 
