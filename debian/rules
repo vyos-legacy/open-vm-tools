@@ -17,7 +17,7 @@ DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 PACKAGE=vyatta-cfg
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
 KVER=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
-KDIR=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
+KDIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]* 2>/dev/null && pwd")
 
 CFLAGS = -Wall -g
 
@@ -28,7 +28,7 @@ configure	+= --prefix=/opt/vyatta
 configure	+= --mandir=\$${prefix}/share/man
 configure	+= --infodir=\$${prefix}/share/info
 configure	+= --with-kernel-release=$KVER
-configure	+= --with-linuxdir=$(DESTDIR)/lib/modules/$KVER
+configure	+= --with-linuxdir=$KVER
 configure	+= --without-x
 configure	+= --without-dnet
 configure	+= --without-icu
