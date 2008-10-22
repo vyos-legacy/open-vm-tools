@@ -16,7 +16,7 @@ DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
 DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 PACKAGE=open-vm-tools
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
-KVER=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
+export KVER=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
 KDIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]* 2>/dev/null && pwd")
 export KINCLUDE_DIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]*/include/ 2>/dev/null && pwd")
 
