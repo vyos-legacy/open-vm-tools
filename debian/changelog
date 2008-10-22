@@ -1,5 +1,0 @@
-open-vm-tools (0.1vyatta) unstable; urgency=low
-
-  * Initial release.  Import open-vm-tools 2008-10.10-123053.
-
- -- Robert Bays <robert@vyatta.com>  Mon, 20 Oct 2008 19:20:57 -0700
