@@ -31,7 +31,7 @@ configure	+= --prefix=/opt/vyatta
 configure	+= --mandir=\$${prefix}/share/man
 configure	+= --infodir=\$${prefix}/share/info
 configure	+= --with-kernel-release=$(KVER)
-#configure	+= --with-linuxdir=$(KDIR)
+configure	+= --with-linuxdir=$(KDIR)
 configure	+= --without-x
 configure	+= --without-dnet
 configure	+= --without-icu
