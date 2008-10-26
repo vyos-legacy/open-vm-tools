@@ -1,4 +1,4 @@
-open-vm-tools (2008.10.13vyatta-1) unstable; urgency=low
+open-vm-tools (2008.10.13vyatta-1) UNRELEASED; urgency=low
 
   * Initial release.  Import open-vm-tools 2008-10.10-123053.
 
