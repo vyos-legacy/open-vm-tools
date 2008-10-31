@@ -17,19 +17,14 @@ DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 PACKAGE=open-vm-tools
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
 export KVER=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
-KDIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]* 2>/dev/null && pwd")
+export KDIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]* 2>/dev/null && pwd")
 export KINCLUDE_DIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]*/include/ 2>/dev/null && pwd")
-
-export
 
 CFLAGS = -Wall -g
 
 configure	 = ./configure
 configure	+= --host=$(DEB_HOST_GNU_TYPE)
 configure	+= --build=$(DEB_BUILD_GNU_TYPE)
-configure	+= --prefix=/opt/vyatta
-configure	+= --mandir=\$${prefix}/share/man
-configure	+= --infodir=\$${prefix}/share/info
 configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
 configure	+= --without-x
@@ -78,7 +73,8 @@ install: build
 
 	$(MAKE) DESTDIR=$(PKGDIR) install
 
-	install --mode=0755 open-vm-tools $(PKGDIR)/etc/init.d/
+	install -D --mode=0755 open-vm-tools.init $(PKGDIR)/etc/init.d/open-vm-tools
+	mkdir -p $(PKGDIR)/etc/rc2.d/ $(PKGDIR)/etc/rc3.d/
 	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc2.d/
 	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc3.d/
 	install -D --mode=0644 debian/lintian $(PKGDIR)/usr/share/lintian/overrides/$(PACKAGE)
