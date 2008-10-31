@@ -67,6 +67,7 @@ clean: clean-patched
 clean-patched:
 	dh_testdir
 	dh_testroot
+	make clean
 	dh_clean 
 
 install: build
@@ -77,6 +78,9 @@ install: build
 
 	$(MAKE) DESTDIR=$(PKGDIR) install
 
+	install --mode=0755 open-vm-tools $(PKGDIR)/etc/init.d/
+	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc2.d/
+	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc3.d/
 	install -D --mode=0644 debian/lintian $(PKGDIR)/usr/share/lintian/overrides/$(PACKAGE)
 	install -D --mode=0644 debian/linda $(PKGDIR)/usr/share/linda/overrides/$(PACKAGE)
 
