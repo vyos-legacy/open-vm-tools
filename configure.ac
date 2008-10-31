@@ -870,7 +870,7 @@ MODULES_DIR=""
 buildHgfsmounter=no
 
 if test "$os" = "linux"; then
-   MODULES_DIR="$LINUXDIR/kernel/"
+   MODULES_DIR="$(DESTDIR)/lib/modules/$(KVER)/kernel/"
 
    CPPFLAGS="$CPPFLAGS -D_FILE_OFFSET_BITS=64"
    CPPFLAGS="$CPPFLAGS -D_LARGEFILE64_SOURCE"
