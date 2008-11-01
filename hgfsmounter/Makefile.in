@@ -536,7 +536,7 @@ uninstall-am: uninstall-sbinPROGRAMS
 @FREEBSD_TRUE@		$(DESTDIR)$(sbindir)/mount_vmhgfs
 @FREEBSD_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@	chmod u+s $(DESTDIR)$(sbindir)/mount_vmhgfs
 @FREEBSD_TRUE@	-$(MKDIR_P) $(DESTDIR)/sbin
-@FREEBSD_TRUE@	-$(LN_S) $(DESTDIR)$(sbindir)/mount_vmhgfs \
+@FREEBSD_TRUE@	-$(LN_S) $(sbindir)/mount_vmhgfs \
 @FREEBSD_TRUE@		$(DESTDIR)/sbin/mount_vmhgfs &> /dev/null
 @FREEBSD_TRUE@uninstall-hook:
 @FREEBSD_TRUE@	-$(RM) -f $(DESTDIR)$(sbindir)/mount_vmhgfs &> /dev/null
