@@ -46,7 +46,7 @@ if WITH_ROOT_PRIVILEGES
 	chmod u+s $(DESTDIR)$(sbindir)/mount.vmhgfs
 endif WITH_ROOT_PRIVILEGES
 	-$(MKDIR_P) $(DESTDIR)/sbin
-	-$(LN_S) $(DESTDIR)$(sbindir)/mount.vmhgfs \
+	-$(LN_S) $(sbindir)/mount.vmhgfs \
 		$(DESTDIR)/sbin/mount.vmhgfs &> /dev/null
 uninstall-hook:
 	-$(RM) -f $(DESTDIR)/sbin/mount.vmhgfs &> /dev/null
