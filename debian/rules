@@ -40,8 +40,8 @@ else
 endif
 
 configure: configure.ac Makefile.am
-	chmod +x debian/autogen.sh
-	debian/autogen.sh
+	#chmod +x debian/autogen.sh
+	#debian/autogen.sh
 
 config.status: configure
 	dh_testdir
@@ -62,7 +62,7 @@ clean: clean-patched
 clean-patched:
 	dh_testdir
 	dh_testroot
-	make clean
+	#make clean
 	dh_clean 
 
 install: build
