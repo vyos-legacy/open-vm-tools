@@ -376,15 +376,7 @@ modules: $(MODULES)
 $(MODULES):
 	$(MAKE) VM_UNAME=$(KERNEL_RELEASE) -C "$(MODULES_OS)/$@"
 
-@LINUX_TRUE@export vmblockdir := $(MODULES_DIR)/fs/vmblock
-@LINUX_TRUE@export vmcidir := $(MODULES_DIR)/drivers/misc
-@LINUX_TRUE@export vmhgfsdir := $(MODULES_DIR)/fs/vmhgfs
-@LINUX_TRUE@export vmmemctldir := $(MODULES_DIR)/drivers/misc
-@LINUX_TRUE@export vmsyncdir := $(MODULES_DIR)/drivers/misc
-@LINUX_TRUE@export vmxnetdir := $(MODULES_DIR)/drivers/net
-@LINUX_TRUE@export vmxnet3dir := $(MODULES_DIR)/drivers/net
-@LINUX_TRUE@export vsockdir := $(MODULES_DIR)/net/vsock
-@LINUX_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@export DEPMOD := depmod -a
+@LINUX_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@export DEPMOD := true
 
 @FREEBSD_TRUE@export vmblockdir := $(MODULES_DIR)
 @FREEBSD_TRUE@export vmhgfsdir := $(MODULES_DIR)
