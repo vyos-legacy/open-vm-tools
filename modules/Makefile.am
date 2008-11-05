@@ -16,7 +16,7 @@ export vmxnetdir := $(MODULES_DIR)/drivers/net
 export vmxnet3dir := $(MODULES_DIR)/drivers/net
 export vsockdir := $(MODULES_DIR)/net/vsock
 if WITH_ROOT_PRIVILEGES
-export DEPMOD := depmod -a -b $(MODULES_DIR)
+export DEPMOD := true
 endif WITH_ROOT_PRIVILEGES
 endif LINUX
 
