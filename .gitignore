@@ -19,7 +19,8 @@ added
 *.ko
 build-stamp
 debian/files
-debian/open-vm-tools*
+debian/open-vm-tools
+debian/open-vm-tools.debhelper.log
 checkvm/vmware-checkvm
 guestd/vmware-guestd
 hgfsclient/vmware-hgfsclient
