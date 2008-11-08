@@ -29,12 +29,12 @@ clean-local:
 
 install-exec-hook:
 	for MOD in $(MODULES); do \
-		$(INSTALL) -d $(DESTDIR)`eval echo '$$'$${MOD}dir`; \
-		$(INSTALL) -m644 $(MODULES_OS)/$$MOD/$$MOD.ko $(DESTDIR)`eval echo '$$'$${MOD}dir`; \
+		$(INSTALL) -d $(DESTDIR)/$(MODULES_DIR)`eval echo '$$'$${MOD}dir`; \
+		$(INSTALL) -m644 $(MODULES_OS)/$$MOD/$$MOD.ko $(DESTDIR)/$(MODULES_DIR)`eval echo '$$'$${MOD}dir`; \
 	done
 	eval "$$DEPMOD"
 uninstall-hook:
 	for MOD in $(MODULES); do \
-		$(RM) -f $(DESTDIR)`eval echo '$$'$${MOD}dir`/$$MOD.ko &> /dev/null; \
+		$(RM) -f $(DESTDIR)/$(MODULES_DIR)`eval echo '$$'$${MOD}dir`/$$MOD.ko &> /dev/null; \
 	done
 	eval "$$DEPMOD"
