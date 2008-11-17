@@ -75,8 +75,8 @@ install: build
 
 	install -D --mode=0755 open-vm-tools.init $(PKGDIR)/etc/init.d/open-vm-tools
 	mkdir -p $(PKGDIR)/etc/rc2.d/ $(PKGDIR)/etc/rc3.d/
-	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc2.d/
-	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc3.d/
+	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc2.d/S05open-vm-tools
+	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc3.d/S05open-vm-tools
 	install -D --mode=0644 debian/lintian $(PKGDIR)/usr/share/lintian/overrides/$(PACKAGE)
 	install -D --mode=0644 debian/linda $(PKGDIR)/usr/share/linda/overrides/$(PACKAGE)
 
