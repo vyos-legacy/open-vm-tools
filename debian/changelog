@@ -1,5 +1,57 @@
-open-vm-tools (2008.10.13vyatta-1) UNRELEASED; urgency=low
+open-vm-tools (2008.10.13vyatta-1) unstable; urgency=low
 
+	  3.2.0
+  [ Robert Bays ]
   * Initial release.  Import open-vm-tools 2008-10.10-123053.
+  * move vmwaretools startup script
 
- -- Robert Bays <robert@vyatta.com>  Mon, 20 Oct 2008 19:20:57 -0700
+  [ rbalocca ]
+  * Add postinst to do depmod: needed for "full-upgrade"
+
+  [ Robert Bays ]
+  * change the install directory for kernel modules
+
+  [ Rick Balocca ]
+  * Don't do depmod as we are cross compiling
+
+  [ Robert Bays ]
+  * remove clean target from debian rules to prevent removal of
+    autoconfed files
+  * update hgfs mount link
+  * fix one more link dir
+  * fix ln problems
+  * add init script
+  * updates to debian rules
+  * add makefile.normal so make clean will work
+  * update configure.ac
+  * migrate modules dir to the configure.ac to prep for autoconf
+  * update gitignore
+
+  [ Stephen Hemminger ]
+  * Revert "Remove built files"
+  * Run depmod on the build-iso not system
+  * Remove built files
+  * Revert "Remove derived files from git repository"
+  * Remove derived files from git repository
+
+  [ Rick Balocca ]
+  * Conform to git-dch "rules"
+
+  [ Robert Bays ]
+  * fix version number
+  * set correct modules dir
+  * fix kernel module install dir
+  * more debian rules cleanup
+  * more debian dir cleanup
+  * update kernel mod Makefiles to point to correct kernel include dir
+  * hack out the debug routine for now
+  * fix compilation to export the kernel include dir
+  * Update configure rules
+  * Update configure rules
+  * update gitignore
+  * add debian package control directory
+  * add .gitignore
+
+  [ Mark O'Brien ]
+
+ -- Mark O'Brien <mobrien@firebolt.vyatta.com>  Tue, 25 Nov 2008 19:08:24 -0800
