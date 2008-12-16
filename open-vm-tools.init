@@ -49,7 +49,6 @@ start()
 	      
 	  rm -f /var/run/vmware-guestd.pid
 	  $vmwareguestd --background /var/run/vmware-guestd.pid 
-	  echo $! > /var/run/vmware-guestd.pid
 	fi
 }
 
