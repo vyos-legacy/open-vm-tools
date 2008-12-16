@@ -21,7 +21,7 @@
 # 
 # **** End License ****
 
-vmwareguestd="/opt/vyatta/sbin/vmware-guestd"
+vmwareguestd="/usr/local/sbin/vmware-guestd"
 
 ACTION=$1
 
@@ -48,7 +48,7 @@ start()
 	  fi
 	      
 	  rm -f /var/run/vmware-guestd.pid
-	  $vmwareguestd > /dev/null &
+	  $vmwareguestd --background /var/run/vmware-guestd.pid 
 	  echo $! > /var/run/vmware-guestd.pid
 	fi
 }
