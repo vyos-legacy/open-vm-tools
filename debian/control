@@ -5,7 +5,9 @@ Maintainer: Vyatta Package Maintainers <maintainers@vyatta.com>
 Build-Depends: debhelper (>= 5), autotools-dev
 Standards-Version: 3.7.2
 
-Package: open-vm-tools
+Package: open-vm-tools-2.6.27-1-486-vyatta
 Architecture: any
+Depends: linux-image-2.6.27-1-486-vyatta
 Description: Vyatta verion of the open-vm tools
- This package provides the accclerated drivers vyatta on VmWare.
+ This package provides the accclerated drivers vyatta on VmWare for kernel
+ linux-image-2.6.27-1-486-vyatta.

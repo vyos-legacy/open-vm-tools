@@ -9,16 +9,55 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
+PWD := $(shell pwd)
 
 # These are used for cross-compiling and for saving the configure script
 # from having to guess our platform (since we know it already)
 DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
 DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
-PACKAGE=open-vm-tools
+
+# XXX hard-code subarch/flavor for now (same as previous behavior).
+# current build scripts here don't allow multiple builds like linux-image or
+# linux-modules-extra. instead of implementing it on our own, we probably
+# want to hook into the debian linux-modules-extra build scheme to avoid
+# duplication of work (both internally among packages containing kernel
+# modules and externally with debian).
+DEB_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
+DEB_KSUBARCH=none
+DEB_KFLAVOR=486-vyatta
+kbdir=debian/build/build-$(DEB_ARCH)-$(DEB_KSUBARCH)-$(DEB_KFLAVOR)
+
+# test if we are doing a dev build, i.e., linux is in pkgs/
+dev_kdir=$(PWD)/../linux-image/$(kbdir)
+dev_build=$(shell test -d $(dev_kdir) && echo -n true)
+
+# XXX simulate Build-Depends requirement.
+# i.e., in the future, the build should Build-Depends on the correct version
+# of the necessary kernel headers/scripts/etc. packages, in which case we
+# can assume the directory will be found at a particular location. for now,
+# the build host will have to be set up properly to simulate the installation
+# of these packages.
+host_kdir=/usr/src/linux-image/$(kbdir)
+host_build=$(shell test -d $(host_kdir) && echo -n true)
+
+ifeq ($(dev_build),true)
+export KDIR=$(shell sh -c "cd $(dev_kdir) 2>/dev/null && pwd")
+else
+ifeq ($(host_build),true)
+export KDIR=$(host_kdir)
+endif
+endif
+export KINCLUDE_DIR=$(KDIR)/include/
+
+kmajor=$(shell sed 's/^\([^-]\+\)-.*$$/\1/' $(KDIR)/version.Debian)
+klocal=$(shell cat $(KDIR)/localversion)
+export KVER=$(kmajor)$(klocal)
+
+PACKAGE=open-vm-tools-$(KVER)
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
-export KVER=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
-export KDIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]* 2>/dev/null && pwd")
-export KINCLUDE_DIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]*/include/ 2>/dev/null && pwd")
+#export KVER=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
+#export KDIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]* 2>/dev/null && pwd")
+#export KINCLUDE_DIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]*/include/ 2>/dev/null && pwd")
 
 CFLAGS = -Wall -g
 

@@ -19,8 +19,8 @@ added
 *.ko
 build-stamp
 debian/files
-debian/open-vm-tools
-debian/open-vm-tools.debhelper.log
+debian/open-vm-tools-2.6.27-1-486-vyatta.debhelper.log
+debian/open-vm-tools-2.6.27-1-486-vyatta
 checkvm/vmware-checkvm
 guestd/vmware-guestd
 hgfsclient/vmware-hgfsclient
