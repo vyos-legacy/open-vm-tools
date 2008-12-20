@@ -47,15 +47,18 @@ ifeq ($(host_build),true)
 export KDIR=$(host_kdir)
 endif
 endif
+
 ifndef KDIR
+ifneq ($(MAKECMDGOALS),clean)
 $(error did not find kernel build directory)
 endif
-export KINCLUDE_DIR=$(KDIR)/include/
-
+else
 kmajor=$(shell sed 's/^\([^-]\+\)-.*$$/\1/' $(KDIR)/version.Debian)
 klocal=$(shell cat $(KDIR)/localversion)
 export KVER=$(kmajor)$(klocal)
+endif
 
+export KINCLUDE_DIR=$(KDIR)/include/
 PACKAGE=open-vm-tools-$(KVER)
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
 
