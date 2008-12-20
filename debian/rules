@@ -47,6 +47,9 @@ ifeq ($(host_build),true)
 export KDIR=$(host_kdir)
 endif
 endif
+ifndef KDIR
+$(error did not find kernel build directory)
+endif
 export KINCLUDE_DIR=$(KDIR)/include/
 
 kmajor=$(shell sed 's/^\([^-]\+\)-.*$$/\1/' $(KDIR)/version.Debian)
@@ -55,9 +58,6 @@ export KVER=$(kmajor)$(klocal)
 
 PACKAGE=open-vm-tools-$(KVER)
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
-#export KVER=$(shell sh -c "cd ../linux-image/debian/linux-image-*-vyatta 2>/dev/null && pwd | sed s/.*-2.6./2.6./")
-#export KDIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]* 2>/dev/null && pwd")
-#export KINCLUDE_DIR=$(shell sh -c "cd ../linux-image/debian/build/build-[i386,amd64]*/include/ 2>/dev/null && pwd")
 
 CFLAGS = -Wall -g
 
