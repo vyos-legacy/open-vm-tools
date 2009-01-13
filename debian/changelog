@@ -1,3 +1,65 @@
+open-vm-tools (2008.10.13vyatta-1+islavista1) unstable; urgency=low
+
+  [ Robert Bays ]
+  * add .gitignore
+  * add debian package control directory
+  * update gitignore
+  * Update configure rules
+  * Update configure rules
+  * fix compilation to export the kernel include dir
+  * hack out the debug routine for now
+  * update kernel mod Makefiles to point to correct kernel include dir
+  * more debian dir cleanup
+  * more debian rules cleanup
+  * fix kernel module install dir
+  * set correct modules dir
+  * fix version number
+
+  [ Rick Balocca ]
+  * Conform to git-dch "rules"
+
+  [ Stephen Hemminger ]
+  * Remove derived files from git repository
+  * Revert "Remove derived files from git repository"
+  * Remove built files
+  * Run depmod on the build-iso not system
+  * Revert "Remove built files"
+
+  [ Robert Bays ]
+  * update gitignore
+  * migrate modules dir to the configure.ac to prep for autoconf
+  * update configure.ac
+  * add makefile.normal so make clean will work
+  * updates to debian rules
+  * add init script
+  * fix ln problems
+  * fix one more link dir
+  * update hgfs mount link
+  * remove clean target from debian rules to prevent removal of
+    autoconfed files
+
+  [ Rick Balocca ]
+  * Don't do depmod as we are cross compiling
+
+  [ Robert Bays ]
+  * change the install directory for kernel modules
+
+  [ rbalocca ]
+  * Add postinst to do depmod: needed for "full-upgrade"
+
+  [ Robert Bays ]
+  * move vmwaretools startup script
+
+  [ Mark O'Brien ]
+  * 3.2.0
+
+  [ Robert Bays ]
+  * fix vmware-guestd path
+
+  [ An-Cheng Huang ]
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Mon, 12 Jan 2009 16:19:09 -0800
+
 open-vm-tools (2008.10.13vyatta-1) unstable; urgency=low
 
 	  3.2.0
