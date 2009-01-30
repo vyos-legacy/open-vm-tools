@@ -1,3 +1,9 @@
+open-vm-tools (2008.10.13vyatta-3) unstable; urgency=low
+
+  * Build with linux-image 2.6.27-1+vyatta+6
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Thu, 29 Jan 2009 20:45:15 -0800
+
 open-vm-tools (2008.10.13vyatta-2) unstable; urgency=low
 
   [ Robert Bays ]
