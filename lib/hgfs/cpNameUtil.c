@@ -188,8 +188,20 @@ CPNameUtil_WindowsConvertToRoot(char const *nameIn, // IN:  buf to convert
    fullName = (char *)Util_SafeMalloc(fullNameLen + 1);
 
    memcpy(fullName, partialName, partialNameLen);
+
    memcpy(fullName + partialNameLen, partialNameSuffix, partialNameSuffixLen);
-   memcpy(fullName + partialNameLen + partialNameSuffixLen, nameIn, nameLen);
+   if (nameIn[1] == ':') {
+      /*
+       * If the name is in format "<drive letter>:" strip out ':' from it
+       * because the rest of the code assumes that driver letter in a 
+       * platform independent name is represented by a single character without colon.
+       */
+      fullName[partialNameLen + partialNameSuffixLen] = nameIn[0];
+      memcpy(fullName + partialNameLen + partialNameSuffixLen + 1, nameIn + 2, nameLen - 2);
+      fullNameLen--;
+   } else {
+      memcpy(fullName + partialNameLen + partialNameSuffixLen, nameIn, nameLen);
+   }
    fullName[fullNameLen] = '\0';
 
    /* CPName_ConvertTo strips out the ':' character */
@@ -271,6 +283,45 @@ CPNameUtil_Utf8FormCToUtf8FormHost(const char *cpUtf8FormCName,   // IN:
                                          FALSE,
                                          cpConvertedName,
                                          cpConvertedNameLen);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * CPNameUitl_CharReplace --
+ *
+ *    A simple function to replace all oldChar's with newChar's in a binary
+ *    buffer. This is used for either replacing NULL with local DIRSPEC to
+ *    convert from relative cross-platform name to local relative name, or
+ *    replacing local DIRSEPC with NULL to convert from local relative name
+ *    to relative cross-platform file name 
+ *
+ * Results:
+ *    None.
+ *
+ * Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+void
+CPNameUtil_CharReplace(char *buf,      // IN/OUT
+                       size_t bufSize, // IN
+                       char oldChar,   // IN
+                       char newChar)   // IN
+
+{
+   size_t i;
+
+   ASSERT(buf);
+
+   for (i = 0; i < bufSize; i++) {
+      if (buf[i] == oldChar) {
+         buf[i] = newChar;
+      }
+   }
 }
 
 

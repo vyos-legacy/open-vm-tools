@@ -107,6 +107,8 @@ typedef enum {
    UpdateRect,
    ROPFillRect,
    Present3dRect,
+   LockRect,
+   FenceRect,
    MaxRect
 } RectInfoType;
 
@@ -121,6 +123,9 @@ typedef struct RectInfo {
          uint32 sid;
          uint32 srcx, srcy;
       } Present3d;
+      struct {
+         uint32 fenceId;
+      } Fence;
       /* add more here, then update miRectInfosEqual and miPrintRegion. */
    };
 } RectInfo, *RectInfoPtr;
@@ -194,6 +199,9 @@ extern RegDataRec miBrokenData;
 #define RECT_SETRECT(r, rx1, ry1, rx2, ry2) do { \
   RECT_SETBOX((r), (rx1), (ry1), ((rx2) - (rx1)), ((ry2) - (ry1))); \
 } while (FALSE)
+
+#define RECT_SETVMRECT(r, vmr) \
+  RECT_SETRECT((r), (vmr)->left,  (vmr)->top,  (vmr)->right,  (vmr)->bottom)
 
 /*
  * This will only work if the intersection is not empty.

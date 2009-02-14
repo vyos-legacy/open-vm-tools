@@ -60,8 +60,15 @@ enum {
    VIX_HANDLETYPE_METADATA_CONTAINER   = 11
 };
 
+/*
+ * The "//{{ Begin VIX_ERROR  }}" and "//{{ End VIX_ERROR }}" lines are
+ * to bracket the error code definitions that will be copied over
+ * to vixDiskLib.h during build time. If you modify these two lines, please
+ * make sure you also change bora/lib/distribute/vixDiskLib.h and
+ * bora/support/scripts/replaceVixErrors.py
+ */
 
-
+// {{ Begin VIX_ERROR }}
 /*
  * An error is a 64-bit value. If there is no error, then the value is
  * set to VIX_OK. If there is an error, then the least significant bits
@@ -104,8 +111,10 @@ enum {
    VIX_E_BUFFER_TOOSMALL                        = 24,
    VIX_E_OBJECT_NOT_FOUND                       = 25,
    VIX_E_HOST_NOT_CONNECTED                     = 26,
+   VIX_E_INVALID_UTF8_STRING                    = 27,
+   VIX_E_OPERATION_ALREADY_IN_PROGRESS          = 31,
    VIX_E_UNFINISHED_JOB                         = 29,
-
+   VIX_E_NEED_KEY                               = 30,
 
    /* Handle Errors */
    VIX_E_INVALID_HANDLE                         = 1000,
@@ -151,7 +160,7 @@ enum {
    VIX_E_INTERACTIVE_SESSION_NOT_PRESENT        = 3034,
    VIX_E_INTERACTIVE_SESSION_USER_MISMATCH      = 3035,
    VIX_E_UNABLE_TO_REPLAY_VM                    = 3039,
-   VIX_E_CANNOT_POWER_ON_VM                     = 3040,
+   VIX_E_CANNOT_POWER_ON_VM                     = 3041,
 
    /* VM Errors */ 
    VIX_E_VM_NOT_FOUND                           = 4000,
@@ -244,6 +253,8 @@ enum {
    VIX_E_DISK_CANTREPAIR                        = 16062,
    VIX_E_DISK_INVALIDDISK                       = 16063,
    VIX_E_DISK_NOLICENSE                         = 16064,
+   VIX_E_DISK_NODEVICE                          = 16065,
+   VIX_E_DISK_UNSUPPORTEDDEVICE                 = 16066,
 
    /* Crypto Library Errors */
    VIX_E_CRYPTO_UNKNOWN_ALGORITHM               = 17000,
@@ -289,12 +300,15 @@ enum {
    VIX_E_TOOLS_INSTALL_GUEST_NOT_READY          = 21007,
    VIX_E_TOOLS_INSTALL_SIG_CHECK_FAILED         = 21008,
    VIX_E_TOOLS_INSTALL_ERROR                    = 21009,
+   VIX_E_TOOLS_INSTALL_ALREADY_UP_TO_DATE       = 21010,
 
    /* Wrapper Errors */
    VIX_E_WRAPPER_WORKSTATION_NOT_INSTALLED      = 22001,
    VIX_E_WRAPPER_VERSION_NOT_FOUND              = 22002,
    VIX_E_WRAPPER_SERVICEPROVIDER_NOT_FOUND      = 22003,
 };
+
+// {{ End VIX_ERROR }}
 
 const char *Vix_GetErrorText(VixError err, const char *locale);
 

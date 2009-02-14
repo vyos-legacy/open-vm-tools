@@ -28,15 +28,15 @@
 
 
 /*
- * Socket states and flags.  Note that MSG_WAITALL is only supported on 2K3,
+ * Socket states and flags.  Note that MSG_WAITALL is only defined on 2K3,
  * XP-SP2 and above.  Since we currently build for 2K to maintain backwards
- * compatibility, it will always be 0.
+ * compatibility, we pull the value from the newer header.
  */
 #if defined(_WIN32)
 #  define MSG_DONTWAIT        0
 #  define MSG_NOSIGNAL        0
 #  if (_WIN32_WINNT < 0x0502)
-#     define MSG_WAITALL      0
+#     define MSG_WAITALL      0x8
 #  endif
 #endif
 
@@ -96,6 +96,8 @@
 #  define ECONNREFUSED        WSAECONNREFUSED
 #  define EHOSTDOWN           WSAEHOSTDOWN
 #  define EHOSTUNREACH        WSAEHOSTUNREACH
+#  define __ELOCALSHUTDOWN    ESHUTDOWN
+#  define __EPEERSHUTDOWN     ECONNABORTED
 #else
 #if defined(VMKERNEL)
 #  define EINTR               VMK_WAIT_INTERRUPTED
@@ -135,6 +137,9 @@
 #  define ECONNREFUSED        VMK_ECONNREFUSED
 #  define EHOSTDOWN           VMK_EHOSTDOWN
 #  define EHOSTUNREACH        VMK_EHOSTUNREACH
+#  define EPIPE               VMK_BROKEN_PIPE
+#  define __ELOCALSHUTDOWN    EPIPE
+#  define __EPEERSHUTDOWN     EPIPE
 #endif // VMKERNEL
 #endif // _WIN32
 

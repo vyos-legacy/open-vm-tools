@@ -68,10 +68,10 @@ PROGRAMS = $(bin_PROGRAMS)
 am_vmware_xferlogs_OBJECTS = xferlogs.$(OBJEXT)
 vmware_xferlogs_OBJECTS = $(am_vmware_xferlogs_OBJECTS)
 am__DEPENDENCIES_1 =
-vmware_xferlogs_DEPENDENCIES = ../lib/rpcVmx/libRpcVmx.a \
-	../lib/string/libString.a ../lib/rpcOut/libRpcOut.a \
-	../lib/message/libMessage.a ../lib/backdoor/libBackdoor.a \
-	../lib/misc/libMisc.a $(am__DEPENDENCIES_1)
+vmware_xferlogs_DEPENDENCIES = ../lib/rpcVmx/libRpcVmx.la \
+	../lib/string/libString.la ../lib/rpcOut/libRpcOut.la \
+	../lib/message/libMessage.la ../lib/backdoor/libBackdoor.la \
+	../lib/misc/libMisc.la $(am__DEPENDENCIES_1)
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -120,6 +120,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -143,6 +147,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -180,6 +185,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -244,10 +251,10 @@ top_srcdir = @top_srcdir@
 # In the absence of the linker options --start-group and --end-group (which can't
 # be put in LDADD), we need to bring the following libraries out of the alphebetical
 # order so their symbols are properly resolved.
-vmware_xferlogs_LDADD = ../lib/rpcVmx/libRpcVmx.a \
-	../lib/string/libString.a ../lib/rpcOut/libRpcOut.a \
-	../lib/message/libMessage.a ../lib/backdoor/libBackdoor.a \
-	../lib/misc/libMisc.a $(am__append_1)
+vmware_xferlogs_LDADD = ../lib/rpcVmx/libRpcVmx.la \
+	../lib/string/libString.la ../lib/rpcOut/libRpcOut.la \
+	../lib/message/libMessage.la ../lib/backdoor/libBackdoor.la \
+	../lib/misc/libMisc.la $(am__append_1)
 vmware_xferlogs_SOURCES = xferlogs.c
 @HAVE_ICU_FALSE@vmware_xferlogs_LINK = $(LINK)
 @HAVE_ICU_TRUE@vmware_xferlogs_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \

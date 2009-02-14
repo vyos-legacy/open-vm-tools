@@ -853,6 +853,45 @@ File_SplitName(ConstUnicode pathName,  // IN:
 /*
  *---------------------------------------------------------------------------
  *
+ * File_PathJoin --
+ *
+ *      Join the dirName and baseName together to create a (full) path but
+ *      don't add a DIRSEPS unless necessary.
+ *
+ *      File_PathJoin("a", "b")  -> "a/b"
+ *      File_PathJoin("a/", "b") -> "a/b"
+ *
+ * Results: 
+ *      The constructed path which must be freed by the caller.
+ *
+ * Side effects: 
+ *      None
+ *
+ *---------------------------------------------------------------------------
+ */
+
+Unicode
+File_PathJoin(ConstUnicode dirName,   // IN:
+              ConstUnicode baseName)  // IN:
+{
+   Unicode result;
+
+   ASSERT(dirName);
+   ASSERT(baseName);
+
+   if (Unicode_EndsWith(dirName, DIRSEPS)) {
+      result = Unicode_Append(dirName, baseName);
+   } else {
+      result = Unicode_Join(dirName, DIRSEPS, baseName, NULL);
+   }
+
+   return result;
+}
+
+
+/*
+ *---------------------------------------------------------------------------
+ *
  * File_GetPathName --
  *
  *      Behaves like File_SplitName by splitting the fullpath into
@@ -1834,8 +1873,8 @@ File_PrependToPath(const char *searchPath,   // IN
    ASSERT(searchPath);
    ASSERT(elem);
 
-   newPath = Str_SafeAsprintf(NULL, "%s" FILE_SEARCHPATHTOKEN "%s",
-                          elem, searchPath);
+   newPath = Str_SafeAsprintf(NULL, "%s%s%s", elem, FILE_SEARCHPATHTOKEN,
+                              searchPath);
 
    n = strlen(elem);
    path = newPath + n + 1;
@@ -1885,39 +1924,43 @@ File_FindFileInSearchPath(const char *fileIn,       // IN
                           const char *cwd,          // IN
                           char **result)            // OUT
 {
-   Bool found = FALSE;
-   char *cur = NULL;
+   char *cur;
+   char *tok;
+   Bool found;
+   char *saveptr;
    char *sp = NULL;
    char *file = NULL;
-   char *tok;
 
    ASSERT(fileIn);
    ASSERT(cwd);
    ASSERT(searchPath);
 
    /*
-    * First check the usual places, the fullpath, and the cwd.
+    * First check the usual places - the fullpath or the cwd.
     */
 
    if (File_IsFullPath(fileIn)) {
       cur = Util_SafeStrdup(fileIn);
    } else {
-      cur = Str_SafeAsprintf(NULL, "%s"DIRSEPS"%s", cwd, fileIn);
+      cur = Str_SafeAsprintf(NULL, "%s%s%s", cwd, DIRSEPS, fileIn);
    }
 
    if (File_Exists(cur)) {
-      goto found;
+      goto done;
    }
+
    free(cur);
+   cur = NULL;
 
    /*
     * Didn't find it in the usual places so strip it to its bare minimum and
     * start searching.
     */
+
    File_GetPathName(fileIn, NULL, &file);
 
    sp = Util_SafeStrdup(searchPath);
-   tok = strtok(sp, FILE_SEARCHPATHTOKEN);
+   tok = strtok_r(sp, FILE_SEARCHPATHTOKEN, &saveptr);
 
    while (tok) {
       if (File_IsFullPath(tok)) {
@@ -1927,37 +1970,44 @@ File_FindFileInSearchPath(const char *fileIn,       // IN
          /* Relative Path.  Prepend the cwd. */
          if (Str_Strcasecmp(tok, ".") == 0) {
             /* Don't append "." */
-            cur = Str_SafeAsprintf(NULL, "%s"DIRSEPS"%s", cwd, file);
+            cur = Str_SafeAsprintf(NULL, "%s%s%s", cwd, DIRSEPS, file);
          } else {
-            cur = Str_SafeAsprintf(NULL, "%s"DIRSEPS"%s"DIRSEPS"%s", cwd,
-                                   tok, file);
+            cur = Str_SafeAsprintf(NULL, "%s%s%s%s%s", cwd, DIRSEPS, tok,
+                                   DIRSEPS, file);
          }
       }
 
       if (File_Exists(cur)) {
-         goto found;
+         break;
       }
+
       free(cur);
-      tok = strtok(NULL, FILE_SEARCHPATHTOKEN);
+      cur = NULL;
+
+      tok = strtok_r(NULL, FILE_SEARCHPATHTOKEN, &saveptr);
    }
 
-  exit:
+done:
+   if (cur) {
+      found = TRUE;
+
+      if (result) {
+         *result = File_FullPath(cur);
+
+         if (*result == NULL) {
+            found = FALSE;
+         }
+      }
+
+      free(cur);
+   } else {
+      found = FALSE;
+   }
+
    free(sp);
    free(file);
+
    return found;
-
-  found:
-   ASSERT(cur);
-   found = TRUE;
-   if (result) {
-      *result = File_FullPath(cur);
-
-      if (*result == NULL) {
-         found = FALSE;
-      }
-   }
-   free(cur);
-   goto exit;
 }
 
 
@@ -2082,16 +2132,18 @@ File_ExpandAndCheckDir(const char *dirName)
 
    if (dirName != NULL) {
       edirName = Util_ExpandString(dirName);
-      if (edirName != NULL) {
-	 if (File_IsWritableDir(edirName) == TRUE) {
-            if (edirName[strlen(edirName) - 1] == DIRSEPC) {
-               edirName[strlen(edirName) - 1] = '\0';
-            }
-	    return edirName;
-	 }
-	 free(edirName);
+
+      if ((edirName != NULL) && FileIsWritableDir(edirName)) {
+         size_t len = strlen(edirName) - 1;
+
+         if (edirName[len] == DIRSEPC) {
+            edirName[len] = '\0';
+         }
+
+	 return edirName;
       }
    }
+
    return NULL;
 }
 

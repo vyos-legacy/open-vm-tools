@@ -53,7 +53,9 @@ build_triplet = @build@
 host_triplet = @host@
 @HAVE_X11_TRUE@am__append_1 = $(X11_SUBDIRS)
 @BUILD_HGFSMOUNTER_TRUE@am__append_2 = hgfsmounter
-@SOLARIS_FALSE@@WITH_KERNEL_MODULES_TRUE@am__append_3 = modules
+@ENABLE_CORE_SERVICES_TRUE@am__append_3 = libvmtools
+@HAVE_FUSE_TRUE@am__append_4 = vmblock-fuse
+@WITH_KERNEL_MODULES_TRUE@am__append_5 = modules
 subdir = .
 DIST_COMMON = README $(am__configure_deps) $(srcdir)/Makefile.am \
 	$(srcdir)/Makefile.in $(top_srcdir)/configure AUTHORS COPYING \
@@ -85,8 +87,8 @@ RECURSIVE_CLEAN_TARGETS = mostlyclean-recursive clean-recursive	\
 ETAGS = etags
 CTAGS = ctags
 DIST_SUBDIRS = lib guestd vmware-user vmware-user-suid-wrapper \
-	hgfsclient hgfsmounter checkvm libguestlib xferlogs scripts \
-	toolbox modules
+	hgfsclient hgfsmounter checkvm libguestlib libvmtools \
+	vmblock-fuse xferlogs scripts toolbox modules
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 distdir = $(PACKAGE)-$(VERSION)
 top_distdir = $(distdir)
@@ -129,6 +131,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -152,6 +158,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -189,6 +196,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -258,7 +267,8 @@ ACLOCAL_AMFLAGS = -I m4
 # These subdirectories require X, and may be disabled using --without-x
 X11_SUBDIRS = vmware-user vmware-user-suid-wrapper
 SUBDIRS = lib guestd $(am__append_1) hgfsclient $(am__append_2) \
-	checkvm libguestlib xferlogs scripts toolbox $(am__append_3)
+	checkvm libguestlib $(am__append_3) $(am__append_4) xferlogs \
+	scripts toolbox $(am__append_5)
 all: all-recursive
 
 .SUFFIXES:

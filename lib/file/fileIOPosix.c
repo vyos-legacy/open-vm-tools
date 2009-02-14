@@ -371,6 +371,7 @@ ProxySendResults(int sock_fd,    // IN:
 {
    struct iovec iov;
    struct msghdr msg;
+   char cmsgBuf[CMSG_SPACE(sizeof send_fd)];
 
    iov.iov_base = &send_errno;
    iov.iov_len = sizeof send_errno;
@@ -380,7 +381,6 @@ ProxySendResults(int sock_fd,    // IN:
       msg.msg_controllen = 0;
    } else {
       struct cmsghdr *cmsg;
-      char cmsgBuf[CMSG_SPACE(sizeof send_fd)];
 
       msg.msg_control = cmsgBuf;
       msg.msg_controllen = sizeof cmsgBuf;
@@ -697,7 +697,7 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
               FileIOOpenAction action,   // IN:
               int mode)                  // IN: mode_t for creation
 {
-   Bool su = FALSE;
+   uid_t uid = -1;
    int fd = -1;
    int flags = 0;
    int error;
@@ -789,8 +789,7 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
    file->flags = access;
 
    if (access & FILEIO_OPEN_PRIVILEGED) {
-      su = IsSuperUser();
-      SuperUser(TRUE);
+      uid = Id_BeginSuperUser();
    }
 
    flags |= 
@@ -804,7 +803,7 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
    error = errno;
 
    if (access & FILEIO_OPEN_PRIVILEGED) {
-      SuperUser(su);
+      Id_EndSuperUser(uid);
    }
 
    errno = error;
@@ -1139,6 +1138,9 @@ FileIO_Read(FileIODescriptor *fd,       // IN
             continue;
          }
          fret = FileIOErrno2Result(errno);
+         if (FILEIO_ERROR == fret) {
+            Log("read failed, errno=%d, %s\n", errno, strerror(errno));
+         }
          break;
       }
 
@@ -1810,6 +1812,88 @@ FileIO_GetSize(const FileIODescriptor *fd)  // IN:
 /*
  *----------------------------------------------------------------------
  *
+ * FileIO_GetAllocSize --
+ *
+ *      Get allocated size of file.
+ *
+ * Results:
+ *      Size of file or -1.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+int64
+FileIO_GetAllocSize(const FileIODescriptor *fd)  // IN
+{
+   struct stat s;
+
+   ASSERT(fd);
+
+#if __linux__ && defined(N_PLAT_NLM)
+   /* Netware doesn't have st_blocks.  Just fall back to GetSize. */ 
+   return FileIO_GetSize(fd);
+#else
+   /*
+    * If you don't like the magic number 512, yell at the people
+    * who wrote sys/stat.h and tell them to add a #define for it.
+    */
+   return (fstat(fd->posix, &s) == -1) ? -1 : s.st_blocks * 512;
+#endif
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileIO_SetAllocSize --
+ *
+ *      Set allocated size of file, allocating new blocks if needed.
+ *      It is an error for size to be less than the current size.
+ *
+ * Results:
+ *      TRUE on success.  Sets errno on failure.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+Bool
+FileIO_SetAllocSize(const FileIODescriptor *fd,  // IN
+                    uint64 size)                 // IN
+{
+#ifdef __APPLE__
+   fstore_t prealloc;
+   uint64 curSize;
+
+   curSize = FileIO_GetAllocSize(fd);
+
+   if (curSize > size) {
+      errno = EINVAL;
+      return FALSE;
+   }
+
+   prealloc.fst_flags = 0;
+   prealloc.fst_posmode = F_PEOFPOSMODE;
+   prealloc.fst_offset = 0;
+   prealloc.fst_length = size - curSize;
+   prealloc.fst_bytesalloc = 0;
+
+   return fcntl(fd->posix, F_PREALLOCATE, &prealloc) != -1;
+#else
+   errno = EINVAL;
+   return FALSE;
+#endif
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
  * FileIO_GetSizeByPath --
  *
  *      Get size of a file specified by path. 
@@ -1980,6 +2064,35 @@ FileIO_SupportsFileSize(const FileIODescriptor *fd,  // IN:
 /*
  *----------------------------------------------------------------------
  *
+ * FileIO_GetModTime --
+ *
+ *      Retrieve last modification time.
+ *
+ * Results:
+ *      Return POSIX epoch time or -1 on error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+int64
+FileIO_GetModTime(const FileIODescriptor *fd)
+{
+   struct stat statbuf;
+
+   if (fstat(fd->posix, &statbuf) == 0) {
+      return statbuf.st_mtime;
+   } else {
+      return -1;
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
  * FileIO_PrivilegedPosixOpen --
  *
  *      Opens file with elevated privileges.
@@ -1997,8 +2110,9 @@ int
 FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
                            int flags)              // IN:
 {
-   Bool suNeeded = FALSE;
    int fd;
+   Bool suDone;
+   uid_t uid = -1;
 
    if (pathName == NULL) {
       errno = EFAULT;
@@ -2007,21 +2121,29 @@ FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
 
    /*
     * I've said *opens*.  I want you really think twice before creating files
-    * with elevated privileges, so for them you have to use SuperUser()
+    * with elevated privileges, so for them you have to use Id_BeginSuperUser()
     * yourself.
     */
+
    ASSERT((flags & (O_CREAT | O_TRUNC)) == 0);
-   suNeeded = !IsSuperUser();
-   if (suNeeded) {
-      SuperUser(TRUE);
+
+   if (Id_IsSuperUser()) {
+      suDone = FALSE;
+   } else {
+      uid = Id_BeginSuperUser();
+      suDone = TRUE;
    }
+
    fd = Posix_Open(pathName, flags, 0);
-   if (suNeeded) {
+
+   if (suDone) {
       int error = errno;
 
-      SuperUser(FALSE);
+      Id_EndSuperUser(uid);
       errno = error;
    }
+
+
    return fd;
 }
 
@@ -2050,7 +2172,8 @@ FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
  */
 
 FILE *
-FileIO_DescriptorToStream(FileIODescriptor *fdesc)    // IN
+FileIO_DescriptorToStream(FileIODescriptor *fdesc,  // IN:
+                          Bool textMode)            // IN: unused
 {
    int dupFd;
    const char *mode;
@@ -2066,8 +2189,6 @@ FileIO_DescriptorToStream(FileIODescriptor *fdesc)    // IN
    if (dupFd == -1) {
       return NULL;
    }
-
-
 
    if (tmpFlags == (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_ACCESS_WRITE)) {
       mode = "r+";
@@ -2116,6 +2237,8 @@ FileIO_ResetExcludedFromTimeMachine(char const *pathName) // IN
    char xattr;
    ssize_t gXattrResult = getxattr(pathName, XATTR_BACKUP_REENABLED,
                                    &xattr, sizeof(xattr), 0, 0);
+   int sXattrResult;
+
    if (gXattrResult != -1) {
       // We have already seen this file, don't touch it again.
       goto exit;
@@ -2131,8 +2254,8 @@ FileIO_ResetExcludedFromTimeMachine(char const *pathName) // IN
       goto exit;
    }
    xattr = '1';
-   int sXattrResult = setxattr(pathName, XATTR_BACKUP_REENABLED,
-                               &xattr, sizeof(xattr), 0, 0);
+   sXattrResult = setxattr(pathName, XATTR_BACKUP_REENABLED,
+                           &xattr, sizeof(xattr), 0, 0);
    if (sXattrResult == -1) {
       LOG_ONCE((LGPFX" %s Couldn't set xattr on path [%s]: %s.\n",
                 __func__, pathName, strerror(errno)));

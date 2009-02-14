@@ -67,10 +67,10 @@ PROGRAMS = $(sbin_PROGRAMS)
 am_mount_vmhgfs_OBJECTS = hgfsmounter.$(OBJEXT) \
 	stub-user-util.$(OBJEXT)
 mount_vmhgfs_OBJECTS = $(am_mount_vmhgfs_OBJECTS)
-mount_vmhgfs_DEPENDENCIES = ../lib/misc/libMisc.a \
-	../lib/string/libString.a \
-	../lib/panicDefault/libPanicDefault.a ../lib/panic/libPanic.a \
-	../lib/stubs/libStubs.a
+mount_vmhgfs_DEPENDENCIES = ../lib/misc/libMisc.la \
+	../lib/string/libString.la \
+	../lib/panicDefault/libPanicDefault.la \
+	../lib/panic/libPanic.la ../lib/stubs/libStubs.la
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -119,6 +119,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -142,6 +146,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -179,6 +184,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -240,9 +247,9 @@ sysconfdir = @sysconfdir@
 target_alias = @target_alias@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-mount_vmhgfs_LDADD = ../lib/misc/libMisc.a ../lib/string/libString.a \
-	../lib/panicDefault/libPanicDefault.a ../lib/panic/libPanic.a \
-	../lib/stubs/libStubs.a
+mount_vmhgfs_LDADD = ../lib/misc/libMisc.la ../lib/string/libString.la \
+	../lib/panicDefault/libPanicDefault.la \
+	../lib/panic/libPanic.la ../lib/stubs/libStubs.la
 mount_vmhgfs_SOURCES = hgfsmounter.c stub-user-util.c
 all: all-am
 
@@ -536,14 +543,14 @@ uninstall-am: uninstall-sbinPROGRAMS
 @FREEBSD_TRUE@		$(DESTDIR)$(sbindir)/mount_vmhgfs
 @FREEBSD_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@	chmod u+s $(DESTDIR)$(sbindir)/mount_vmhgfs
 @FREEBSD_TRUE@	-$(MKDIR_P) $(DESTDIR)/sbin
-@FREEBSD_TRUE@	-$(LN_S) $(sbindir)/mount_vmhgfs \
+@FREEBSD_TRUE@	-$(LN_S) $(DESTDIR)$(sbindir)/mount_vmhgfs \
 @FREEBSD_TRUE@		$(DESTDIR)/sbin/mount_vmhgfs &> /dev/null
 @FREEBSD_TRUE@uninstall-hook:
 @FREEBSD_TRUE@	-$(RM) -f $(DESTDIR)$(sbindir)/mount_vmhgfs &> /dev/null
 @FREEBSD_FALSE@install-exec-hook:
 @FREEBSD_FALSE@@WITH_ROOT_PRIVILEGES_TRUE@	chmod u+s $(DESTDIR)$(sbindir)/mount.vmhgfs
 @FREEBSD_FALSE@	-$(MKDIR_P) $(DESTDIR)/sbin
-@FREEBSD_FALSE@	-$(LN_S) $(sbindir)/mount.vmhgfs \
+@FREEBSD_FALSE@	-$(LN_S) $(DESTDIR)$(sbindir)/mount.vmhgfs \
 @FREEBSD_FALSE@		$(DESTDIR)/sbin/mount.vmhgfs &> /dev/null
 @FREEBSD_FALSE@uninstall-hook:
 @FREEBSD_FALSE@	-$(RM) -f $(DESTDIR)/sbin/mount.vmhgfs &> /dev/null

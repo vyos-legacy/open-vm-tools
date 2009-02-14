@@ -118,7 +118,7 @@
 #if defined(VMX86_DESKTOP)
    #define PRODUCT_VERSION    6,5,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #elif defined(VMX86_TOOLS)
-   #define PRODUCT_VERSION    TOOLS_VERSION_CURRENT_CSV,PRODUCT_BUILD_NUMBER_NUMERIC
+   #define PRODUCT_VERSION    TOOLS_VERSION_EXT_CURRENT_CSV
 #elif defined(VMX86_VCB)
    #define PRODUCT_VERSION    1,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #else
@@ -236,6 +236,7 @@
 #define PLAYER_VERSION "e.x.p"
 #define V2V_VERSION "e.x.p"
 #define V2V_FILE_VERSION 1,0,0,0
+#define FUSION_VERSION "2.0"
 
 // These must match VIE_FILEVERSION above
 #define SYSIMAGE_VERSION "4.0.0"
@@ -255,7 +256,12 @@
 #define VIPERL_VERSION "1.1.0"
 #define RCLI_VERSION "4.0.0"
 #define VDM_VERSION "e.x.p"
+#define VMSAFE_VERSION "e.x.p"
+#define VDDK_VERSION          "1.1.0"
+#define VDDK_FILE_VERSION      1,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
+#define OVFTOOL_VERSION "1.0.0"
 #define VDM_CLIENT_VERSION "e.x.p"
+#define OVFTOOL_VERSION "1.0.0"
 
 // VMRC_PLUGIN_VERSION should match PLAYER_VERSION but can't be e.x.p
 #ifndef MAKESTR
@@ -274,12 +280,9 @@
         VMRC_PLUGIN_VERSION_MAJOR,VMRC_PLUGIN_VERSION_MINOR,0,PRODUCT_BUILD_NUMBER_NUMERIC
 
 /*
- * When setting the Tools product version, please use the string corresponding
- * to TOOLS_VERSION_CURRENT_STR from vm_tools_version.h.
- *
- * XXX: The extract-macro script should be updated to handle this special case.
+ * The current Tools version, derived from vm_tools_version.h. Do not modify this.
  */
-#define TOOLS_VERSION "2008.10.10"
+#define TOOLS_VERSION "2009.01.21"
 
 #ifdef VMX86_VPX
 #define VIM_API_TYPE "VirtualCenter"
@@ -290,6 +293,7 @@
 #define VIM_EESX_PRODUCT_LINE_ID "embeddedEsx"
 #define VIM_ESX_PRODUCT_LINE_ID "esx"
 #define VIM_GSX_PRODUCT_LINE_ID "gsx"
+#define VIM_WS_PRODUCT_LINE_ID "ws"
 
 #define PRODUCT_API_SCRIPTING_VERSION API_SCRIPTING_VERSION " " BUILD_NUMBER
 
@@ -333,6 +337,8 @@
 #  define PRODUCT_VERSION_NUMBER DDK_VERSION
 #elif defined(VMX86_TOOLS)
 #  define PRODUCT_VERSION_NUMBER TOOLS_VERSION
+#elif defined(VMX86_VDDK)
+#  define PRODUCT_VERSION_NUMBER VDDK_VERSION
 #endif
 
 /*

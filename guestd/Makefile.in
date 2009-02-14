@@ -72,34 +72,35 @@ am_vmware_guestd_OBJECTS = debugStdio.$(OBJEXT) \
 	foundryToolsDaemon.$(OBJEXT) main.$(OBJEXT) \
 	toolsDaemon.$(OBJEXT)
 vmware_guestd_OBJECTS = $(am_vmware_guestd_OBJECTS)
-@SOLARIS_TRUE@am__DEPENDENCIES_1 = ../lib/hgfsBd/libHgfsBd.a
+@SOLARIS_TRUE@am__DEPENDENCIES_1 = ../lib/hgfsBd/libHgfsBd.la
 am__DEPENDENCIES_2 =
-vmware_guestd_DEPENDENCIES = ../lib/backdoor/libBackdoor.a \
-	../lib/conf/libConf.a ../lib/dnd/libDnd.a ../lib/err/libErr.a \
-	../lib/eventManager/libEventManager.a ../lib/file/libFile.a \
-	../lib/guestApp/libGuestApp.a ../lib/guestInfo/libGuestInfo.a \
-	../lib/guestRpc/libGuestRpc.a \
-	../lib/hgfsServer/libHgfsServer.a \
-	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.a \
-	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.a \
-	../lib/deployPkg/libDeployPkg.a \
-	../lib/impersonate/libImpersonate.a \
-	../lib/netUtil/libNetUtil.a ../lib/printer/libPrinter.a \
-	../lib/procMgr/libProcMgr.a ../lib/rpcIn/libRpcIn.a \
-	../lib/rpcOut/libRpcOut.a ../lib/rpcVmx/libRpcVmx.a \
-	../lib/SLPv2Parser/libSLPv2Parser.a \
-	../lib/socketMgr/libSocketMgr.a ../lib/string/libString.a \
-	../lib/sync/libSync.a ../lib/syncDriver/libSyncDriver.a \
-	../lib/system/libSystem.a ../lib/user/libUser.a \
-	../lib/vixTools/libVixTools.a \
-	../lib/vmBackupLib/libVmBackupLib.a \
-	../lib/vmCheck/libVmCheck.a ../lib/vmSignal/libVmSignal.a \
-	../lib/wiper/libWiper.a ../lib/dict/libDict.a \
-	../lib/dynxdr/libDynxdr.a ../lib/hgfs/libHgfs.a \
-	../lib/message/libMessage.a ../lib/unicode/libUnicode.a \
-	../lib/misc/libMisc.a ../lib/foundryMsg/libFoundryMsg.a \
-	../lib/auth/libAuth.a ../lib/panicDefault/libPanicDefault.a \
-	../lib/panic/libPanic.a ../lib/stubs/libStubs.a \
+vmware_guestd_DEPENDENCIES = ../lib/backdoor/libBackdoor.la \
+	../lib/conf/libConf.la ../lib/dnd/libDnd.la \
+	../lib/err/libErr.la ../lib/eventManager/libEventManager.la \
+	../lib/file/libFile.la ../lib/guestApp/libGuestApp.la \
+	../lib/guestInfo/libGuestInfo.la \
+	../lib/guestRpc/libGuestRpc.la \
+	../lib/hgfsServer/libHgfsServer.la \
+	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.la \
+	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.la \
+	../lib/deployPkg/libDeployPkg.la \
+	../lib/impersonate/libImpersonate.la \
+	../lib/netUtil/libNetUtil.la ../lib/printer/libPrinter.la \
+	../lib/procMgr/libProcMgr.la ../lib/rpcIn/libRpcIn.la \
+	../lib/rpcOut/libRpcOut.la ../lib/rpcVmx/libRpcVmx.la \
+	../lib/SLPv2Parser/libSLPv2Parser.la \
+	../lib/socketMgr/libSocketMgr.la ../lib/string/libString.la \
+	../lib/sync/libSync.la ../lib/syncDriver/libSyncDriver.la \
+	../lib/system/libSystem.la ../lib/user/libUser.la \
+	../lib/vixTools/libVixTools.la \
+	../lib/vmBackupLib/libVmBackupLib.la \
+	../lib/vmCheck/libVmCheck.la ../lib/vmSignal/libVmSignal.la \
+	../lib/wiper/libWiper.la ../lib/dict/libDict.la \
+	../lib/dynxdr/libDynxdr.la ../lib/hgfs/libHgfs.la \
+	../lib/message/libMessage.la ../lib/unicode/libUnicode.la \
+	../lib/misc/libMisc.la ../lib/foundryMsg/libFoundryMsg.la \
+	../lib/auth/libAuth.la ../lib/panicDefault/libPanicDefault.la \
+	../lib/panic/libPanic.la ../lib/stubs/libStubs.la \
 	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_2)
 pamSCRIPT_INSTALL = $(INSTALL_SCRIPT)
 SCRIPTS = $(pam_SCRIPTS)
@@ -151,6 +152,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -174,6 +179,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -211,6 +217,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -277,35 +285,36 @@ AM_CFLAGS = -I$(top_builddir)/include
 # In the absence of the linker options --start-group and --end-group (which
 # can't be put in LDADD), we need to bring the following libraries out of the
 # alphabetical order so their symbols are properly resolved.
-vmware_guestd_LDADD = ../lib/backdoor/libBackdoor.a \
-	../lib/conf/libConf.a ../lib/dnd/libDnd.a ../lib/err/libErr.a \
-	../lib/eventManager/libEventManager.a ../lib/file/libFile.a \
-	../lib/guestApp/libGuestApp.a ../lib/guestInfo/libGuestInfo.a \
-	../lib/guestRpc/libGuestRpc.a \
-	../lib/hgfsServer/libHgfsServer.a \
-	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.a \
-	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.a \
-	../lib/deployPkg/libDeployPkg.a \
-	../lib/impersonate/libImpersonate.a \
-	../lib/netUtil/libNetUtil.a ../lib/printer/libPrinter.a \
-	../lib/procMgr/libProcMgr.a ../lib/rpcIn/libRpcIn.a \
-	../lib/rpcOut/libRpcOut.a ../lib/rpcVmx/libRpcVmx.a \
-	../lib/SLPv2Parser/libSLPv2Parser.a \
-	../lib/socketMgr/libSocketMgr.a ../lib/string/libString.a \
-	../lib/sync/libSync.a ../lib/syncDriver/libSyncDriver.a \
-	../lib/system/libSystem.a ../lib/user/libUser.a \
-	../lib/vixTools/libVixTools.a \
-	../lib/vmBackupLib/libVmBackupLib.a \
-	../lib/vmCheck/libVmCheck.a ../lib/vmSignal/libVmSignal.a \
-	../lib/wiper/libWiper.a ../lib/dict/libDict.a \
-	../lib/dynxdr/libDynxdr.a ../lib/hgfs/libHgfs.a \
-	../lib/message/libMessage.a ../lib/unicode/libUnicode.a \
-	../lib/misc/libMisc.a ../lib/foundryMsg/libFoundryMsg.a \
-	../lib/auth/libAuth.a ../lib/panicDefault/libPanicDefault.a \
-	../lib/panic/libPanic.a ../lib/stubs/libStubs.a $(HGFS_BD) \
+vmware_guestd_LDADD = ../lib/backdoor/libBackdoor.la \
+	../lib/conf/libConf.la ../lib/dnd/libDnd.la \
+	../lib/err/libErr.la ../lib/eventManager/libEventManager.la \
+	../lib/file/libFile.la ../lib/guestApp/libGuestApp.la \
+	../lib/guestInfo/libGuestInfo.la \
+	../lib/guestRpc/libGuestRpc.la \
+	../lib/hgfsServer/libHgfsServer.la \
+	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.la \
+	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.la \
+	../lib/deployPkg/libDeployPkg.la \
+	../lib/impersonate/libImpersonate.la \
+	../lib/netUtil/libNetUtil.la ../lib/printer/libPrinter.la \
+	../lib/procMgr/libProcMgr.la ../lib/rpcIn/libRpcIn.la \
+	../lib/rpcOut/libRpcOut.la ../lib/rpcVmx/libRpcVmx.la \
+	../lib/SLPv2Parser/libSLPv2Parser.la \
+	../lib/socketMgr/libSocketMgr.la ../lib/string/libString.la \
+	../lib/sync/libSync.la ../lib/syncDriver/libSyncDriver.la \
+	../lib/system/libSystem.la ../lib/user/libUser.la \
+	../lib/vixTools/libVixTools.la \
+	../lib/vmBackupLib/libVmBackupLib.la \
+	../lib/vmCheck/libVmCheck.la ../lib/vmSignal/libVmSignal.la \
+	../lib/wiper/libWiper.la ../lib/dict/libDict.la \
+	../lib/dynxdr/libDynxdr.la ../lib/hgfs/libHgfs.la \
+	../lib/message/libMessage.la ../lib/unicode/libUnicode.la \
+	../lib/misc/libMisc.la ../lib/foundryMsg/libFoundryMsg.la \
+	../lib/auth/libAuth.la ../lib/panicDefault/libPanicDefault.la \
+	../lib/panic/libPanic.la ../lib/stubs/libStubs.la $(HGFS_BD) \
 	@GUESTD_LDADD@ $(am__append_1)
 @SOLARIS_FALSE@HGFS_BD = 
-@SOLARIS_TRUE@HGFS_BD = ../lib/hgfsBd/libHgfsBd.a
+@SOLARIS_TRUE@HGFS_BD = ../lib/hgfsBd/libHgfsBd.la
 vmware_guestd_SOURCES = debugStdio.c foreignVMToolsDaemon.c \
 	foreignVMToolsNetworking.c foundryToolsDaemon.c main.c \
 	toolsDaemon.c

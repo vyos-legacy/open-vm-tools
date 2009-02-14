@@ -41,6 +41,7 @@ extern "C" {
 #   include <windows.h>
 #   include "win32u.h"
 #   include "hgfsUsabilityLib.h"
+#   include "rescaps.h"
 #   include "ServiceHelpers.h"
 #endif
 
@@ -837,6 +838,13 @@ ToolsDaemonStateChangeDone(Bool status,  // IN
     */
    if (status || data->lastFailedStateChg == data->stateChgInProgress) {
       status = TRUE;
+#ifdef _WIN32
+      if (data->stateChgInProgress == GUESTOS_STATECHANGE_REBOOT || data->stateChgInProgress == GUESTOS_STATECHANGE_HALT) {
+         if (System_GetOSType() >= OS_VISTA) {
+            DISABLE_RES_CAPS();
+         }
+      }
+#endif
       if (data->stateChgInProgress == GUESTOS_STATECHANGE_REBOOT) {
          Debug("Initiating reboot\n");
          status = data->rebootCB(data->rebootCBData);
@@ -1323,10 +1331,6 @@ ToolsDaemonTcloSetOption(char const **result,     // OUT
       if (strcmp(value, "1") != 0 && strcmp(value, "0") != 0) {
          goto invalid_value;
       }
-   } else if (strcmp(option, TOOLSOPTION_SCRIPTS_REBOOT) == 0) {
-      if (strcmp(value, "1") != 0 && strcmp(value, "0") != 0) {
-         goto invalid_value;
-      }
    } else {
       goto invalid_option;
    }
@@ -1442,15 +1446,13 @@ ToolsDaemonTcloSetOption(char const **result,     // OUT
                                 strcmp(value, "0") ? TRUE : FALSE;
    } else if (strcmp(option, TOOLSOPTION_SCRIPTS_POWEROFF) == 0) {
       data->toolScriptOption[GUESTOS_STATECHANGE_HALT] =
+      data->toolScriptOption[GUESTOS_STATECHANGE_REBOOT] =
                                 strcmp(value, "0") ? TRUE : FALSE;
    } else if (strcmp(option, TOOLSOPTION_SCRIPTS_SUSPEND) == 0) {
       data->toolScriptOption[GUESTOS_STATECHANGE_SUSPEND] =
                                 strcmp(value, "0") ? TRUE : FALSE;
    } else if (strcmp(option, TOOLSOPTION_SCRIPTS_RESUME) == 0) {
       data->toolScriptOption[GUESTOS_STATECHANGE_RESUME] =
-                                strcmp(value, "0") ? TRUE : FALSE;
-   } else if (strcmp(option, TOOLSOPTION_SCRIPTS_REBOOT) == 0) {
-      data->toolScriptOption[GUESTOS_STATECHANGE_REBOOT] =
                                 strcmp(value, "0") ? TRUE : FALSE;
    }
 

@@ -49,6 +49,7 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
+@ENABLE_CORE_SERVICES_TRUE@am__append_1 = libGuestInfoCS.la
 subdir = lib/guestInfo
 DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -60,14 +61,17 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 mkinstalldirs = $(install_sh) -d
 CONFIG_CLEAN_FILES =
-LIBRARIES = $(noinst_LIBRARIES)
-ARFLAGS = cru
-libGuestInfo_a_AR = $(AR) $(ARFLAGS)
-libGuestInfo_a_LIBADD =
-am_libGuestInfo_a_OBJECTS = guestInfo.$(OBJEXT) \
-	guestInfoServer.$(OBJEXT) guestInfoPosix.$(OBJEXT) \
-	guestInfoPerfMonLinux.$(OBJEXT)
-libGuestInfo_a_OBJECTS = $(am_libGuestInfo_a_OBJECTS)
+LTLIBRARIES = $(noinst_LTLIBRARIES)
+libGuestInfo_la_LIBADD =
+am_libGuestInfo_la_OBJECTS = guestInfo.lo guestInfoServer.lo \
+	guestInfoPosix.lo guestInfoPerfMonLinux.lo
+libGuestInfo_la_OBJECTS = $(am_libGuestInfo_la_OBJECTS)
+libGuestInfoCS_la_LIBADD =
+am__libGuestInfoCS_la_SOURCES_DIST = guestInfo.c guestInfoPosix.c
+@ENABLE_CORE_SERVICES_TRUE@am_libGuestInfoCS_la_OBJECTS =  \
+@ENABLE_CORE_SERVICES_TRUE@	guestInfo.lo guestInfoPosix.lo
+libGuestInfoCS_la_OBJECTS = $(am_libGuestInfoCS_la_OBJECTS)
+@ENABLE_CORE_SERVICES_TRUE@am_libGuestInfoCS_la_rpath =
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -80,8 +84,9 @@ CCLD = $(CC)
 LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-SOURCES = $(libGuestInfo_a_SOURCES)
-DIST_SOURCES = $(libGuestInfo_a_SOURCES)
+SOURCES = $(libGuestInfo_la_SOURCES) $(libGuestInfoCS_la_SOURCES)
+DIST_SOURCES = $(libGuestInfo_la_SOURCES) \
+	$(am__libGuestInfoCS_la_SOURCES_DIST)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -116,6 +121,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -139,6 +148,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -176,6 +186,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -237,10 +249,12 @@ sysconfdir = @sysconfdir@
 target_alias = @target_alias@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-noinst_LIBRARIES = libGuestInfo.a
-libGuestInfo_a_SOURCES = guestInfo.c guestInfoServer.c \
+noinst_LTLIBRARIES = libGuestInfo.la $(am__append_1)
+libGuestInfo_la_SOURCES = guestInfo.c guestInfoServer.c \
 	guestInfoPosix.c guestInfoPerfMonLinux.c
-AM_CFLAGS = $(DNET_CPPFLAGS) -I$(top_builddir)/include
+@ENABLE_CORE_SERVICES_TRUE@libGuestInfoCS_la_SOURCES = guestInfo.c \
+@ENABLE_CORE_SERVICES_TRUE@	guestInfoPosix.c
+AM_CFLAGS = $(DNET_CPPFLAGS)
 all: all-am
 
 .SUFFIXES:
@@ -275,12 +289,18 @@ $(top_srcdir)/configure:  $(am__configure_deps)
 $(ACLOCAL_M4):  $(am__aclocal_m4_deps)
 	cd $(top_builddir) && $(MAKE) $(AM_MAKEFLAGS) am--refresh
 
-clean-noinstLIBRARIES:
-	-test -z "$(noinst_LIBRARIES)" || rm -f $(noinst_LIBRARIES)
-libGuestInfo.a: $(libGuestInfo_a_OBJECTS) $(libGuestInfo_a_DEPENDENCIES) 
-	-rm -f libGuestInfo.a
-	$(libGuestInfo_a_AR) libGuestInfo.a $(libGuestInfo_a_OBJECTS) $(libGuestInfo_a_LIBADD)
-	$(RANLIB) libGuestInfo.a
+clean-noinstLTLIBRARIES:
+	-test -z "$(noinst_LTLIBRARIES)" || rm -f $(noinst_LTLIBRARIES)
+	@list='$(noinst_LTLIBRARIES)'; for p in $$list; do \
+	  dir="`echo $$p | sed -e 's|/[^/]*$$||'`"; \
+	  test "$$dir" != "$$p" || dir=.; \
+	  echo "rm -f \"$${dir}/so_locations\""; \
+	  rm -f "$${dir}/so_locations"; \
+	done
+libGuestInfo.la: $(libGuestInfo_la_OBJECTS) $(libGuestInfo_la_DEPENDENCIES) 
+	$(LINK)  $(libGuestInfo_la_OBJECTS) $(libGuestInfo_la_LIBADD) $(LIBS)
+libGuestInfoCS.la: $(libGuestInfoCS_la_OBJECTS) $(libGuestInfoCS_la_DEPENDENCIES) 
+	$(LINK) $(am_libGuestInfoCS_la_rpath) $(libGuestInfoCS_la_OBJECTS) $(libGuestInfoCS_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -288,10 +308,10 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfo.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfoPerfMonLinux.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfoPosix.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfoServer.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfo.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfoPerfMonLinux.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfoPosix.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestInfoServer.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -396,7 +416,7 @@ distdir: $(DISTFILES)
 	done
 check-am: all-am
 check: check-am
-all-am: Makefile $(LIBRARIES)
+all-am: Makefile $(LTLIBRARIES)
 installdirs:
 install: install-am
 install-exec: install-exec-am
@@ -424,7 +444,7 @@ maintainer-clean-generic:
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-generic clean-libtool clean-noinstLIBRARIES \
+clean-am: clean-generic clean-libtool clean-noinstLTLIBRARIES \
 	mostlyclean-am
 
 distclean: distclean-am
@@ -484,7 +504,7 @@ uninstall-am:
 .MAKE: install-am install-strip
 
 .PHONY: CTAGS GTAGS all all-am check check-am clean clean-generic \
-	clean-libtool clean-noinstLIBRARIES ctags distclean \
+	clean-libtool clean-noinstLTLIBRARIES ctags distclean \
 	distclean-compile distclean-generic distclean-libtool \
 	distclean-tags distdir dvi dvi-am html html-am info info-am \
 	install install-am install-data install-data-am install-dvi \

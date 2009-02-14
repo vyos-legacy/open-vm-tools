@@ -1,3 +1,248 @@
+2009-01-21  Marcelo Vanzin  <mvanzin@vmware.com>
+   * Resync with internal trunk (2009.01.19)
+
+   * configure.ac: detect the presence of FUSE libraries.
+
+   * configure.ac, Makefile.am: compile kernel modules for Solaris, and
+     vmblock-fuse module if FUSE is available.
+
+   * lib/ghIntegration/ghIntegrationX11.c: retrieved localized application
+     names.
+
+   * lib/guestInfo/guestInfo.c, lib/guestInfo/guestInfoPosix.c,
+     lib/include/hostinfo.h, lib/misc/hostinfo_misc.c, lib/misc/hostinfoPosic.c,
+     lib/vixTools/vixTools.c: refactoring to move code shared with other VMware
+     products to a common library.
+
+   * lib/guestRpc/guestlibV3.x, lib/guestRpc/Makefile.am,
+     lib/include/vmGuestLib.h, libguestlib/*: add new iteration of the
+     "guestlib" protocol. This is a more extensible solution than the current
+     protocol, and should make it easier to add new information when needed.
+
+   * lib/include/dynarray.h, lib/include/dynbuf.h, lib/misc/dynarray.c,
+     lib/misc/dynbuf.c: make some DynArray/DynBuf functions inline for speed.
+
+   * lib/include/unityCommon.h: more documentation about the Unity protocol.
+
+   * lib/unity/unityPlatformX11.c: fix Unity<->guest desktop ID mappings.
+
+   * libvmtools/vmtoolsLog.c: change the way log domains are configured; now
+     sub-domains inherit the default handler for the app if no handler is
+     specified.
+
+   * modules/freebsd/vmhgfs/state.c, modules/freebsd/vmhgfs/state.h,
+     modules/freebsd/vmhgfs/vnopscommon.{c,h}: implement support for mmap on
+     the Mac OS driver, which allows running executables from an HGFS
+     share. The FreeBSD module still does not support this functionality.
+
+   * modules/freebsd/vmhgfs/transport.{c,h}: refactoring for sharing structure
+     definitions.
+
+   * modules/linux/pvscsi/pvscsi.c, modules/linux/vmblock/linux/module.c,
+     modules/linux/vmci/vmci_drv.c, modules/linux/hgfs/module.c,
+     modules/linux/vmmemctl/os.c, modules/linux/vmsync/sync.c,
+     modules/linux/vmxnet/vmxnet.c, modules/linux/vmxnet3/vmxnet3.c: add support
+     for Novell's proprietary module info tag ("supported").
+
+   * modules/linux/vmci/vmciKernelIf.c: add support for VMCI queue pairs on
+     the host. This does not affect the driver when it runs inside virtual
+     machines.
+
+   * modules/linux/vmci/*.h, modules/linux/vsock/*.h: some changes in the common
+     code to support Mac OS X, and also queue pairs on the Solaris VMCI module.
+
+   * modules/linux/vsock/af_vsock.{c,h}: add functions for registering with
+     the vsock driver from within the kernel.
+
+   * modules/linux/*/Makefile: add $(LINUXINCLUDE) to the compiler flags; this
+     allows compiling the modules against recent kernels which removed that
+     from $(KBUILD_CPPFLAGS).
+
+   * modules/Makefile.am: add support for compiling Solaris kernel modules.
+
+   * modules/solaris/vmhgfs/*: initial release of the Solaris HGFS driver in
+     open-vm-tools. Driver is licensed under the CDDL 1.0.
+
+   * vmblock-fuse/*: add the user-level implementation of the vmblock driver,
+     which is build on top of FUSE, to open-vm-tools. vmware-user hasn't yet
+     been modified to use this version of vmblock.
+
+   * vmware-user/copyPaseV3.h: new header introduced during development of the
+     next version of copy paste / DnD for X11 platforms.
+
+
+2008-11-23  Marcelo Vanzin  <mvanzin@vmware.com>
+	* Resync with internal trunk (2008.12.19)
+
+	* configure.ac, */Makefile.am: standardize on using libtool archives for
+	  the libraries. This also means several makefiles were removed, since
+	  there's no need to build two archives of the same library anymore.
+
+	* configure.ac: add logic to detect glib 2.6; this is the minimum version
+	  required by the "Core Services" project. Currently it's an optional
+	  dependency.
+
+	* configure.ac: disable Unity when user specifies --disable-multimon.
+
+	* configure.ac: actually build the pvscsi modules if the detected kernel
+	  version supports it.
+
+	* configure.ac, Makefile.am, lib/guestInfo/Makefile.am,
+	  lib/stubs/Makefile.am, libvmtools/*, lib/include/vmtools.h: add the
+	  "vmtools" shared library used in the "Core Services" project. The library
+	  is a collection of a lot of other libraries used by most VMware Tools
+	  programs, and adds some functionality on top of glib that is used in the
+	  "Core Services" project. Currently no other components from that project
+	  are available as part of open-vm-tools.
+
+	* lib/deployPkg/deployPkgLog.h, lib/deployPkg/toolsDeployPkg.h: moved private
+	  headers out of the public header directory.
+
+	* lib/guestRpc/Makefile.am, modules/Makefile.am: fix the makefiles so that
+	  it's possible to build open-vm-tools from a directory different from the
+	  source dir.
+
+	* lib/hgfsServer/hgfsServer.c: changes to support aliases on Mac OS hosts.
+
+	* lib/hgfsServer/hgfsServerLinux.c: changes to map Windows attributes to
+	  Mac OS FileInfo.
+
+	* lib/include/circList.h: removed unused file.
+
+	* lib/include/unityCommon.h, lib/unity/unity.c: changes to add documentation
+	  to various application RPCs used in Tools.
+
+	* lib/misc/posixPosix.c, toolbox/toolboxScripts.c: fix include path for
+	  syslimits.h on FreeBSD.
+
+	* lib/unity/unityPlatformX11.c: better detection of the guest's work area
+	  boundaries; fixes a problem when dragging a Window in Unity mode with
+	  the host's task bar on the left/right of screen would result in weird
+	  behavior.
+
+	* lib/unity/unityPlatformX11Settings.c, lib/unity/unityPlatformX11Window.c,
+	  lib/unity/unityX11.h: preserve the _NET_WM_DESKTOP setting when hiding
+	  windows; this fixes a problem where hiding a panel and later restoring it
+	  would result in the wrong _NET_WM_DESKTOP property being set for the panel,
+	  causing it to only display on the first virtual desktop.
+
+	* modules/linux/vmci/*: minor changes related to internal development of the
+	  Mac OS drivers.
+
+	* modules/linux/vmhgfs/page.c: fix HGFS driver for kernel 2.6.28.
+
+	* modules/linux/vsock/linux/af_vsock.c: added code to gather some performance
+	  statistics for the driver.
+
+	* toolbox/toolbox-gtk.c: a few fixes to the help functionality.
+
+	* vmware-user/vmware-user.c, vmware-user-suid-wrapper/main.c: change the
+	  "blockFd" argument to have an extra dash so it follows the convention of
+	  common command line parsing libraries.
+
+	* Other bug fixes and changes in shared code that don't affect open-vm-tools.
+
+2008-11-18  Marcelo Vanzin  <mvanzin@vmware.com>
+	* Resync with internal trunk (2008.11.14)
+
+	* lib/include/vm_version.h: Bumped TOOLS_VERSION.
+
+	* guestd/toolsDaemon.c, lib/include/vm_app.h: changes related to host-side
+	  configuration of power operations.
+
+	* hgfsclient/hgfsclient.c, lib/dnd/dndCommon.c, lib/dnd/dndLinux.c,
+	  lib/hgfs/*, lib/hgfsServer/*, lib/include/cpName.h, lib/include/dnd.h,
+	  lib/include/hgfsEscape.h, lib/include/staticEscape.h, modules/*/vmhgfs/*,
+	  vmware-user/dnd.c: refactor the HGFS character escaping code; escape
+	  invalid characters when the sender allows characters in the file name that
+	  the receiver does not allow.
+
+   * lib/hgfsServer/hgfsServerLinux.c: return proper error code when the
+     remote path points to a non-existent directory.
+
+	* lib/deployPkg/deployPkg.c, lib/deployPkg/deployPkgLog.c,
+	  lib/include/deployPkg.h, lib/include/rpcin.h, lib/rpcin/rpcin.c:
+     refactoring for the Tools Core Services project.
+
+	* lib/dnd/dndCommon.c: don't ASSERT if the staging directory is not
+	  actually a directory.
+
+	* lib/dynxdr/xdrutil.c, lib/include/xdrutil.h: more XDR-related utility
+	  functions.
+
+	* lib/file/file.c, lib/file/fileLockPrimitive.c, lib/include/vm_basic_defs.h:
+	  replace use of strtok with strtok_r.
+
+	* lib/guestApp/guestApp.c, lib/include/guestApp.h: more utility functions.
+
+	* lib/guestApp/guestApp.c, lib/include/backdoor_def.h, vmware-user/pointer.c:
+	  add the ability to detect whether the mouse hardware can be used in
+     absolute mode, which allows for auto grab / auto ungrab to work.
+
+	* lib/guestInfo/guestInfo.c, lib/guestInfo/guestInfoPosix.c,
+     lib/guestRpc/nicinfo.x: provide the prefix length of an IPv6 address in a
+     separate field of the NicInfo struct.
+
+	* lib/guestInfo/guestInfoPerfMonLinux.c: reduce log spew.
+
+	* lib/guestInfo/guestInfoServer.c, lib/include/guestInfo.h: changes related
+	  to how the VMware code in the host handles Tools version information.
+
+	* lib/include/unityCommon.h: changes related to documenting the Unity API.
+
+	* lib/include/unity.h, lib/unity/*: remove a few unused RPCs, add a new
+	  function used to notify the host of the status of Unity.
+
+	* modules/freebsd/vmhgfs/state.c, modules/vmhgfs/freebsd/vnops.c,
+     modules/vmhgfs/freebsd/vnopscommon.*: support symlinks on FreeBSD and
+     Mac OS.
+
+   * modules/freebsd/vmhgfs/worker.c: fix mutex not being unlocked in some
+     error paths.
+
+	* modules/linux/dkms.conf: add rudimentary dkms support.
+
+	* modules/linux/pvscsi/*: add a driver for VMware's paravirtualized SCSI
+	  device.
+
+	* modules/linux/*/Makefile, modules/linux/vmci/Makefile.kernel,
+	  modules/linux/vsock/Makefile.kernel: add support for exporing symbols,
+	  needed for dependent modules to load if a kernel >= 2.6.26 is compiled
+	  with CONFIG_MODVERSIONS. Make the vsock module reference the vmci module's
+	  symbols.
+
+	* modules/vmmemctl/freebsd/os.c: add sysctl to get driver status. Information
+	  can be retrieved with "sysctl vm.vmmemctl".
+
+   * modules/linux/vmci/vmci_defs.h, modules/linux/vmci/vmci_call_defs.h,
+     modules/linux/vsock/vmciHostKernelAPI.h: changes related to VMCI work
+     on VMware ESX.
+
+	* modules/linux/vsock/linux/*: improve performance of some applications by
+	  improving the poll behavior and sending less packets when waiting
+	  for a response.
+
+   * modules/linux/vmsnc/sync.c: fix panic on kernels < 2.6.20.
+
+	* modules/linux/vmxnet3/vmxnet3.c, modules/linux/vmxnet3/vmxnet3_int.h,
+     modules/linux/vmxnet3/vmxnet3_version.h: inherit net device features to
+     avoid having the kernel setting the PSH flag on every TCP packet (among
+     other issues).
+
+	* modules/*/*/*: Reflected changes from elsewhere.
+
+	* scripts/common/vmware-user.desktop: add missing "Type" information; fixes
+	  auto-start of vmware-user on Ubuntu 8.10.
+
+	* toolbox/*: fix a GTK+ warning caused when trying to unref a dialog
+	  instance from a signal callback.
+
+	* vmware-user/copyPaste.c: work around an issue when OpenOffice's "cut"
+	  command is used; it sets the timestamp of both the clipboard and the
+	  primary selection, but only puts data in the clipboard.
+
+	* Other files: minor refactorings, and changes unrelated to open-vm-tools.
+
 2008-10-13  Adar Dembo  <adar@vmware.com>
 	* Resync with internal trunk (2008.10.09)
 

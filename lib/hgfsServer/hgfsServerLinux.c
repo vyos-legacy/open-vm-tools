@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 1998 VMware, Inc. All rights reserved.
+ * Copyright (C) 1998-2008 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -50,6 +50,7 @@
 #include "vmware.h"
 #include "hgfsServerPolicy.h" // for security policy
 #include "hgfsServerInt.h"
+#include "hgfsEscape.h"
 #include "str.h"
 #include "cpNameLite.h"
 #include "hgfsUtil.h"  // for cross-platform time conversion
@@ -76,6 +77,8 @@
 #if defined(__APPLE__)
 #include <CoreServices/CoreServices.h> // for the alias manager
 #include <CoreFoundation/CoreFoundation.h> // for CFString and CFURL
+#include <sys/attr.h>       // for getattrlist
+#include <sys/vnode.h>      // for VERG / VDIR
 #endif
 
 /*
@@ -231,6 +234,13 @@ futimes(int fd, const struct timeval times[2])
 #undef STRLEN_OF_MAXINT_AS_STRING
 #endif
 
+#if defined(__APPLE__)
+struct FInfoAttrBuf {
+   uint32 length;
+   fsobj_type_t objType;
+   char finderInfo[32];
+};
+#endif
 /*
  * Server open flags, indexed by HgfsOpenFlags. Stolen from
  * lib/fileIOPosix.c
@@ -267,6 +277,7 @@ static HgfsInternalStatus HgfsGetattrResolveAlias(char const *fileName,
 
 static HgfsInternalStatus HgfsGetattrFromName(char *fileName,
                                               HgfsShareOptions configOptions,
+                                              char *shareName,
                                               HgfsFileAttrInfo *attr,
                                               char **targetName);
 
@@ -318,6 +329,10 @@ static HgfsInternalStatus HgfsSetattrFromName(char *cpName,
                                               HgfsFileAttrInfo *attr,
                                               HgfsAttrHint hints,
 					      uint32 caseFlags);
+
+static Bool HgfsIsShareRoot(char const *cpName, size_t cpNameSize);
+static HgfsInternalStatus HgfsGetHiddenXAttr(char const *fileName, Bool *attribute);
+static HgfsInternalStatus HgfsSetHiddenXAttr(char const *fileName, Bool value);
 
 #ifdef HGFS_OPLOCKS
 /*
@@ -921,6 +936,7 @@ HgfsValidateOpen(HgfsFileOpenInfo *openInfo, // IN: Open info struct
    mode_t openPerms;
    HgfsServerLock serverLock;
    HgfsInternalStatus status = 0;
+   Bool needToSetAttribute = FALSE;
 
    ASSERT(openInfo);
    ASSERT(localId);
@@ -967,6 +983,23 @@ HgfsValidateOpen(HgfsFileOpenInfo *openInfo, // IN: Open info struct
    }
 
    /*
+    * Determine if hidden attribute needs to be updated.
+    * It needs to be updated if a new file is created or an existing file is truncated.
+    * Since Posix_Open does not tell us if a new file has been created when O_CREAT is
+    * specified we need to find out if the file exists before an open that may create
+    * it.
+    */
+   if (openInfo->mask & HGFS_OPEN_VALID_FILE_ATTR) {
+      if ((openFlags & O_TRUNC) ||
+          ((openFlags & O_CREAT) && (openFlags & O_EXCL))) {
+         needToSetAttribute = TRUE;
+      } else if (openFlags & O_CREAT) {
+         int err = access(openInfo->utf8Name, F_OK);
+         needToSetAttribute = (err != 0) && (errno == ENOENT);
+      }
+   }
+
+   /*
     * Try to open the file with the requested mode, flags and permissions.
     */
    fd = Posix_Open(openInfo->utf8Name,
@@ -978,6 +1011,11 @@ HgfsValidateOpen(HgfsFileOpenInfo *openInfo, // IN: Open info struct
               openInfo->utf8Name, strerror(error)));
       status = error;
       goto exit;
+   }
+
+   /* Set the rest of the Windows specific attributes if necessary. */
+   if (needToSetAttribute) {
+      HgfsSetHiddenXAttr(openInfo->utf8Name, openInfo->attr & HGFS_ATTR_HIDDEN);
    }
 
    /* Stat file to get its volume and file info */
@@ -1250,6 +1288,7 @@ HgfsGetattrResolveAlias(char const *fileName,       // IN:  Input filename
 #endif
 }
 
+
 /*
  *-----------------------------------------------------------------------------
  *
@@ -1294,6 +1333,19 @@ HgfsGetHiddenAttr(char const *fileName,         // IN:  Input filename
        * This replicates SMB behavior see bug 292189.
        */
       attr->flags |= HGFS_ATTR_HIDDEN_FORCED;
+   } else {
+      Bool isHidden = FALSE;
+      /*
+       * Do not propagate any error returned from HgfsGetHiddenXAttr.
+       * Consider that the file is not hidden if can't get hidden attribute for
+       * whatever reason; most likely it fails because hidden attribute is not supported
+       * by the OS or file system.
+       */
+      HgfsGetHiddenXAttr(fileName, &isHidden);
+      if (isHidden) {
+         attr->mask |= HGFS_ATTR_VALID_FLAGS;
+         attr->flags |= HGFS_ATTR_HIDDEN;
+      }
    }
 }
 
@@ -1748,6 +1800,7 @@ HgfsServerCaseConversionRequired()
 static HgfsInternalStatus
 HgfsGetattrFromName(char *fileName,                    // IN/OUT:  Input filename
                     HgfsShareOptions configOptions,    // IN: Share config options
+                    char *shareName,                   // IN: Share name
                     HgfsFileAttrInfo *attr,            // OUT: Struct to copy into
                     char **targetName)                 // OUT: Symlink target filename
 {
@@ -1827,18 +1880,47 @@ HgfsGetattrFromName(char *fileName,                    // IN/OUT:  Input filenam
       if (HgfsGetattrResolveAlias(fileName, &myTargetName)) {
          LOG(4, ("HgfsGetattrFromName: could not resolve file aliases\n"));
       }
+      attr->type = HGFS_FILE_TYPE_REGULAR;
       if (myTargetName != NULL) {
          /*
-          * Let's mangle the permissions and size of the file so that it more
-          * closely resembles a symlink. The size should be the length of the
-          * target name (not including the nul-terminator), and the permissions
-          * should be 777.
+          * At this point the alias target has been successfully resolved. If the alias
+          * target is inside the same shared folder then convert it to relative path.
+          * Converting to a relative path produces a symlink that points to the target
+          * file in the guest OS.
+          * If the target lies outside the shared folder then treat it the same way as
+          * if alias has not been resolved.
           */
-         stats.st_size = strlen(myTargetName);
-         stats.st_mode |= ACCESSPERMS;
-         attr->type = HGFS_FILE_TYPE_SYMLINK;
-      } else {
-         attr->type = HGFS_FILE_TYPE_REGULAR;
+         HgfsNameStatus nameStatus;
+         size_t sharePathLen;
+         const char* sharePath;
+         nameStatus = HgfsServerPolicy_GetSharePath(shareName,
+                                                    strlen(shareName),
+                                                    HGFS_OPEN_MODE_READ_ONLY,
+                                                    &sharePathLen,
+                                                    &sharePath);
+         if (nameStatus == HGFS_NAME_STATUS_COMPLETE &&
+             sharePathLen < strlen(myTargetName) &&
+             Str_Strncmp(sharePath, myTargetName, sharePathLen) == 0) {
+            char *relativeName;
+            relativeName = HgfsBuildRelativePath(fileName, myTargetName);
+            free(myTargetName);
+            myTargetName = relativeName;
+            if (myTargetName != NULL) {
+               /*
+                * Let's mangle the permissions and size of the file so that it more
+                * closely resembles a symlink. The size should be the length of the
+                * target name (not including the nul-terminator), and the permissions
+                * should be 777.
+                */
+               stats.st_size = strlen(myTargetName);
+               stats.st_mode |= ACCESSPERMS;
+               attr->type = HGFS_FILE_TYPE_SYMLINK;
+            } else {
+               LOG(4, ("HgfsGetattrFromName: out of memory\n"));
+            }
+         } else {
+             LOG(4, ("HgfsGetattrFromName: alias target is outside shared folder\n"));
+         }
       }
    }
 
@@ -2476,10 +2558,19 @@ HgfsSetattrFromFd(HgfsHandle file,         // IN: file descriptor
       }
    }
 
+   if (attr->mask & HGFS_ATTR_VALID_FLAGS) {
+       char *localName;
+       size_t localNameSize;
+       if (HgfsHandle2FileName(file, &localName, &localNameSize)) {
+          status = HgfsSetHiddenXAttr(localName, attr->flags & HGFS_ATTR_HIDDEN);
+          free(localName);
+       }
+   }
+
    timesStatus = HgfsSetattrTimes(&statBuf, attr, hints,
                                   &times[0], &times[1], &timesChanged);
    if (timesStatus == 0 && timesChanged) {
-      Bool superUser;
+      uid_t uid;
 
       LOG(4, ("HgfsSetattrFromFd: setting new times\n"));
 
@@ -2488,15 +2579,15 @@ HgfsSetattrFromFd(HgfsHandle file,         // IN: file descriptor
        * superuser briefly to set the files times using futimes. Otherwise
        * return an error.
        */
-      superUser = IsSuperUser();
-      if (!superUser && getuid() != statBuf.st_uid) {
+
+      if (!Id_IsSuperUser() && (getuid() != statBuf.st_uid)) {
          LOG(4, ("HgfsSetattrFromFd: only owner of file %u or root can call "
                  "futimes\n", fd));
          /* XXX: Linux kernel says both EPERM and EACCES are valid here. */
          status = EPERM;
          goto exit;
       }
-      SuperUser(TRUE);
+      uid = Id_BeginSuperUser();
       /*
        * XXX Newer glibc provide also lutimes() and futimes()
        *     when we politely ask with -D_GNU_SOURCE -D_BSD_SOURCE
@@ -2508,7 +2599,7 @@ HgfsSetattrFromFd(HgfsHandle file,         // IN: file descriptor
                  fd, strerror(error)));
          status = error;
       }
-      SuperUser(superUser);
+      Id_EndSuperUser(uid);
    } else if (timesStatus != 0) {
       status = timesStatus;
    }
@@ -2665,6 +2756,10 @@ HgfsSetattrFromName(char *cpName,             // IN: Name
       }
    }
 
+   if (attr->mask & HGFS_ATTR_VALID_FLAGS) {
+      status = HgfsSetHiddenXAttr(localName, attr->flags & HGFS_ATTR_HIDDEN);
+   }
+
    timesStatus = HgfsSetattrTimes(&statBuf, attr, hints,
                              &times[0], &times[1], &timesChanged);
    if (timesStatus == 0 && timesChanged) {
@@ -2779,6 +2874,8 @@ HgfsServerScandir(char const *baseDir,      // IN: Directory to search in
             goto exit;
          }
          memcpy(myDents[myNumDents], newDent, newDent->d_reclen);
+         HgfsEscape_Undo(myDents[myNumDents]->d_name,
+                         strlen(myDents[myNumDents]->d_name)+ 1);
 
          /*
           * Dent is done. Bump the offset to the batched buffer to process the
@@ -3419,7 +3516,7 @@ HgfsServerSearchOpen(char const *packetIn, // IN: incoming packet
       inEnd = dirName + dirNameLength;
 
       /* Get the first component. */
-      len = CPName_GetComponentGeneric(dirName, inEnd, "", (char const **) &next);
+      len = CPName_GetComponent(dirName, inEnd, (char const **) &next);
       if (len < 0) {
          LOG(4, ("HgfsServerSearchOpen: get first component failed\n"));
          status = ENOENT;
@@ -3578,7 +3675,8 @@ HgfsServerSearchRead(char const *packetIn, // IN: incoming packet
 
          LOG(4, ("HgfsServerSearchRead: about to stat \"%s\"\n", fullName));
 
-         status = HgfsGetattrFromName(fullName, configOptions, &attr, NULL);
+         status = HgfsGetattrFromName(fullName, configOptions, search.utf8ShareName,
+                                      &attr, NULL);
          free(fullName);
 
          if (status != 0) {
@@ -3640,17 +3738,19 @@ HgfsServerSearchRead(char const *packetIn, // IN: incoming packet
                return HgfsConvertFromNameStatus(nameStatus);
             }
 
-            status = HgfsGetattrFromName(sharePath, configOptions, &attr, NULL);
+            /*
+             * Server needs to produce list of shares that is consistent with
+             * the list defined in UI. If a share can't be accessed because of
+             * problems on the host, the server still enumerates it and
+             * returns to the client.
+             */
+            status = HgfsGetattrFromName(sharePath, configOptions, dent->d_name,
+					 &attr, NULL);
             if (status != 0) {
                /*
-                * The dent no longer exists. Remove it from the search and get
-                * the next dent instead.
+                * The dent no longer exists. Log the event.
                 */
-               LOG(4, ("HgfsServerSearchRead: stat FAILED, removing\n"));
-               free(HgfsGetSearchResult(hgfsSearchHandle, requestedOffset,
-                                        TRUE));
-               free(dent);
-               continue;
+               LOG(4, ("HgfsServerSearchRead: stat FAILED\n"));
             }
          }
 
@@ -3679,6 +3779,12 @@ HgfsServerSearchRead(char const *packetIn, // IN: incoming packet
 
       LOG(4, ("HgfsServerSearchRead: dent name is \"%s\" len = %"FMTSZ"u\n",
 	      entryName, entryNameLen));
+
+
+      /*
+       * We need to unescape the name before sending it back to the client
+       */
+      HgfsEscape_Undo(entryName, entryNameLen + 1);
 
       /*
        * XXX: HgfsPackSearchReadReply will error out if the dent we
@@ -3805,9 +3911,20 @@ HgfsServerGetattr(char const *packetIn, // IN: incoming packet
             goto exit;
          }
 
-         status = HgfsGetattrFromName(localName, configOptions, &attr, &targetName);
+         status = HgfsGetattrFromName(localName, configOptions, cpName, &attr,
+                                      &targetName);
          free(localName);
          if (status != 0) {
+            /*
+             * If it is a dangling share server should not return ENOENT
+             * to the client because it causes confusion: a name that is returned
+             * by directory enumeration should not produce "name not found"
+             * error.
+             * Replace it with a more appropriate error code: no such device.
+             */
+            if (status == ENOENT && HgfsIsShareRoot(cpName, cpNameSize)) {
+               status = ENXIO;
+            }
             goto exit;
          }
          break;
@@ -4303,7 +4420,8 @@ HgfsServerRename(char const *packetIn, // IN: incoming packet
        * We were asked to avoid replacing an existing file,
        * so fail if the target exists.
        */
-      status = HgfsGetattrFromName(localNewName, configOptions, &attr, NULL);
+      status = HgfsGetattrFromName(localNewName, configOptions, cpNewName,
+                                   &attr, NULL);
       if (status == 0) {
          /* The target exists, and so must fail the rename. */
          LOG(4, ("HgfsServerRename: error: target %s exists\n", localNewName));
@@ -4582,13 +4700,6 @@ HgfsServerQueryVolume(char const *packetIn, // IN: incoming packet
       }
       if (!HgfsRemoveSearch(handle)) {
          LOG(4, ("HgfsServerQueryVolume: could not close search on base\n"));
-      }
-      if (shares == failed) {
-         /*
-          * We failed to query any of the shares.  We return the error from the
-          * first share failure.
-          */
-         return firstErr;
       }
       break;
    case HGFS_NAME_STATUS_COMPLETE:
@@ -4992,3 +5103,247 @@ HgfsAckOplockBreak(ServerLockData *lockData, // IN: server lock info
 }
 #endif
 
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsIsShareRoot --
+ *
+ *    Checks if the cpName represents the root directory for a share.
+ *    Components in CPName format are separated by NUL characters. 
+ *    CPName for the root of a share contains only one component thus
+ *    it does not have any embedded '\0' characters in the name.
+ *
+ * Results:
+ *    TRUE if it is the root directory, FALSE otherwise.
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+HgfsIsShareRoot(char const *cpName,         // IN: name to test
+                size_t cpNameSize)          // IN: length of the name
+{
+   size_t i;
+   for (i = 0; i < cpNameSize; i++) {
+      if (cpName[i] == '\0') {
+         return FALSE;
+      }
+   }
+   return TRUE;
+}
+
+#if defined(__APPLE__)
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsGetHiddenXattr --
+ *
+ *    For Mac hosts returns true if file has invisible bit set in the FileFinder
+ *    extended attributes.
+ *
+ * Results:
+ *    0 if succeeded getting attribute, error code otherwise otherwise.
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static HgfsInternalStatus
+HgfsGetHiddenXAttr(char const *fileName,   // IN: File name
+                   Bool *attribute)        // OUT: Hidden atribute
+{
+   struct attrlist attrList;
+   struct FInfoAttrBuf attrBuf;
+   HgfsInternalStatus err;
+
+   ASSERT(fileName);
+   ASSERT(attribute);
+
+   memset(&attrList, 0, sizeof attrList);
+   attrList.bitmapcount = ATTR_BIT_MAP_COUNT;
+   attrList.commonattr = ATTR_CMN_OBJTYPE | ATTR_CMN_FNDRINFO;
+   err = getattrlist(fileName, &attrList, &attrBuf, sizeof attrBuf, 0);
+   if (err == 0) {
+      switch (attrBuf.objType) {
+      case VREG: {
+         FileInfo *info = (FileInfo*) attrBuf.finderInfo;
+         uint16 finderFlags = CFSwapInt16BigToHost(info->finderFlags);
+         *attribute = (finderFlags & kIsInvisible) != 0;
+         break;
+      }
+      case VDIR: {
+         FolderInfo *info = (FolderInfo*) attrBuf.finderInfo;
+         uint16 finderFlags = CFSwapInt16BigToHost(info->finderFlags);
+         *attribute = (finderFlags & kIsInvisible) != 0;
+         break;
+      }
+      default:
+         LOG(4, ("HgfsGetHiddenXattr: Unrecognized object type %d\n", attrBuf.objType));
+         err = EINVAL;
+      }
+   } else {
+      LOG(4, ("HgfsGetHiddenXattr: Error %d when getting attributes\n", err));
+   }
+   return err;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * ChangeInvisibleFlag --
+ *
+ *    Changes value of the invisible bit in a flags variable to a value defined by
+ *    setFlag parameter.
+ *
+ * Results:
+ *    TRUE flag has been changed, FALSE otherwise.
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+ChangeInvisibleFlag(uint16 *flags,           // IN: variable that contains flags
+                    Bool setFlag)            // IN: new value for the invisible flag
+{
+   Bool changed = FALSE;
+   /* 
+    * Finder keeps, reports and expects to set flags in big endian format.
+    * Needs to convert to host endian before using constants
+    * and then convert back to big endian before saving
+    */
+   uint16 finderFlags = CFSwapInt16BigToHost(*flags);
+   Bool isInvisible = (finderFlags & kIsInvisible) != 0;
+   if (setFlag != isInvisible) {
+      if (setFlag) {
+         finderFlags |= kIsInvisible;
+      } else {
+         finderFlags &= ~kIsInvisible;
+      }
+      *flags = CFSwapInt16HostToBig(finderFlags);
+      changed = TRUE;
+   }
+   return changed;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsSetHiddenXAttr --
+ *
+ *    Sets new value for the invisible attribute of a file.
+ *
+ * Results:
+ *    0 if succeeded, error code otherwise.
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static HgfsInternalStatus
+HgfsSetHiddenXAttr(char const *fileName,       // IN: path to the file 
+                   Bool value)                 // IN: new value to the invisible attribute
+{
+   HgfsInternalStatus err;
+   Bool changed = FALSE;
+   struct attrlist attrList;
+   struct FInfoAttrBuf attrBuf;
+
+   ASSERT(fileName);
+
+   memset(&attrList, 0, sizeof attrList);
+   attrList.bitmapcount = ATTR_BIT_MAP_COUNT;
+   attrList.commonattr = ATTR_CMN_OBJTYPE | ATTR_CMN_FNDRINFO;
+   err = getattrlist(fileName, &attrList, &attrBuf, sizeof attrBuf, 0);
+   if (err == 0) {
+      switch (attrBuf.objType) {
+      case VREG: {
+         FileInfo *info = (FileInfo*) attrBuf.finderInfo;
+         changed = ChangeInvisibleFlag(&info->finderFlags, value);
+         break;
+      }
+      case VDIR: {
+         FolderInfo *info = (FolderInfo*) attrBuf.finderInfo;
+         changed = ChangeInvisibleFlag(&info->finderFlags, value);
+         break;
+      }
+      default:
+         LOG(4, ("HgfsGetHiddenXattr: Unrecognized object type %d\n", attrBuf.objType));
+         err = EINVAL;
+      }
+   } else {
+      err = errno;
+   }
+   if (changed) {
+      attrList.commonattr = ATTR_CMN_FNDRINFO;
+      err = setattrlist(fileName, &attrList, attrBuf.finderInfo,
+                        sizeof attrBuf.finderInfo, 0);
+   }
+   return err;
+}
+
+#else // __APPLE__
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsGetHiddenXAttr --
+ *
+ *    Always returns EINVAL since there is no support for invisible files in Linux
+ *    HGFS server.
+ *
+ * Results:
+ *    Currently always returns EINVAL.  Will return 0 when support for invisible files
+ *    is implemented in Linux server.
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static HgfsInternalStatus
+HgfsGetHiddenXAttr(char const *fileName,    // IN: File name
+                   Bool *attribute)         // OUT: Value of the hidden attribute 
+{
+   return EINVAL;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsSetHiddenXAttr --
+ *
+ *    Sets new value for the invisible attribute of a file.
+ *    Currently Linux server does not support invisible or hiddden files thus
+ *    the function fails when a attempt to mark a file as hidden is made.
+ *
+ * Results:
+ *    0 if succeeded, error code otherwise.
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static HgfsInternalStatus
+HgfsSetHiddenXAttr(char const *fileName,   // IN: File name
+                   Bool value)             // IN: Value of the attribute to set
+{
+   return value ? EINVAL : 0;
+}
+#endif // __APPLE__

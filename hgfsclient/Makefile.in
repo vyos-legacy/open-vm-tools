@@ -69,16 +69,17 @@ am_vmware_hgfsclient_OBJECTS = hgfsclient.$(OBJEXT) \
 	stub-user-util.$(OBJEXT)
 vmware_hgfsclient_OBJECTS = $(am_vmware_hgfsclient_OBJECTS)
 am__DEPENDENCIES_1 =
-vmware_hgfsclient_DEPENDENCIES = ../lib/conf/libConf.a \
-	../lib/guestApp/libGuestApp.a ../lib/hgfs/libHgfs.a \
-	../lib/hgfsBd/libHgfsBd.a ../lib/rpcOut/libRpcOut.a \
-	../lib/string/libString.a ../lib/toolsLogger/libToolsLogger.a \
-	../lib/vmCheck/libVmCheck.a ../lib/vmSignal/libVmSignal.a \
-	../lib/backdoor/libBackdoor.a ../lib/dict/libDict.a \
-	../lib/err/libErr.a ../lib/file/libFile.a \
-	../lib/message/libMessage.a ../lib/rpcVmx/libRpcVmx.a \
-	../lib/unicode/libUnicode.a ../lib/sync/libSync.a \
-	../lib/misc/libMisc.a ../lib/stubs/libStubs.a \
+vmware_hgfsclient_DEPENDENCIES = ../lib/conf/libConf.la \
+	../lib/guestApp/libGuestApp.la ../lib/hgfs/libHgfs.la \
+	../lib/hgfsBd/libHgfsBd.la ../lib/rpcOut/libRpcOut.la \
+	../lib/string/libString.la \
+	../lib/toolsLogger/libToolsLogger.la \
+	../lib/vmCheck/libVmCheck.la ../lib/vmSignal/libVmSignal.la \
+	../lib/backdoor/libBackdoor.la ../lib/dict/libDict.la \
+	../lib/err/libErr.la ../lib/file/libFile.la \
+	../lib/message/libMessage.la ../lib/rpcVmx/libRpcVmx.la \
+	../lib/unicode/libUnicode.la ../lib/sync/libSync.la \
+	../lib/misc/libMisc.la ../lib/stubs/libStubs.la \
 	$(am__DEPENDENCIES_1)
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
@@ -128,6 +129,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -151,6 +156,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -188,6 +194,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -252,16 +260,18 @@ top_srcdir = @top_srcdir@
 # In the absence of the linker options --start-group and --end-group (which can't
 # be put in LDADD), we need to bring the following libraries out of the alphebetical
 # order so their symbols are properly resolved.
-vmware_hgfsclient_LDADD = ../lib/conf/libConf.a \
-	../lib/guestApp/libGuestApp.a ../lib/hgfs/libHgfs.a \
-	../lib/hgfsBd/libHgfsBd.a ../lib/rpcOut/libRpcOut.a \
-	../lib/string/libString.a ../lib/toolsLogger/libToolsLogger.a \
-	../lib/vmCheck/libVmCheck.a ../lib/vmSignal/libVmSignal.a \
-	../lib/backdoor/libBackdoor.a ../lib/dict/libDict.a \
-	../lib/err/libErr.a ../lib/file/libFile.a \
-	../lib/message/libMessage.a ../lib/rpcVmx/libRpcVmx.a \
-	../lib/unicode/libUnicode.a ../lib/sync/libSync.a \
-	../lib/misc/libMisc.a ../lib/stubs/libStubs.a $(am__append_1)
+vmware_hgfsclient_LDADD = ../lib/conf/libConf.la \
+	../lib/guestApp/libGuestApp.la ../lib/hgfs/libHgfs.la \
+	../lib/hgfsBd/libHgfsBd.la ../lib/rpcOut/libRpcOut.la \
+	../lib/string/libString.la \
+	../lib/toolsLogger/libToolsLogger.la \
+	../lib/vmCheck/libVmCheck.la ../lib/vmSignal/libVmSignal.la \
+	../lib/backdoor/libBackdoor.la ../lib/dict/libDict.la \
+	../lib/err/libErr.la ../lib/file/libFile.la \
+	../lib/message/libMessage.la ../lib/rpcVmx/libRpcVmx.la \
+	../lib/unicode/libUnicode.la ../lib/sync/libSync.la \
+	../lib/misc/libMisc.la ../lib/stubs/libStubs.la \
+	$(am__append_1)
 vmware_hgfsclient_SOURCES = hgfsclient.c stub-user-util.c
 @HAVE_ICU_FALSE@vmware_hgfsclient_LINK = $(LINK)
 @HAVE_ICU_TRUE@vmware_hgfsclient_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \

@@ -1,3 +1,47 @@
+open-vm-tools 2009.01.21 changes:
+   * First open source release of the HGFS module for Solaris, under the CDDL.
+   Other modules are expected to be added in the upcoming releases.
+
+   * Added an implementation of vmblock on top of FUSE; vmware-user still
+   doesn't use this module even if it is available, though.
+
+   * Linux modules now add the "supported" tag used by Novell in their
+   SLES 10 SP2 release when loading modules.
+
+   * Fix compilation of modules in newer Linux kernels which don't include
+   $(LINUXINCLUDE) in the compiler flags anymore.
+
+open-vm-tools 2008.12.23 changes:
+	* Lots of makefile cleanup with the switch to using libtool archives.
+
+	* Automatically disable Unity if multimon support is disabled.
+
+	* Actually build the pvscsi modules.
+
+	* First bits of the "Core Service" project are starting to show up; the
+	base "vmtools" library was added to the package. It currently is mostly
+	a collection of the existing libraries already shipped with open-vm-tools,
+	plus some extra functionality build on top of glib. Currently no other
+	code in open-vm-tools uses it, so it's optional.
+
+	* The HGFS driver was fixed for the Linux 2.6.28 kernel.
+
+open-vm-tools 2009.11.18 changes:
+	* The pvscsi Linux kernel module has been added (for kernels >= 2.6.8).
+	It provides access to VMware's new paravirtualized SCSI device.
+
+	* The HGFS driver and user-level code has seen a lot of refactoring to
+	enable more consistent name escaping. The FreeBSD driver now supports
+	symlinks.
+
+	* The Linux module makefiles now support exporting symbol version files,
+	allowing modules with dependencies (such as vsock, which depends on vmci)
+	to correctly build and load on Linux >= 2.6.26 with CONFIG_MODVERSIONS.
+
+	* Rudimentary support for dkms.
+
+	* Assortment of bug fixes.
+
 open-vm-tools 2009.10.13 changes:
 	* The vmxnet3 Linux kernel module has been added. This module provides
 	better network performance for the guest. The corresponding virtual

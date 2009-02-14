@@ -45,8 +45,8 @@ extern "C"{
 # ifdef __FreeBSD__
 #  include <sys/param.h> // For __FreeBSD_version
 # endif
-# if defined(__FreeBSD__) && __FreeBSD_version >= 503000
-#  include <syslimits.h>  // PATH_MAX
+# if defined(__FreeBSD__)
+#  include <sys/syslimits.h>  // PATH_MAX
 # else 
 #  include <limits.h>  // PATH_MAX
 # endif 
@@ -86,6 +86,7 @@ EXTERN char *FileMacos_SliceDevToSliceUUID(char const *bsdSliceDev);
 EXTERN char *FileMacos_SliceUUIDToSliceDev(char const *uuid);
 #elif defined VMX86_SERVER
 EXTERN int File_GetVMFSBlockSize(ConstUnicode pathName, uint32 *blockSize);
+EXTERN int File_GetVMFSfsType(ConstUnicode pathName, char **fsType);
 #endif
 
 EXTERN Bool File_Exists(ConstUnicode pathName);
@@ -109,6 +110,9 @@ EXTERN void File_GetPathName(ConstUnicode fullPath,
 
 EXTERN Unicode File_StripSlashes(ConstUnicode path);
 
+EXTERN Unicode File_PathJoin(ConstUnicode dirName,
+                             ConstUnicode baseName);
+
 EXTERN Bool File_CreateDirectory(ConstUnicode pathName);
 EXTERN Bool File_EnsureDirectory(ConstUnicode pathName);
 
@@ -130,8 +134,6 @@ EXTERN Bool File_WalkDirectoryNext(WalkDirContext context,
                                    Unicode *path);
 EXTERN void File_WalkDirectoryEnd(WalkDirContext context);
 
-EXTERN Bool File_IsWritableDir(ConstUnicode dirName);
-
 EXTERN Bool File_IsDirectory(ConstUnicode pathName);
 
 EXTERN Bool File_IsFile(ConstUnicode pathName);
@@ -150,7 +152,8 @@ EXTERN Unicode File_FullPath(ConstUnicode pathName);
 
 EXTERN Bool File_IsFullPath(ConstUnicode pathName);
 
-EXTERN uint64 File_GetFreeSpace(ConstUnicode pathName);
+EXTERN uint64 File_GetFreeSpace(ConstUnicode pathName,
+                                Bool doNotAscend);
 
 EXTERN uint64 File_GetCapacity(ConstUnicode pathName);
 

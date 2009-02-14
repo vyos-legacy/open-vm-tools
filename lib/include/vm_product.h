@@ -129,6 +129,9 @@
 #define PRODUCT_VDM_SHORT_NAME "VDM"
 #define PRODUCT_VDM_NAME MAKE_NAME("Virtual Desktop Manager")
 
+#define PRODUCT_VDDK_SHORT_NAME "VDDK"
+#define PRODUCT_VDDK_NAME MAKE_NAME("VMware Virtual Disk Development Kit")
+
 #define PRODUCT_VDM_CLIENT_NAME MAKE_NAME("VDM Client")
 #define PRODUCT_VDM_CLIENT_NAME_FOR_LICENSE PRODUCT_VDM_CLIENT_NAME
 
@@ -213,8 +216,8 @@
  * NB: See above for constraints on the ordering of this list.
  */
 #define PRODUCT_VMRC_PLUGIN_MIMETYPES \
-   PRODUCT_VMRC_PLUGIN_PREVIOUS_MIMETYPES PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   PRODUCT_VMRC_PLUGIN_CURRENT_MIMETYPE PRODUCT_VMRC_MIMETYPE_TERMINATOR
+   PRODUCT_VMRC_PLUGIN_CURRENT_MIMETYPE PRODUCT_VMRC_MIMETYPE_SEPARATOR \
+   PRODUCT_VMRC_PLUGIN_PREVIOUS_MIMETYPES PRODUCT_VMRC_MIMETYPE_TERMINATOR
 
 /*
  * TODO: This properly lives in productState, but we need it here to
@@ -240,7 +243,8 @@
       || defined(VMX86_VMLS)     \
       || defined(VMX86_VLICENSE) \
       || defined(VMX86_P2V)      \
-      || defined(VMX86_DDK))
+      || defined(VMX86_DDK)      \
+      || defined(VMX86_VDDK))
 #   if defined(_WIN32)
       /*
        * XXX Make the product be Workstation by default if none of the defines
@@ -303,6 +307,8 @@
 # define PRODUCT_SHORT_NAME PRODUCT_VLICENSE_NAME
 #elif defined(VMX86_DDK)
 # define PRODUCT_SHORT_NAME PRODUCT_DDK_NAME
+#elif defined(VMX86_VDDK)
+# define PRODUCT_SHORT_NAME PRODUCT_VDDK_NAME
 #endif
 
 

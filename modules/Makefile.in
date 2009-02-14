@@ -76,6 +76,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -99,6 +103,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -136,6 +141,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -197,6 +204,13 @@ sysconfdir = @sysconfdir@
 target_alias = @target_alias@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
+modulesrc = $(top_srcdir)/modules
+# Solaris does not have Kbuild-like system so we need to supply
+# compiler and linker and other items discovered by configure
+# script.
+@SOLARIS_TRUE@EXTRA_ARGS = "CC=$(CC)" "CC_WARNINGS=$(CC_WARNINGS)" \
+@SOLARIS_TRUE@	"GLOBAL_DEFS=$(GLOBAL_DEFS)" "LD=$(LD)" \
+@SOLARIS_TRUE@	"HAVE_GNU_LD=$(HAVE_GNU_LD)"
 all: all-am
 
 .SUFFIXES:
@@ -374,9 +388,18 @@ all: modules
 modules: $(MODULES)
 
 $(MODULES):
-	$(MAKE) VM_UNAME=$(KERNEL_RELEASE) -C "$(MODULES_OS)/$@"
+	$(MAKE) VM_UNAME=$(KERNEL_RELEASE) $(EXTRA_ARGS) -C "$(modulesrc)/$(MODULES_OS)/$@"
 
-@LINUX_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@export DEPMOD := true
+@LINUX_TRUE@export pvscsidir := $(MODULES_DIR)/drivers/scsi
+@LINUX_TRUE@export vmblockdir := $(MODULES_DIR)/fs/vmblock
+@LINUX_TRUE@export vmcidir := $(MODULES_DIR)/drivers/misc
+@LINUX_TRUE@export vmhgfsdir := $(MODULES_DIR)/fs/vmhgfs
+@LINUX_TRUE@export vmmemctldir := $(MODULES_DIR)/drivers/misc
+@LINUX_TRUE@export vmsyncdir := $(MODULES_DIR)/drivers/misc
+@LINUX_TRUE@export vmxnetdir := $(MODULES_DIR)/drivers/net
+@LINUX_TRUE@export vmxnet3dir := $(MODULES_DIR)/drivers/net
+@LINUX_TRUE@export vsockdir := $(MODULES_DIR)/net/vsock
+@LINUX_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@export DEPMOD := depmod -a
 
 @FREEBSD_TRUE@export vmblockdir := $(MODULES_DIR)
 @FREEBSD_TRUE@export vmhgfsdir := $(MODULES_DIR)
@@ -384,21 +407,32 @@ $(MODULES):
 @FREEBSD_TRUE@export vmsyncdir := $(MODULES_DIR)
 @FREEBSD_TRUE@export vmxnetdir := $(MODULES_DIR)
 
+@SOLARIS_TRUE@export vmhgfsdir := $(MODULES_DIR)
+
 clean-local:
-	for MOD in $(MODULES); do \
-	   $(MAKE) -C "$(MODULES_OS)/$$MOD" clean || exit 1; \
+	for MOD in $(MODULES); do                                              \
+	   if [ -d "$(modulesrc)/$(MODULES_OS)/$$MOD" ]; then                  \
+	      $(MAKE) VM_UNAME=$(KERNEL_RELEASE)                               \
+	             -C "$(modulesrc)/$(MODULES_OS)/$$MOD" clean || exit 1;    \
+	   fi                                                                  \
 	done
-	$(RM) -f $(MODULES_OS)/*.o $(MODULES_OS)/*.ko
+	$(RM) -f $(modulesrc)/$(MODULES_OS)/*.o $(modulesrc)/$(MODULES_OS)/*.ko
 
 install-exec-hook:
-	for MOD in $(MODULES); do \
-		$(INSTALL) -d $(DESTDIR)/$(MODULES_DIR)`eval echo '$$'$${MOD}dir`; \
-		$(INSTALL) -m644 $(MODULES_OS)/$$MOD/$$MOD.ko $(DESTDIR)/$(MODULES_DIR)`eval echo '$$'$${MOD}dir`; \
-	done
-	eval "$$DEPMOD"
+@SOLARIS_TRUE@	for MOD in $(MODULES); do                                              \
+@SOLARIS_TRUE@	   $(MAKE) VM_UNAME=$(KERNEL_RELEASE)                                  \
+@SOLARIS_TRUE@	      -C "$(modulesrc)/$(MODULES_OS)/$$MOD" install || exit 1;         \
+@SOLARIS_TRUE@	done
+@SOLARIS_FALSE@	for MOD in $(MODULES); do                                              \
+@SOLARIS_FALSE@	   $(INSTALL) -d $(DESTDIR)`eval echo '$$'$${MOD}dir`;                 \
+@SOLARIS_FALSE@	   $(INSTALL) -m644 $(modulesrc)/$(MODULES_OS)/$$MOD/$$MOD.ko          \
+@SOLARIS_FALSE@	      $(DESTDIR)`eval echo '$$'$${MOD}dir`;                            \
+@SOLARIS_FALSE@	done
+@SOLARIS_FALSE@	eval "$$DEPMOD"
+
 uninstall-hook:
-	for MOD in $(MODULES); do \
-		$(RM) -f $(DESTDIR)/$(MODULES_DIR)`eval echo '$$'$${MOD}dir`/$$MOD.ko &> /dev/null; \
+	for MOD in $(MODULES); do                                              \
+	   $(RM) -f $(DESTDIR)`eval echo '$$'$${MOD}dir`/$$MOD.ko &> /dev/null;\
 	done
 	eval "$$DEPMOD"
 # Tell versions [3.59,3.63) of GNU make to not export all variables.

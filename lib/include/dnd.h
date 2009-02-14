@@ -91,6 +91,8 @@ typedef enum
    CPFORMAT_FILELIST,
    CPFORMAT_RTF,
    CPFORMAT_FILELIST_URI,
+   CPFORMAT_FILECONTENTS,
+   CPFORMAT_IMG_PNG,
    CPFORMAT_MAX,
 } DND_CPFORMAT;
 
@@ -174,6 +176,17 @@ EXTERN Bool DnD_SetCPClipboardFromLocalText(CPClipboard *clip,
                                             utf16_t *bufIn);
 EXTERN Bool DnD_SetCPClipboardFromLocalRtf(CPClipboard *clip,
                                            char *bufIn);
+EXTERN Bool DnD_SetCPClipboardFromBMPInfo(CPClipboard *clip,
+                                          const LPBITMAPINFOHEADER bmi,
+                                          DND_CPFORMAT fmt);
+EXTERN Bool DnD_SetCPClipboardFromHBITMAP(CPClipboard *clip,
+                                          HBITMAP hBitmap,
+                                          DND_CPFORMAT fmt);
+EXTERN Bool DnD_PNGToLocalFormat(const unsigned char *pngData,
+                                 unsigned int pngDataLen,
+                                 int pngReadFlags,
+                                 DynBuf *bmpData,
+                                 HBITMAP *hBitmap);
 EXTERN Bool DnD_FakeMouseEvent(DWORD flag);
 EXTERN Bool DnD_FakeMouseState(DWORD key, Bool isDown);
 EXTERN Bool DnD_FakeEscapeKey(void);
@@ -201,8 +214,6 @@ EXTERN char *DnD_UriListGetNextFile(char const *uriList,
 ConstUnicode DnD_GetFileRoot(void);
 char *DnD_CreateStagingDirectory(void);
 Bool DnD_DeleteStagingFiles(ConstUnicode stagingDir, Bool onReboot);
-Bool DnD_DataContainsIllegalCharacters(const char *data,
-                                       const size_t dataSize);
 Bool DnD_PrependFileRoot(ConstUnicode fileRoot, char **src, size_t *srcSize);
 int DnD_LegacyConvertToCPName(const char *nameIn,
                               size_t bufOutSize,

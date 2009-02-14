@@ -50,15 +50,15 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 bin_PROGRAMS = vmware-user$(EXEEXT)
-@ENABLE_UNITY_TRUE@am__append_1 = ../lib/ghIntegration/libGhIntegration.a
-@ENABLE_UNITY_FALSE@am__append_2 = ../lib/ghIntegrationStub/libGhIntegrationStub.a
-@ENABLE_UNITY_TRUE@am__append_3 = ../lib/unity/libUnity.a \
-@ENABLE_UNITY_TRUE@	../lib/unityWindowTracker/libUnityWindowTracker.a
-@ENABLE_UNITY_FALSE@am__append_4 = ../lib/unityStub/libUnityStub.a
-@ENABLE_UNITY_TRUE@am__append_5 = ../lib/appUtil/libAppUtil.a \
-@ENABLE_UNITY_TRUE@	../lib/image/libImage.a \
-@ENABLE_UNITY_TRUE@	../lib/raster/libRaster.a \
-@ENABLE_UNITY_TRUE@	../lib/region/libRegion.a
+@ENABLE_UNITY_TRUE@am__append_1 = ../lib/ghIntegration/libGhIntegration.la
+@ENABLE_UNITY_FALSE@am__append_2 = ../lib/ghIntegrationStub/libGhIntegrationStub.la
+@ENABLE_UNITY_TRUE@am__append_3 = ../lib/unity/libUnity.la \
+@ENABLE_UNITY_TRUE@	../lib/unityWindowTracker/libUnityWindowTracker.la
+@ENABLE_UNITY_FALSE@am__append_4 = ../lib/unityStub/libUnityStub.la
+@ENABLE_UNITY_TRUE@am__append_5 = ../lib/appUtil/libAppUtil.la \
+@ENABLE_UNITY_TRUE@	../lib/image/libImage.la \
+@ENABLE_UNITY_TRUE@	../lib/raster/libRaster.la \
+@ENABLE_UNITY_TRUE@	../lib/region/libRegion.la
 @ENABLE_UNITY_TRUE@am__append_6 = @URIPARSER_LIBS@ @LIBPNG_LIBS@ \
 @ENABLE_UNITY_TRUE@	@ZLIB_LIBS@ $(am__empty)
 @HAVE_ICU_TRUE@am__append_7 = @ICU_LIBS@
@@ -83,32 +83,32 @@ am_vmware_user_OBJECTS = copyPaste.$(OBJEXT) debugStdio.$(OBJEXT) \
 	pointer.$(OBJEXT) vmware-user.$(OBJEXT)
 vmware_user_OBJECTS = $(am_vmware_user_OBJECTS)
 am__DEPENDENCIES_1 =
-vmware_user_DEPENDENCIES = ../lib/conf/libConf.a ../lib/dnd/libDnd.a \
-	../lib/eventManager/libEventManager.a ../lib/file/libFile.a \
+vmware_user_DEPENDENCIES = ../lib/conf/libConf.la ../lib/dnd/libDnd.la \
+	../lib/eventManager/libEventManager.la ../lib/file/libFile.la \
 	$(am__append_1) $(am__append_2) \
-	../lib/guestApp/libGuestAppX11.a \
-	../lib/guestInfo/libGuestInfo.a \
-	../lib/hgfsServer/libHgfsServer.a \
-	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.a \
-	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.a \
-	../lib/impersonate/libImpersonate.a \
-	../lib/netUtil/libNetUtil.a ../lib/printer/libPrinter.a \
-	../lib/resolution/libResolution.a ../lib/rpcIn/libRpcIn.a \
-	../lib/rpcOut/libRpcOut.a ../lib/rpcVmx/libRpcVmx.a \
-	../lib/SLPv2Parser/libSLPv2Parser.a \
-	../lib/socketMgr/libSocketMgr.a ../lib/string/libString.a \
-	../lib/sync/libSync.a ../lib/syncDriver/libSyncDriver.a \
-	../lib/system/libSystem.a $(am__append_3) $(am__append_4) \
-	../lib/guestRpc/libGuestRpc.a ../lib/user/libUser.a \
-	../lib/vixTools/libVixTools.a ../lib/vmCheck/libVmCheck.a \
-	../lib/vmSignal/libVmSignal.a ../lib/wiper/libWiper.a \
-	../lib/err/libErr.a ../lib/foundryMsg/libFoundryMsg.a \
-	../lib/backdoor/libBackdoor.a ../lib/dict/libDict.a \
-	../lib/dynxdr/libDynxdr.a ../lib/hgfs/libHgfs.a \
-	../lib/message/libMessage.a ../lib/unicode/libUnicode.a \
-	../lib/misc/libMisc.a ../lib/procMgr/libProcMgr.a \
-	../lib/auth/libAuth.a ../lib/panicDefault/libPanicDefault.a \
-	../lib/panic/libPanic.a ../lib/stubs/libStubs.a \
+	../lib/guestApp/libGuestAppX11.la \
+	../lib/guestInfo/libGuestInfo.la \
+	../lib/hgfsServer/libHgfsServer.la \
+	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.la \
+	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.la \
+	../lib/impersonate/libImpersonate.la \
+	../lib/netUtil/libNetUtil.la ../lib/printer/libPrinter.la \
+	../lib/resolution/libResolution.la ../lib/rpcIn/libRpcIn.la \
+	../lib/rpcOut/libRpcOut.la ../lib/rpcVmx/libRpcVmx.la \
+	../lib/SLPv2Parser/libSLPv2Parser.la \
+	../lib/socketMgr/libSocketMgr.la ../lib/string/libString.la \
+	../lib/sync/libSync.la ../lib/syncDriver/libSyncDriver.la \
+	../lib/system/libSystem.la $(am__append_3) $(am__append_4) \
+	../lib/guestRpc/libGuestRpc.la ../lib/user/libUser.la \
+	../lib/vixTools/libVixTools.la ../lib/vmCheck/libVmCheck.la \
+	../lib/vmSignal/libVmSignal.la ../lib/wiper/libWiper.la \
+	../lib/err/libErr.la ../lib/foundryMsg/libFoundryMsg.la \
+	../lib/backdoor/libBackdoor.la ../lib/dict/libDict.la \
+	../lib/dynxdr/libDynxdr.la ../lib/hgfs/libHgfs.la \
+	../lib/message/libMessage.la ../lib/unicode/libUnicode.la \
+	../lib/misc/libMisc.la ../lib/procMgr/libProcMgr.la \
+	../lib/auth/libAuth.la ../lib/panicDefault/libPanicDefault.la \
+	../lib/panic/libPanic.la ../lib/stubs/libStubs.la \
 	$(am__append_5) $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
@@ -158,6 +158,10 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
 GREP = @GREP@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
@@ -181,6 +185,7 @@ LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -218,6 +223,8 @@ TARGET_OS = @TARGET_OS@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
 XMKMF = @XMKMF@
@@ -284,32 +291,32 @@ AM_CFLAGS = @GTK_CPPFLAGS@ @VMWARE_USER_CPPFLAGS@ \
 # In the absence of the linker options --start-group and --end-group (which
 # can't be put in LDADD), we need to bring the following libraries out of
 # the alphabetical order so their symbols are properly resolved.
-vmware_user_LDADD = ../lib/conf/libConf.a ../lib/dnd/libDnd.a \
-	../lib/eventManager/libEventManager.a ../lib/file/libFile.a \
+vmware_user_LDADD = ../lib/conf/libConf.la ../lib/dnd/libDnd.la \
+	../lib/eventManager/libEventManager.la ../lib/file/libFile.la \
 	$(am__append_1) $(am__append_2) \
-	../lib/guestApp/libGuestAppX11.a \
-	../lib/guestInfo/libGuestInfo.a \
-	../lib/hgfsServer/libHgfsServer.a \
-	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.a \
-	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.a \
-	../lib/impersonate/libImpersonate.a \
-	../lib/netUtil/libNetUtil.a ../lib/printer/libPrinter.a \
-	../lib/resolution/libResolution.a ../lib/rpcIn/libRpcIn.a \
-	../lib/rpcOut/libRpcOut.a ../lib/rpcVmx/libRpcVmx.a \
-	../lib/SLPv2Parser/libSLPv2Parser.a \
-	../lib/socketMgr/libSocketMgr.a ../lib/string/libString.a \
-	../lib/sync/libSync.a ../lib/syncDriver/libSyncDriver.a \
-	../lib/system/libSystem.a $(am__append_3) $(am__append_4) \
-	../lib/guestRpc/libGuestRpc.a ../lib/user/libUser.a \
-	../lib/vixTools/libVixTools.a ../lib/vmCheck/libVmCheck.a \
-	../lib/vmSignal/libVmSignal.a ../lib/wiper/libWiper.a \
-	../lib/err/libErr.a ../lib/foundryMsg/libFoundryMsg.a \
-	../lib/backdoor/libBackdoor.a ../lib/dict/libDict.a \
-	../lib/dynxdr/libDynxdr.a ../lib/hgfs/libHgfs.a \
-	../lib/message/libMessage.a ../lib/unicode/libUnicode.a \
-	../lib/misc/libMisc.a ../lib/procMgr/libProcMgr.a \
-	../lib/auth/libAuth.a ../lib/panicDefault/libPanicDefault.a \
-	../lib/panic/libPanic.a ../lib/stubs/libStubs.a \
+	../lib/guestApp/libGuestAppX11.la \
+	../lib/guestInfo/libGuestInfo.la \
+	../lib/hgfsServer/libHgfsServer.la \
+	../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.la \
+	../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.la \
+	../lib/impersonate/libImpersonate.la \
+	../lib/netUtil/libNetUtil.la ../lib/printer/libPrinter.la \
+	../lib/resolution/libResolution.la ../lib/rpcIn/libRpcIn.la \
+	../lib/rpcOut/libRpcOut.la ../lib/rpcVmx/libRpcVmx.la \
+	../lib/SLPv2Parser/libSLPv2Parser.la \
+	../lib/socketMgr/libSocketMgr.la ../lib/string/libString.la \
+	../lib/sync/libSync.la ../lib/syncDriver/libSyncDriver.la \
+	../lib/system/libSystem.la $(am__append_3) $(am__append_4) \
+	../lib/guestRpc/libGuestRpc.la ../lib/user/libUser.la \
+	../lib/vixTools/libVixTools.la ../lib/vmCheck/libVmCheck.la \
+	../lib/vmSignal/libVmSignal.la ../lib/wiper/libWiper.la \
+	../lib/err/libErr.la ../lib/foundryMsg/libFoundryMsg.la \
+	../lib/backdoor/libBackdoor.la ../lib/dict/libDict.la \
+	../lib/dynxdr/libDynxdr.la ../lib/hgfs/libHgfs.la \
+	../lib/message/libMessage.la ../lib/unicode/libUnicode.la \
+	../lib/misc/libMisc.la ../lib/procMgr/libProcMgr.la \
+	../lib/auth/libAuth.la ../lib/panicDefault/libPanicDefault.la \
+	../lib/panic/libPanic.la ../lib/stubs/libStubs.la \
 	$(am__append_5) -lcrypt @GTK_LIBS@ @VMWARE_USER_LDADD@ \
 	@COMMON_XLIBS@ $(am__append_6) $(am__append_7)
 vmware_user_SOURCES = copyPaste.c debugStdio.c dnd.c \

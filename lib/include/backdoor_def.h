@@ -93,7 +93,7 @@
 #define BDOOR_CMD_RSVD2                 33
 #define BDOOR_CMD_ISACPIDISABLED	34
 #define BDOOR_CMD_TOE			35 /* Not in use */
-/* BDOOR_CMD_INITLSIOPROM, 36, was merged with 28. Reuse. */
+#define BDOOR_CMD_ISMOUSEABSOLUTE       36
 #define BDOOR_CMD_PATCH_SMBIOS_STRUCTS  37
 #define BDOOR_CMD_MAPMEM                38 /* Devel only */
 #define BDOOR_CMD_ABSPOINTER_DATA	39
@@ -114,7 +114,11 @@
 #define BDOOR_CMD_DEBUGEVENT            53
 #define BDOOR_CMD_OSNOTMACOSXSERVER     54
 #define BDOOR_CMD_GETTIMEFULL_WITH_LAG  55
-#define BDOOR_CMD_MAX                   56
+#define BDOOR_CMD_ACPI_HOTPLUG_DEVICE   56
+#define BDOOR_CMD_ACPI_HOTPLUG_MEMORY   57
+#define BDOOR_CMD_ACPI_HOTPLUG_CBRET    58
+#define BDOOR_CMD_GET_HOST_VIDEO_MODES  59
+#define BDOOR_CMD_MAX                   60
 
 /* 
  * IMPORTANT NOTE: When modifying the behavior of an existing backdoor command,

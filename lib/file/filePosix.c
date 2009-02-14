@@ -112,13 +112,6 @@ struct WalkDirContextImpl
 
 
 /*
- * Local functions
- */
-
-static Bool FileIsGroupsMember(gid_t gid);
-
-
-/*
  *-----------------------------------------------------------------------------
  *
  * FileRemoveDirectory --
@@ -881,7 +874,9 @@ FilePosixGetParent(Unicode *canPath)  // IN/OUT: Canonical file path
  *
  * FileGetStats --
  *
- *      Calls statfs on a full path (eg. something returned from File_FullPath)
+ *      Calls statfs on a full path (eg. something returned from File_FullPath).
+ *      If doNotAscend is FALSE, climb up the directory chain and call statfs
+ *      on each level until it succeeds.
  *
  * Results:
  *      TRUE	statfs succeeded
@@ -895,6 +890,7 @@ FilePosixGetParent(Unicode *canPath)  // IN/OUT: Canonical file path
 
 static Bool
 FileGetStats(ConstUnicode pathName,      // IN:
+             Bool doNotAscend,           // IN:
              struct statfs *pstatfsbuf)  // OUT:
 {
    Bool retval = TRUE;
@@ -902,7 +898,7 @@ FileGetStats(ConstUnicode pathName,      // IN:
 
    while (Posix_Statfs(dupPath ? dupPath : pathName,
                              pstatfsbuf) == -1) {
-      if (errno != ENOENT) {
+      if (errno != ENOENT || doNotAscend) {
          retval = FALSE;
          break;
       }
@@ -927,7 +923,9 @@ FileGetStats(ConstUnicode pathName,      // IN:
  * File_GetFreeSpace --
  *
  *      Return the free space (in bytes) available to the user on a disk where
- *      a file is or would be
+ *      a file is or would be.  If doNotAscend is FALSE, the helper function
+ *      ascends the directory chain on system call errors in order to obtain
+ *      the file system information.
  *
  * Results:
  *      -1 if error (reported to the user)
@@ -939,7 +937,8 @@ FileGetStats(ConstUnicode pathName,      // IN:
  */
 
 uint64
-File_GetFreeSpace(ConstUnicode pathName)  // IN: File name
+File_GetFreeSpace(ConstUnicode pathName,  // IN: File name
+                  Bool doNotAscend)       // IN: Do not ascend dir chain
 {
    uint64 ret;
    Unicode fullPath;
@@ -951,8 +950,8 @@ File_GetFreeSpace(ConstUnicode pathName)  // IN: File name
       goto end;
    }
 
-   if (!FileGetStats(fullPath, &statfsbuf)) {
-      Warning("%s: Couldn't statfs\n", __func__);
+   if (!FileGetStats(fullPath, doNotAscend, &statfsbuf)) {
+      Warning("%s: Couldn't statfs %s\n", __func__, fullPath);
       ret = -1;
       goto end;
    }
@@ -1176,7 +1175,7 @@ done:
  *----------------------------------------------------------------------
  */
 
-static int
+int
 File_GetVMFSfsType(ConstUnicode pathName,  // IN: File name to test
                    char **fsType)          // IN/OUT: VMFS fsType
 {
@@ -1245,7 +1244,7 @@ File_OnVMFS(ConstUnicode pathName)
          goto end;
       }
 
-      err = FileGetStats(fullPath, &statfsbuf);
+      err = FileGetStats(fullPath, FALSE, &statfsbuf);
 
       Unicode_Free(fullPath);
 
@@ -1297,7 +1296,7 @@ File_GetCapacity(ConstUnicode pathName)  // IN: Path name
       goto end;
    }
 
-   if (!FileGetStats(fullPath, &statfsbuf)) {
+   if (!FileGetStats(fullPath, FALSE, &statfsbuf)) {
       Warning(LGPFX" %s: Couldn't statfs\n", __func__);
       ret = -1;
       goto end;
@@ -2447,7 +2446,74 @@ File_WalkDirectoryEnd(WalkDirContext context) // IN
 /*
  *----------------------------------------------------------------------
  *
- * File_IsWritableDir --
+ * FileIsGroupsMember --
+ *
+ *	Determine if a gid is in the gid list of the current process
+ *
+ * Results:
+ *	FALSE if error (reported to the user)
+ *
+ * Side effects:
+ *	None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static Bool
+FileIsGroupsMember(gid_t gid)
+{
+   int nr_members;
+   gid_t *members;
+   int res;
+   int ret;
+
+   members = NULL;
+   nr_members = 0;
+   for (;;) {
+      gid_t *new;
+
+      res = getgroups(nr_members, members);
+      if (res == -1) {
+         Warning(LGPFX" %s: Couldn't getgroups\n", __FUNCTION__);
+         ret = FALSE;
+         goto end;
+      }
+
+      if (res == nr_members) {
+         break;
+      }
+
+      /* Was bug 17760 --hpreg */
+      new = realloc(members, res * sizeof *members);
+      if (new == NULL) {
+         Warning(LGPFX" %s: Couldn't realloc\n", __FUNCTION__);
+         ret = FALSE;
+         goto end;
+      }
+
+      members = new;
+      nr_members = res;
+   }
+
+   for (res = 0; res < nr_members; res++) {
+      if (members[res] == gid) {
+         ret = TRUE;
+         goto end;
+      }
+   }
+   ret = FALSE;
+
+end:
+   free(members);
+
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileIsWritableDir --
  *
  *	Determine in a non-intrusive way if the user can create a file in a
  *	directory
@@ -2467,16 +2533,11 @@ File_WalkDirectoryEnd(WalkDirContext context) // IN
  */
 
 Bool
-File_IsWritableDir(ConstUnicode dirName)  // IN:
+FileIsWritableDir(ConstUnicode dirName)  // IN:
 {
    int err;
    uid_t euid;
    FileData fileData;
-
-   if (dirName == NULL) {
-      errno = EFAULT;
-      return FALSE;
-   }
 
    err = FileAttributes(dirName, &fileData);
 
@@ -2531,7 +2592,7 @@ FileTryDir(const char *dirName) // IN: Is this a writable directory?
    }
 
    edirName = Util_ExpandString(dirName);
-   if (edirName != NULL && File_IsWritableDir(edirName)) {
+   if (edirName != NULL && FileIsWritableDir(edirName)) {
       return edirName;
    }
    free(edirName);
@@ -2619,72 +2680,6 @@ File_GetTmpDir(Bool useConf) // IN: Use the config file?
 
 #undef HOSTINFO_TRYDIR
 
-
-/*
- *----------------------------------------------------------------------
- *
- * FileIsGroupsMember --
- *
- *	Determine if a gid is in the gid list of the current process
- *
- * Results:
- *	FALSE if error (reported to the user)
- *
- * Side effects:
- *	None
- *
- *----------------------------------------------------------------------
- */
-
-static Bool
-FileIsGroupsMember(gid_t gid)
-{
-   int nr_members;
-   gid_t *members;
-   int res;
-   int ret;
-
-   members = NULL;
-   nr_members = 0;
-   for (;;) {
-      gid_t *new;
-
-      res = getgroups(nr_members, members);
-      if (res == -1) {
-         Warning(LGPFX" %s: Couldn't getgroups\n", __FUNCTION__);
-         ret = FALSE;
-         goto end;
-      }
-
-      if (res == nr_members) {
-         break;
-      }
-
-      /* Was bug 17760 --hpreg */
-      new = realloc(members, res * sizeof *members);
-      if (new == NULL) {
-         Warning(LGPFX" %s: Couldn't realloc\n", __FUNCTION__);
-         ret = FALSE;
-         goto end;
-      }
-
-      members = new;
-      nr_members = res;
-   }
-
-   for (res = 0; res < nr_members; res++) {
-      if (members[res] == gid) {
-         ret = TRUE;
-         goto end;
-      }
-   }
-   ret = FALSE;
-
-end:
-   free(members);
-
-   return ret;
-}
 
 /*
  *----------------------------------------------------------------------

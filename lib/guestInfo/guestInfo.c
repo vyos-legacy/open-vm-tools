@@ -200,32 +200,6 @@ GuestInfo_GetOSName(unsigned int outBufFullLen, // IN
 }
 
 
-#if defined(N_PLAT_NLM)
-/*
- *----------------------------------------------------------------------------
- *
- * GuestInfo_GetSystemBitness --
- *
- *      Determines the operating system's bitness.
- *
- * Return value:
- *      32 or 64 on success, negative value on failure. Check errno for more
- *      details of error.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------------
- */
-
-int
-GuestInfo_GetSystemBitness(void)
-{
-   return 32;
-}
-#endif // defined(N_PLAT_NLM)
-
-
 /**
  * Add a NIC into the given list. The macAddress of the new GuestNic is
  * initialized with the given address.
@@ -279,12 +253,14 @@ GuestInfoAddIpAddress(GuestNic *nic,                    // IN/OUT
 
 
 /**
- * Add an IPV4 subnet mask to the IpAddress in ASCII form.
+ * Add an IPv4 netmask / IPv6 prefix length to the IpAddress in ASCII form.
  *
  * If convertToMask is true the 'n' bits subnet mask is converted
  * to an ASCII string as a hexadecimal number (0xffffff00) and
- * added to the IPAddressEntry. If convertToMask is false the value
- * is added to the IPAddressEntry in string form - ie '24'.
+ * added to the IPAddressEntry.  (Applies to IPv4 only.)
+ *
+ * If convertToMask is false the value is added to the IPAddressEntry in
+ * string form - ie '24'.
  *
  * @param[in,out] ipAddressEntry    The IP address info.
  * @param[in]     subnetMaskBits    The mask.
@@ -300,6 +276,11 @@ GuestInfoAddSubnetMask(VmIpAddress *ipAddressEntry,            // IN/OUT
    uint32 subnetMask = 0;
 
    ASSERT(ipAddressEntry);
+   /*
+    * It's an error to set convertToMask on an IPv6 address.
+    */
+   ASSERT(ipAddressEntry->addressFamily == INFO_IP_ADDRESS_FAMILY_IPV4 ||
+          !convertToMask);
 
    if (convertToMask && (subnetMaskBits <= 32)) {
       /*

@@ -29,9 +29,7 @@ SRCROOT = .
 VM_UNAME = $(shell uname -r)
 
 # Header directory for the running kernel
-#HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
-HEADER_DIR = $(KINCLUDE_DIR)
-
+HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
 
 BUILD_DIR = $(HEADER_DIR)/..
 
@@ -99,8 +97,17 @@ export VM_CC
 
 MAKEOVERRIDES := $(filter-out CC=%,$(MAKEOVERRIDES))
 
-$(DRIVER_KO):
+#
+# Define a setup target that gets built before the actual driver.
+# This target may not be used at all, but if it is then it will be defined
+# in Makefile.kernel
+#
+prebuild:: ;
+postbuild:: ;
+
+$(DRIVER_KO): prebuild
 	make -C $(BUILD_DIR) SUBDIRS=$$PWD SRCROOT=$$PWD/$(SRCROOT) modules
+	make -C $$PWD SRCROOT=$$PWD/$(SRCROOT) postbuild
 
 else
 
@@ -114,7 +121,7 @@ endif
 endif
 
 vm_check_build = $(shell if $(CC) $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS) \
-	$(CPPFLAGS) $(CFLAGS) $(CFLAGS_KERNEL) \
+	$(CPPFLAGS) $(CFLAGS) $(CFLAGS_KERNEL) $(LINUXINCLUDE) \
 	$(EXTRA_CFLAGS) -Iinclude2/asm/mach-default \
 	-DKBUILD_BASENAME=\"$(DRIVER)\" \
 	-Werror -S -o /dev/null -xc $(1) \
