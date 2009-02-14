@@ -1,3 +1,9 @@
+open-vm-tools (2009.01.29+vyatta-1) unstable; urgency=low
+
+  * Update open-vm-tools to 01.21.2009 version
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Fri, 13 Feb 2009 21:22:06 -0800
+
 open-vm-tools (2008.10.13vyatta-6) unstable; urgency=low
 
   * Build with linux-image 2.6.27-1+vyatta+11
