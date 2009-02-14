@@ -37,3 +37,5 @@ lib/include/guestrpc/
 toolbox/vmware-toolbox-cmd
 xferlogs/vmware-xferlogs
 changes
+lib/guestRpc/guestlibV3.h
+lib/guestRpc/guestlibV3_xdr.c

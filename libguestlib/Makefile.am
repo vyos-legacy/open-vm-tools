@@ -20,7 +20,7 @@ lib_LTLIBRARIES = libguestlib.la
 AM_CFLAGS =
 AM_CFLAGS += -I$(top_builddir)/include
 
-libguestlib_la_LIBADD = -dl
+libguestlib_la_LIBADD =
 libguestlib_la_LIBADD += ../lib/rpcOut/libRpcOut.la
 libguestlib_la_LIBADD += ../lib/string/libString.la
 libguestlib_la_LIBADD += ../lib/stubs/libStubs.la
@@ -30,15 +30,14 @@ libguestlib_la_LIBADD += ../lib/stubs/libStubs.la
 libguestlib_la_LIBADD += ../lib/message/libMessage.la
 libguestlib_la_LIBADD += ../lib/backdoor/libBackdoor.la
 libguestlib_la_LIBADD += ../lib/guestRpc/libGuestRpc.la
-libguestlib_la_LIBADD += ../lib/vmCheck/libVmCheck.la
 libguestlib_la_LIBADD += ../lib/misc/libMisc.la
+libguestlib_la_LIBADD += ../lib/unicode/libUnicode.la
 
 libguestlib_la_SOURCES =
 libguestlib_la_SOURCES += vmGuestLib.c
 libguestlib_la_SOURCES += vmGuestLibPanic.c
 
-libguestlib_la_LDFLAGS = --warn-unresolved-symbols
-
+libguestlib_la_LDFLAGS = -ldl
 # We require GCC, so we're fine passing compiler-specific flags.
 # Needed for OS's that don't link shared libraries against libc by default, e.g. FreeBSD
 libguestlib_la_LDFLAGS += -Wl,-lc

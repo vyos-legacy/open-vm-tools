@@ -956,7 +956,7 @@ MODULES_DIR=""
 buildHgfsmounter=no
 
 if test "$os" = "linux"; then
-   MODULES_DIR="$LINUXDIR/kernel/"
+   MODULES_DIR="/lib/modules/$KVER/kernel/"
 
    CPPFLAGS="$CPPFLAGS -D_FILE_OFFSET_BITS=64"
    CPPFLAGS="$CPPFLAGS -D_LARGEFILE64_SOURCE"
@@ -977,9 +977,9 @@ if test "$os" = "linux"; then
    if test "$osVersion" -ge 206006; then
       MODULES="$MODULES vmsync"
    fi
-   if test "$osVersion" -ge 206008; then
-      MODULES="$MODULES pvscsi"
-   fi
+#   if test "$osVersion" -ge 206008; then
+#      MODULES="$MODULES pvscsi"
+#   fi
 fi
 
 if test "$os" = "freebsd"; then

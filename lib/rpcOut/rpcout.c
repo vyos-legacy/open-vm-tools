@@ -127,7 +127,7 @@ RpcOut_start(RpcOut *out) // IN
    ASSERT(out->channel == NULL);
    out->channel = Message_Open(RPCI_PROTOCOL_NUM);
    if (out->channel == NULL) {
-      Debug("RpcOut: couldn't open channel with RPCI protocol\n");
+      /* Debug("RpcOut: couldn't open channel with RPCI protocol\n"); */
       return FALSE;
    }
 
@@ -230,7 +230,7 @@ RpcOut_stop(RpcOut *out) // IN
    if (out->channel) {
       /* Try to close the channel */
       if (Message_Close(out->channel) == FALSE) {
-         Debug("RpcOut: couldn't close channel\n");
+         /* Debug("RpcOut: couldn't close channel\n"); */
          status = FALSE;
       }
 
@@ -377,7 +377,7 @@ RpcOut_SendOneRaw(void *request,       // IN: RPCI command
 
    status = FALSE;
 
-   Debug("Rpci: Sending request='%s'\n", (char *)request);
+   /* Debug("Rpci: Sending request='%s'\n", (char *)request); */
    out = RpcOut_Construct();
    if (out == NULL) {
       myReply = "RpcOut: Unable to create the RpcOut object";
@@ -398,8 +398,8 @@ RpcOut_SendOneRaw(void *request,       // IN: RPCI command
    status = TRUE;
 
 sent:
-   Debug("Rpci: Sent request='%s', reply='%s', len=%"FMTSZ"u, status=%d\n",
-         (char *)request, myReply, myRepLen, status);
+   /* Debug("Rpci: Sent request='%s', reply='%s', len=%"FMTSZ"u, status=%d\n",
+         (char *)request, myReply, myRepLen, status);*/
 
    if (reply != NULL) {
       /* 
@@ -452,7 +452,7 @@ sent:
             free(*reply);
             *reply = NULL;
          }
-         Debug("Rpci: unable to close the communication channel\n");
+         /* Debug("Rpci: unable to close the communication channel\n"); */
          status = FALSE;
       }
 

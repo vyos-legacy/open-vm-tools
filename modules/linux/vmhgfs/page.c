@@ -758,7 +758,6 @@ HgfsDoWriteBegin(struct page *page,         // IN: Page to be written
                  unsigned pageFrom,         // IN: Starting page offset
                  unsigned pageTo)           // IN: Ending page offset
 {
-   ASSERT(page);
 #ifdef HGFS_ENABLE_WRITEBACK
    loff_t offset = (loff_t)page->index << PAGE_CACHE_SHIFT;
    loff_t currentFileSize = compat_i_size_read(page->mapping->host);

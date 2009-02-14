@@ -35,6 +35,8 @@
 #include "strutil.h"
 #include "guestrpc/guestlibV3.h"
 
+#define Debug(fmt, arg...) do { } while(0)
+
 #define GUESTLIB_NAME "VMware Guest API"
 
 /* 
@@ -124,7 +126,6 @@ typedef struct {
          VMGUESTLIB_GETSTAT_V3(HANDLE, ERROR, OUTPTR, FIELDNAME, STATID);       \
       }                                                                         \
    } while (0)
-
 
 /*
  *-----------------------------------------------------------------------------
@@ -255,13 +256,14 @@ VMGuestLib_OpenHandle(VMGuestLibHandle *handle) // OUT
 {
    VMGuestLibHandleType *data;
 
-#ifndef ALLOW_TOOLS_IN_FOREIGN_VM
-   if (!VmCheck_IsVirtualWorld()) {
-      Debug("VMGuestLib_OpenHandle: Not in a VM.\n");
-      return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
-   }
-#endif
-
+/*
+ * #ifndef ALLOW_TOOLS_IN_FOREIGN_VM
+ *   if (!VmCheck_IsVirtualWorld()) {
+ *     Debug("VMGuestLib_OpenHandle: Not in a VM.\n");
+ *     return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
+ *   }
+ * #endif
+ */
    if (NULL == handle) {
       return VMGUESTLIB_ERROR_INVALID_ARG;
    }
@@ -601,7 +603,7 @@ VMGuestLib_UpdateInfo(VMGuestLibHandle handle) // IN
 
    error = VMGuestLibUpdateInfo(handle);
    if (error != VMGUESTLIB_ERROR_SUCCESS) {
-      Debug("VMGuestLibUpdateInfo failed: %d\n", error);
+      /* Debug("VMGuestLibUpdateInfo failed: %d\n", error); */
       return error;
    }
 
