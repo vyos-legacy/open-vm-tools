@@ -1,3 +1,12 @@
+open-vm-tools (2009.01.29+vyatta-2) unstable; urgency=low
+
+  * Update to 2.6.28-586
+  * Other parts of 1.20.09 update
+  * use 586 kernel flavor
+  * Fix grab_cache_page api change
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Fri, 13 Feb 2009 23:21:23 -0800
+
 open-vm-tools (2009.01.29+vyatta-1) unstable; urgency=low
 
   * Update open-vm-tools to 01.21.2009 version
