@@ -863,7 +863,7 @@ HgfsWriteBegin(struct file *file,             // IN: File to be written
    unsigned pageTo = pos + len;
    struct page *page;
 
-   page = __grab_cache_page(mapping, index);
+   page = grab_cache_page_write_begin(mapping, index, flags);
    if (page == NULL) {
       return -ENOMEM;
    }
