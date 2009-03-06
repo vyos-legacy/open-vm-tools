@@ -7,6 +7,8 @@ Standards-Version: 3.7.2
 
 Package: open-vm-tools-2.6.28-1-586-vyatta
 Architecture: any
+Provides: open-vm-tools
+Conflicts: open-vm-tools
 Depends: linux-image-2.6.28-1-586-vyatta
 Description: Vyatta verion of the open-vm tools
  This package provides the accclerated drivers vyatta on VmWare for kernel
