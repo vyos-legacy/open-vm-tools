@@ -1,3 +1,9 @@
+open-vm-tools (2009.01.29+vyatta-6) unstable; urgency=low
+
+  * Change kernel from 586 to 486
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Tue, 10 Mar 2009 11:17:19 -0700
+
 open-vm-tools (2009.01.29+vyatta-5) unstable; urgency=low
 
   * replace open-vm-tools with open-vm-tools-2.6.28-1-586-vyatta
