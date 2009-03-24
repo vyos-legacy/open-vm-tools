@@ -385,7 +385,7 @@ vmxnet3_poll(struct napi_struct *napi, int budget)
    vmxnet3_do_poll(adapter, budget, &txd_done, &rxd_done);
 
    if (rxd_done < budget) {
-      netif_rx_complete(netdev, napi);
+      compat_netif_rx_complete(netdev, napi);
       vmxnet3_enable_intr(adapter, 0);
    }
    return rxd_done;

@@ -266,9 +266,17 @@ static inline int compat_unregister_netdevice_notifier(struct notifier_block *nb
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
 #define compat_netif_napi_add(dev, napi, poll, quota) \
    netif_napi_add(dev, napi, poll, quota)
-#define compat_netif_rx_schedule(dev, napi) netif_rx_schedule(dev, napi)
 #define compat_napi_enable(dev, napi)       napi_enable(napi)
 #define compat_napi_disable(dev, napi)      napi_disable(napi)
+
+# if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29)
+#   define compat_netif_rx_complete(dev, napi) netif_rx_complete(dev, napi)
+#   define compat_netif_rx_schedule(dev, napi) netif_rx_schedule(dev, napi)
+# else
+#   define compat_netif_rx_complete(dev, napi) netif_rx_complete(napi)
+#   define compat_netif_rx_schedule(dev, napi) netif_rx_schedule(napi)
+# endif
+
 #else
 struct napi_struct {
    int dummy;
