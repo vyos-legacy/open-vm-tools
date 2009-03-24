@@ -409,7 +409,7 @@ static int
 vmxnet3_poll(struct net_device *poll_dev, int *budget)
 {
    int rxd_done, txd_done, quota;
-   struct vmxnet3_adapter *adapter = poll_dev->priv;
+   struct vmxnet3_adapter *adapter = compat_netdev_priv(poll_dev);
 
    quota = min(*budget, poll_dev->quota);
 
@@ -451,7 +451,7 @@ vmxnet3_intr(int irq, void *dev_id)
 #endif
 {
    struct net_device *dev = dev_id;
-   struct vmxnet3_adapter *adapter = dev->priv;
+   struct vmxnet3_adapter *adapter = compat_netdev_priv(dev);
 
    if (UNLIKELY(adapter->intr.type == VMXNET3_IT_INTX)) {
       uint32 icr = VMXNET3_READ_BAR1_REG(adapter, VMXNET3_REG_ICR);
