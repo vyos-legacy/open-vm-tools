@@ -634,7 +634,7 @@ HgfsOpen(struct inode *inode,  // IN: Inode of the file to open
             iparent = dparent->d_inode;
 
             HgfsSetUidGid(iparent, file->f_dentry,
-                          current->fsuid, current->fsgid);
+                          compat_current_fsuid(), compat_current_fsgid());
 
             dput(dparent);
          }

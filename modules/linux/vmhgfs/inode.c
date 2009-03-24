@@ -1194,7 +1194,8 @@ HgfsMkdir(struct inode *dir,     // IN: Inode of parent directory
              * a Linux machine and as root, but we might as well give it
              * a go.
              */
-            HgfsSetUidGid(dir, dentry, current->fsuid, current->fsgid);
+	     HgfsSetUidGid(dir, dentry, 
+			   compat_current_fsuid(), compat_current_fsgid());
          }
 
          /*

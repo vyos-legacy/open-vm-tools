@@ -256,13 +256,13 @@ HgfsInitSuperInfo(HgfsMountInfo *mountInfo) // IN: Passed down from the user
    if (si->uidSet) {
       si->uid = mountInfo->uid;
    } else {
-      si->uid = current->uid;
+      si->uid = compat_current_uid();
    }
    si->gidSet = mountInfo->gidSet;
    if (si->gidSet) {
       si->gid = mountInfo->gid;
    } else {
-      si->gid = current->gid;
+      si->gid = compat_current_gid();
    }
    si->fmask = mountInfo->fmask;
    si->dmask = mountInfo->dmask;

@@ -244,4 +244,16 @@
 #define compat_invalidate_remote_inode(inode) invalidate_remote_inode(inode)
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29)
+#define compat_current_fsuid()	(current->fsuid)
+#define compat_current_fsgid()	(current->fsgid)
+#define compat_current_uid()    (current->uid)
+#define compat_current_gid()    (current->gid)
+#else
+#define compat_current_fsuid()	current_fsuid()
+#define compat_current_fsgid()	current_fsgid()
+#define compat_current_uid()    current_uid()
+#define compat_current_gid()    current_gid()
+#endif
+
 #endif /* __COMPAT_FS_H__ */
