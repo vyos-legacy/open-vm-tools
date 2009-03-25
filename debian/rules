@@ -24,7 +24,7 @@ DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 # modules and externally with debian).
 DEB_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
 DEB_KSUBARCH=none
-DEB_KFLAVOR=486-vyatta
+DEB_KFLAVOR=586-vyatta
 kbdir=debian/build/build-$(DEB_ARCH)-$(DEB_KSUBARCH)-$(DEB_KFLAVOR)
 
 # test if we are doing a dev build, i.e., linux is in pkgs/
