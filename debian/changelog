@@ -1,3 +1,11 @@
+open-vm-tools (2009.01.29+vyatta-9) unstable; urgency=low
+
+  * Convert to use netdev_priv()
+  * More 2.6.29 compatiablity changes (for filesystem)
+  * Handle network NAPI API change in 2.6.29
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Tue, 24 Mar 2009 17:51:46 -0700
+
 open-vm-tools (2009.01.29+vyatta-8) unstable; urgency=low
 
   * Build with linux-image 2.6.28-1+vyatta+14
