@@ -1,3 +1,10 @@
+open-vm-tools (2009.01.29+vyatta-10) unstable; urgency=low
+
+  * Ignore files independent of release
+  * Now build with 2.6.29-586
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Thu, 02 Apr 2009 08:46:24 -0700
+
 open-vm-tools (2009.01.29+vyatta-9) unstable; urgency=low
 
   * Convert to use netdev_priv()
