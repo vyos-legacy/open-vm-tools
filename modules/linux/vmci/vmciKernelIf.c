@@ -48,12 +48,20 @@
 #include "pgtbl.h"
 #include <linux/vmalloc.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
-#  include <linux/mm.h>         /* For vmalloc_to_page() */
+#  include <linux/mm.h>         /* For vmalloc_to_page() and get_user_pages()*/
+#else
+#  include <linux/iobuf.h>      /* For map_user_kiobuf() and unmap_kiobuf() */
 #endif
 #include <linux/socket.h>       /* For memcpy_{to,from}iovec(). */
+#include <linux/pagemap.h>      /* For page_cache_release() */
 #include "vm_assert.h"
 #include "vmci_kernel_if.h"
+#ifndef VMX86_TOOLS
+#  include "vmciQueuePair.h"
+#endif
+
 #include "vmci_queue_pair.h"
+#include "vmci_iocontrols.h"
 
 /*
  * In Linux 2.6.25 kernels and onwards, the symbol init_mm is no
@@ -69,9 +77,9 @@
  */
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
-#  define VMCIKVaToMPN(__VA) page_to_pfn(vmalloc_to_page((void *)(__VA)))
+#  define VMCIKVaToMPN(_ptr) page_to_pfn(vmalloc_to_page(_ptr))
 #else
-#  define VMCIKVaToMPN(__VA) PgtblKVa2MPN(__VA)
+#  define VMCIKVaToMPN(_ptr) PgtblKVa2MPN((VA)_ptr)
 #endif
 
 /*
@@ -576,11 +584,11 @@ VMCI_FreeBuffer(VMCIBuffer buf, // IN:
  */
 
 int
-VMCI_CopyToUser(void *dst,        // OUT
-                const void *src,  // IN
-                unsigned int len) // IN
+VMCI_CopyToUser(VA64 dst,        // OUT: Destination user VA.
+                const void *src, // IN: Source kernel VA.
+                size_t len)      // IN: Number of bytes to copy.
 {
-   return copy_to_user(dst, src, len) ? -EFAULT : 0;
+   return copy_to_user(VMCIVA64ToPtr(dst), src, len) ? -EFAULT : 0;
 }
 
 
@@ -604,11 +612,11 @@ VMCI_CopyToUser(void *dst,        // OUT
  */
 
 int
-VMCI_CopyFromUser(void *dst,        // OUT
-                  const void *src,  // IN
-                  size_t len)       // IN
+VMCI_CopyFromUser(void *dst,  // OUT: Kernel VA
+                  VA64 src,   // IN: User VA
+                  size_t len) // IN
 {
-   return copy_from_user(dst, src, len);
+   return copy_from_user(dst, VMCIVA64ToPtr(src), len);
 }
 
 
@@ -694,10 +702,37 @@ VMCI_WaitOnEvent(VMCIEvent *event,              // IN:
 		 VMCIEventReleaseCB releaseCB,  // IN:
 		 void *clientData)              // IN:
 {
+   /*
+    * XXX Should this be a TASK_UNINTERRUPTIBLE wait? I'm leaving it
+    * as it was for now.
+    */
+   VMCI_WaitOnEventInterruptible(event, releaseCB, clientData);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMCI_WaitOnEventInterruptible --
+ *
+ * Results:
+ *      True if the wait was interrupted by a signal, false otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+VMCI_WaitOnEventInterruptible(VMCIEvent *event,              // IN:
+                              VMCIEventReleaseCB releaseCB,  // IN:
+                              void *clientData)              // IN:
+{
    DECLARE_WAITQUEUE(wait, current);
 
    if (event == NULL || releaseCB == NULL) {
-      return;
+      return FALSE;
    }
 
    add_wait_queue(event, &wait);
@@ -715,6 +750,8 @@ VMCI_WaitOnEvent(VMCIEvent *event,              // IN:
    schedule();
    current->state = TASK_RUNNING;
    remove_wait_queue(event, &wait);
+
+   return signal_pending(current);
 }
 
 
@@ -810,10 +847,11 @@ VMCIMutex_Release(VMCIMutex *mutex) // IN:
 }
 
 
+#ifdef VMX86_TOOLS
 /*
  *-----------------------------------------------------------------------------
  *
- * VMCI_AllocQueueKVA --
+ * VMCI_AllocQueue --
  *
  *      Allocates kernel memory for the queue header (1 page) plus the
  *      translation structure for offset -> page mappings.  Allocates physical
@@ -821,7 +859,7 @@ VMCIMutex_Release(VMCIMutex *mutex) // IN:
  *      structure.
  *
  * Results:
- *      The VA on success, NULL otherwise.
+ *      Pointer to the queue on success, NULL otherwise.
  *
  * Side effects:
  *      Memory is allocated.
@@ -829,8 +867,8 @@ VMCIMutex_Release(VMCIMutex *mutex) // IN:
  *-----------------------------------------------------------------------------
  */
 
-VA
-VMCI_AllocQueueKVA(uint64 size) // IN: size of queue (not including header)
+void *
+VMCI_AllocQueue(uint64 size) // IN: size of queue (not including header)
 {
    const uint64 numPages = CEILING(size, PAGE_SIZE);
    VMCIQueue *queue;
@@ -857,14 +895,14 @@ VMCI_AllocQueueKVA(uint64 size) // IN: size of queue (not including header)
          }
       }
    }
-   return (VA)queue;
+   return queue;
 }
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * VMCI_FreeQueueKVA --
+ * VMCI_FreeQueue --
  *
  *      Frees kernel memory for a given queue (header plus translation
  *      structure).  Frees all physical pages that held the buffers for this
@@ -880,10 +918,10 @@ VMCI_AllocQueueKVA(uint64 size) // IN: size of queue (not including header)
  */
 
 void
-VMCI_FreeQueueKVA(VA va,       // IN:
-                  uint64 size) // IN: size of queue (not including header)
+VMCI_FreeQueue(void *q,     // IN:
+               uint64 size) // IN: size of queue (not including header)
 {
-   VMCIQueue *queue = (VMCIQueue *)va;
+   VMCIQueue *queue = q;
 
    if (queue) {
       uint64 i;
@@ -916,19 +954,17 @@ VMCI_FreeQueueKVA(VA va,       // IN:
  */
 
 int
-VMCI_AllocPPNSet(VA produceVA,           // IN:
+VMCI_AllocPPNSet(void *produceQ,         // IN:
                  uint64 numProducePages, // IN: for queue plus header
-                 VA consumeVA,           // IN:
+                 void *consumeQ,         // IN:
                  uint64 numConsumePages, // IN: for queue plus header
                  PPNSet *ppnSet)         // OUT:
 {
    VMCIPpnList producePPNs;
    VMCIPpnList consumePPNs;
    uint64 i;
-   VMCIQueue *produceQ = (VMCIQueue *)produceVA;
-   VMCIQueue *consumeQ = (VMCIQueue *)consumeVA;
 
-   if (!produceVA || !numProducePages || !consumeVA || !numConsumePages ||
+   if (!produceQ || !numProducePages || !consumeQ || !numConsumePages ||
        !ppnSet) {
       return VMCI_ERROR_INVALID_ARGS;
    }
@@ -952,11 +988,11 @@ VMCI_AllocPPNSet(VA produceVA,           // IN:
       return VMCI_ERROR_NO_MEM;
    }
 
-   producePPNs[0] = VMCIKVaToMPN(produceVA);
+   producePPNs[0] = VMCIKVaToMPN(produceQ);
    for (i = 1; i < numProducePages; i++) {
       unsigned long pfn;
 
-      producePPNs[i] = pfn = page_to_pfn(produceQ->page[i - 1]);
+      producePPNs[i] = pfn = page_to_pfn(((VMCIQueue *)produceQ)->page[i - 1]);
 
       /*
        * Fail allocation if PFN isn't supported by hypervisor.
@@ -967,11 +1003,11 @@ VMCI_AllocPPNSet(VA produceVA,           // IN:
          goto ppnError;
       }
    }
-   consumePPNs[0] = VMCIKVaToMPN(consumeVA);
+   consumePPNs[0] = VMCIKVaToMPN(consumeQ);
    for (i = 1; i < numConsumePages; i++) {
       unsigned long pfn;
 
-      consumePPNs[i] = pfn = page_to_pfn(consumeQ->page[i - 1]);
+      consumePPNs[i] = pfn = page_to_pfn(((VMCIQueue *)consumeQ)->page[i - 1]);
 
       /*
        * Fail allocation if PFN isn't supported by hypervisor.
@@ -1059,6 +1095,7 @@ VMCI_PopulatePPNList(uint8 *callBuf,       // OUT:
 
    return VMCI_SUCCESS;
 }
+#endif
 
 
 #ifdef __KERNEL__
@@ -1352,3 +1389,325 @@ VMCIWellKnownID_AllowMap(VMCIId wellKnownID,           // IN:
    }
    return TRUE;
 }
+
+
+
+#ifndef VMX86_TOOLS
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMCIHost_FinishAttach --
+ 
+ *       Finish the "attach" operation by update the queues to be
+ *       backed by the shared memory represented by the "attach"
+ *       structure.
+ *
+ * Results:
+ *       VMCI_SUCCESS on success or negative error on failure.
+ *
+ * Side Effects:
+ *       None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+VMCIHost_FinishAttach(PageStoreAttachInfo *attach,      // IN
+                      VMCIQueue *produceQ,              // OUT
+                      VMCIQueue *consumeQ)              // OUT
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+   produceQ->queueHeaderPtr = kmap(attach->producePages[0]);
+   produceQ->page = &attach->producePages[1];
+   consumeQ->queueHeaderPtr = kmap(attach->consumePages[0]);
+   consumeQ->page = &attach->consumePages[1];
+#else
+   /*
+    * Host queue pair support for earlier kernels temporarily
+    * disabled. See bug 365496.
+    */
+
+   ASSERT_NOT_IMPLEMENTED(FALSE);
+#if 0 
+   produceQ->queueHeaderPtr = kmap(attach->produceIoBuf->maplist[0]);
+   produceQ->page = &attach->produceIoBuf->maplist[1];
+   consumeQ->queueHeaderPtr = kmap(attach->consumeIoBuf->maplist[0]);
+   consumeQ->page = &attach->consumeIoBuf->maplist[1];
+#endif
+#endif
+
+   return VMCI_SUCCESS;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMCIHost_DetachMappings --
+ *       Remove any local mappings of memory referenced in 'attach' in
+ *       preparation for releasing the shared memory region entirely.
+ *
+ * Results:
+ *       None.
+ *
+ * Side Effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+VMCIHost_DetachMappings(struct PageStoreAttachInfo *attach,
+                        struct VMCIQueue *produceQ,
+                        struct VMCIQueue *detachQ)
+{
+   /*
+    * Unmap the header pages
+    */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+   kunmap(attach->producePages[0]);
+   kunmap(attach->consumePages[0]);
+#else
+   /*
+    * Host queue pair support for earlier kernels temporarily
+    * disabled. See bug 365496.
+    */
+
+   ASSERT_NOT_IMPLEMENTED(FALSE);
+#if 0
+   kunmap(attach->produceIoBuf->maplist[0]);
+   kunmap(attach->consumeIoBuf->maplist[0]);
+#endif
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMCIHost_GetUserMemory --
+ *       Lock the user pages referenced by the {produce,consume}Buffer
+ *       struct into memory and populate the {produce,consume}Pages
+ *       arrays in the attach structure with them.
+ *
+ * Results:
+ *       VMCI_SUCCESS on sucess, negative error code on failure.
+ *
+ * Side Effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+VMCIHost_GetUserMemory(PageStoreAttachInfo *attach)         // IN/OUT
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+   int retval;
+   int err = VMCI_SUCCESS;
+
+
+   attach->producePages =
+      VMCI_AllocKernelMem(attach->numProducePages * sizeof attach->producePages[0],
+                          VMCI_MEMORY_NORMAL);
+   if (attach->producePages == NULL) {
+      return VMCI_ERROR_NO_MEM;
+   }
+   attach->consumePages =
+      VMCI_AllocKernelMem(attach->numConsumePages * sizeof attach->consumePages[0],
+                          VMCI_MEMORY_NORMAL);
+   if (attach->consumePages == NULL) {
+      err = VMCI_ERROR_NO_MEM;
+      goto errorDealloc;
+   }
+
+   down_write(&current->mm->mmap_sem);
+   retval = get_user_pages(current,
+                           current->mm,
+                           (VA)attach->produceBuffer,
+                           attach->numProducePages,
+                           1, 0,
+                           attach->producePages,
+                           NULL);
+   if (retval < attach->numProducePages) {
+      Log("get_user_pages(produce) failed: %d\n", retval);
+      if (retval > 0) {
+         int i;
+         for (i = 0; i < retval; i++) {
+            page_cache_release(attach->producePages[i]);
+         }
+      }
+      err = VMCI_ERROR_NO_MEM;
+      goto out;
+   }
+
+   retval = get_user_pages(current,
+                           current->mm,
+                           (VA)attach->consumeBuffer,
+                           attach->numConsumePages,
+                           1, 0,
+                           attach->consumePages,
+                           NULL);
+   if (retval < attach->numConsumePages) {
+      int i;
+      Log("get_user_pages(consume) failed: %d\n", retval);
+      if (retval > 0) {
+         for (i = 0; i < retval; i++) {
+            page_cache_release(attach->consumePages[i]);
+         }
+      }
+      for (i = 0; i < attach->numProducePages; i++) {
+         page_cache_release(attach->producePages[i]);
+      }
+      err = VMCI_ERROR_NO_MEM;
+   }
+
+out:
+   up_write(&current->mm->mmap_sem);
+
+errorDealloc:
+   if (err < VMCI_SUCCESS) {
+      if (attach->producePages != NULL) {
+         VMCI_FreeKernelMem(attach->producePages,
+                            attach->numProducePages *
+                            sizeof attach->producePages[0]);
+      }
+      if (attach->consumePages != NULL) {
+         VMCI_FreeKernelMem(attach->consumePages,
+                            attach->numConsumePages *
+                            sizeof attach->consumePages[0]);
+      }
+   }
+
+   return err;
+
+#else
+   /*
+    * Host queue pair support for earlier kernels temporarily
+    * disabled. See bug 365496.
+    */
+
+   ASSERT_NOT_IMPLEMENTED(FALSE);
+#if 0
+   attach->produceIoBuf = VMCI_AllocKernelMem(sizeof *attach->produceIoBuf,
+                                              VMCI_MEMORY_NORMAL);
+   if (attach->produceIoBuf == NULL) {
+      return VMCI_ERROR_NO_MEM;
+   }
+
+   attach->consumeIoBuf = VMCI_AllocKernelMem(sizeof *attach->consumeIoBuf,
+                                              VMCI_MEMORY_NORMAL);
+   if (attach->consumeIoBuf == NULL) {
+      VMCI_FreeKernelMem(attach->produceIoBuf,
+                         sizeof *attach->produceIoBuf);
+      return VMCI_ERROR_NO_MEM;
+   }
+
+   retval = map_user_kiobuf(WRITE, attach->produceIoBuf,
+                            (VA)attach->produceBuffer,
+                            attach->numProducePages * PAGE_SIZE);
+   if (retval < 0) {
+      err = VMCI_ERROR_NO_ACCESS;
+      goto out;
+   }
+
+   retval = map_user_kiobuf(WRITE, attach->consumeIoBuf,
+                            (VA)attach->consumeBuffer,
+                            attach->numConsumePages * PAGE_SIZE);
+   if (retval < 0) {
+      unmap_kiobuf(attach->produceIoBuf);
+      err = VMCI_ERROR_NO_ACCESS;
+   }
+
+out:
+
+   if (err < VMCI_SUCCESS) {
+      if (attach->produceIoBuf != NULL) {
+         VMCI_FreeKernelMem(attach->produceIoBuf,
+                            sizeof *attach->produceIoBuf);
+      }
+      if (attach->consumeIoBuf != NULL) {
+         VMCI_FreeKernelMem(attach->consumeIoBuf,
+                            sizeof *attach->consumeIoBuf);
+      }
+   }
+   return err;
+#else
+   return FALSE;
+#endif
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMCIHost_ReleaseUserMemory --
+ *       Release the reference to user pages stored in the attach
+ *       struct
+ *
+ * Results:
+ *       None
+ *
+ * Side Effects:
+ *       Pages are released from the page cache and may become
+ *       swappable again.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+VMCIHost_ReleaseUserMemory(PageStoreAttachInfo *attach)         // IN
+{
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+   int i;
+
+   ASSERT(attach->producePages);
+   ASSERT(attach->consumePages);
+   for (i = 0; i < attach->numProducePages; i++) {
+      ASSERT(attach->producePages[i]);
+
+      set_page_dirty(attach->producePages[i]);
+      page_cache_release(attach->producePages[i]);
+   }
+
+   for (i = 0; i < attach->numConsumePages; i++) {
+      ASSERT(attach->consumePages[i]);
+
+      set_page_dirty(attach->consumePages[i]);
+      page_cache_release(attach->consumePages[i]);
+   }
+
+   VMCI_FreeKernelMem(attach->producePages,
+                      attach->numProducePages *
+                      sizeof attach->producePages[0]);
+   VMCI_FreeKernelMem(attach->consumePages,
+                      attach->numConsumePages *
+                      sizeof attach->consumePages[0]);
+#else
+   /*
+    * Host queue pair support for earlier kernels temporarily
+    * disabled. See bug 365496.
+    */
+
+   ASSERT_NOT_IMPLEMENTED(FALSE);
+#if 0
+   mark_dirty_kiobuf(attach->produceIoBuf,
+                     attach->numProducePages * PAGE_SIZE);
+   unmap_kiobuf(attach->produceIoBuf);
+
+   mark_dirty_kiobuf(attach->consumeIoBuf,
+                     attach->numConsumePages * PAGE_SIZE);
+   unmap_kiobuf(attach->consumeIoBuf);
+
+   VMCI_FreeKernelMem(attach->produceIoBuf,
+                      sizeof *attach->produceIoBuf);
+   VMCI_FreeKernelMem(attach->consumeIoBuf,
+                      sizeof *attach->consumeIoBuf);
+#endif
+#endif
+}
+
+#endif

@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 
 /*
  * cpNameUtil.h
@@ -63,5 +77,9 @@ Bool CPNameUtil_Utf8FormCToUtf8FormHost(const char *cpUtf8FormCName,
                                         char **cpConvertedName,
                                         size_t *cpConvertedNameLen);
 
+void CPNameUtil_CharReplace(char *buf,
+                            size_t bufSize,
+                            char oldChar,
+                            char newChar);
 
 #endif /* __CP_NAME_UTIL_H__ */

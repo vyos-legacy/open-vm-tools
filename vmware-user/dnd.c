@@ -328,15 +328,16 @@ DnDRpcInEnterCB(char const **result,     // OUT
    unsigned int index = 0;
    int nFormats;
    int i;
+   GtkWidget *mainWnd;
 
    Debug("Got DnDRpcInEnterCB\n");
-   GtkWidget *mainWnd = GTK_WIDGET(clientData);
+   mainWnd = GTK_WIDGET(clientData);
    if (mainWnd == NULL) {
       return RpcIn_SetRetVals(result, resultLen,
                               "bad clientData passed to callback", FALSE);
    }
 
-   if (gBlockFd < 0) {
+   if (!DnD_BlockIsReady(&gBlockCtrl)) {
       Debug("DnDRpcInEnterCB: cannot allow H->G DnD without vmblock.\n");
       return RpcIn_SetRetVals(result, resultLen,
                               "blocking file system unavailable", FALSE);
@@ -421,7 +422,7 @@ DnDRpcInDataSetCB(char const **result,  // OUT
 
    Debug("DnDRpcInDataSetCB: enter\n");
 
-   if (gBlockFd < 0) {
+   if (!DnD_BlockIsReady(&gBlockCtrl)) {
       Debug("DnDRpcInDataSetCB: blocking file system not available.\n");
       return RpcIn_SetRetVals(result, resultLen,
                               "blocking file system not available", FALSE);
@@ -443,17 +444,6 @@ DnDRpcInDataSetCB(char const **result,  // OUT
          format, CPName_Print(data, dataSize), dataSize);
 
    /*
-    * This data could have come from either a Windows or Linux host.
-    * Therefore, we need to verify that it doesn't contain any illegal
-    * characters for the current platform.
-    */
-   if (DnD_DataContainsIllegalCharacters(data, dataSize)) {
-      Debug("DnDRpcInDataSetCB: data contains illegal characters\n");
-      retStr = DND_ILLEGAL_CHARACTERS;
-      goto out;
-   }
-
-   /*
     * Here we take the last component of the actual file root, which is
     * a temporary directory for this DnD operation, and append it to the mount
     * point for vmblock.  This is where we want the target application to
@@ -467,7 +457,7 @@ DnDRpcInDataSetCB(char const **result,  // OUT
       goto out;
    }
 
-   if (sizeof VMBLOCK_MOUNT_POINT - 1 +
+   if (strlen(gBlockCtrl.blockRoot) +
        (sizeof DIRSEPS - 1) * 2 + strlen(perDnDDir) >= sizeof blockDir) {
       Debug("DnDRpcInDataSetCB: blocking directory path too large.\n");
       retStr = "blocking directory path too large";
@@ -475,7 +465,7 @@ DnDRpcInDataSetCB(char const **result,  // OUT
    }
 
    Str_Sprintf(blockDir, sizeof blockDir,
-               VMBLOCK_MOUNT_POINT DIRSEPS "%s" DIRSEPS, perDnDDir);
+               "%s" DIRSEPS "%s" DIRSEPS, gBlockCtrl.blockRoot, perDnDDir);
 
    /* Add the file root to the relative paths received from host */
    if (!DnD_PrependFileRoot(blockDir, &data, &dataSize)) {
@@ -636,7 +626,8 @@ DnDRpcInDataFinishCB(char const **result,   // OUT
 
    free(state);
 
-   if (gBlockFd >= 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+   if (DnD_BlockIsReady(&gBlockCtrl) &&
+       !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
       Warning("DnDRpcInDataFinishCB: could not remove block on %s\n",
               gFileRoot);
    }
@@ -720,7 +711,7 @@ DnDRpcInDropCB(char const **result,   // OUT
     * release.  Make sure we'll succeed before modifying any mouse state in the
     * guest.
     */
-   if (gBlockFd < 0) {
+   if (!DnD_BlockIsReady(&gBlockCtrl)) {
       /*
        * We shouldn't get here since DnDRpcInEnterCB() checks this, but we'll
        * check rather than ASSERT just in case.
@@ -729,7 +720,7 @@ DnDRpcInDropCB(char const **result,   // OUT
                               "blocking file system unavailable", FALSE);
    }
 
-   if (!DnD_AddBlock(gBlockFd, gFileRoot)) {
+   if (!gBlockCtrl.AddBlock(gBlockCtrl.fd, gFileRoot)) {
       return RpcIn_SetRetVals(result, resultLen, "could not add block", FALSE);
    }
 
@@ -1215,7 +1206,7 @@ DnDGtkDataRequestCB(GtkWidget *widget,                // IN
 
    /*
     * Set begin to first non-NUL character and end to last NUL character to
-    * prevent errors in calling CPName_GetComponentGeneric().
+    * prevent errors in calling CPName_GetComponent().
     */
    for(begin = gDnDData; *begin == '\0'; begin++)
       ;
@@ -1223,7 +1214,7 @@ DnDGtkDataRequestCB(GtkWidget *widget,                // IN
    ASSERT(end);
 
    /* Build up selection data */
-   while ((len = CPName_GetComponentGeneric(begin, end, "", &next)) != 0) {
+   while ((len = CPName_GetComponent(begin, end, &next)) != 0) {
       const size_t origTextLen = textLen;
       Bool freeBegin = FALSE;
 
@@ -2187,7 +2178,7 @@ DnDGHFileListGetNext(char **fileName,       // OUT: fill with filename location
    ASSERT(end);
 
    /* Get the length of this filename and a pointer to the next one */
-   len = CPName_GetComponentGeneric(gGHState.dndFileListNext, end, "", &next);
+   len = CPName_GetComponent(gGHState.dndFileListNext, end, &next);
    if (len < 0) {
       Warning("DnDGHFileListGetNext: error retrieving next component\n");
       return FALSE;
@@ -2446,8 +2437,9 @@ Bool
 DnD_Register(GtkWidget *hgWnd, // IN: The widget to register as a drag source.
              GtkWidget *ghWnd) // IN: The widget to register as a drag target.
 {
-   gDragCtx = NULL;
    uint32 i;
+
+   gDragCtx = NULL;
 
    ASSERT(hgWnd);
    ASSERT(ghWnd);
@@ -2628,7 +2620,8 @@ DnD_OnReset(GtkWidget *hgWnd,   // IN: The widget for hg dnd
    /* Cancel file transfer. */
    if (gHGDnDInProgress || gHGDataPending) {
       DnD_DeleteStagingFiles(gFileRoot, FALSE);
-      if (gBlockFd >= 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+      if (DnD_BlockIsReady(&gBlockCtrl) &&
+          !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
          Warning("DnD_OnReset: could not remove block on %s\n",
                  gFileRoot);
       }

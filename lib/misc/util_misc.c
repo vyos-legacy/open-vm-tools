@@ -73,6 +73,7 @@
 #include "user_layout.h"
 #endif
 
+#if !defined(N_PLAT_NLM)
 /*
  *-----------------------------------------------------------------------------
  *
@@ -132,6 +133,7 @@ Util_GetCanonicalPath(const char *path) // IN
 #endif
    return canonicalPath;
 }
+#endif
 
 
 #if defined(_WIN32)
@@ -315,9 +317,11 @@ Bool
 Util_IsAbsolutePath(const char *path)  // IN: path to check
 {
 #if defined(__linux__) || defined(__APPLE__)
+   // path[0] is valid even for the empty string.
    return path && path[0] == DIRSEPC;
 #elif defined(_WIN32)
-   if (!path) {
+   // if the length is 2, path[2] will be valid because of the null terminator.
+   if (!path || strlen(path) < 2) {
       return FALSE;
    }
 
@@ -455,16 +459,19 @@ Util_GetCurrentThreadId(void)
     */
 
    static int useTid = 1;
+#if defined(VMX86_SERVER) && defined(GLIBC_VERSION_25)
+   static __thread pid_t tid = -1;
+#else
    pid_t tid;
-
-   // ESX with userworld VMX
-#if defined(VMX86_SERVER)
-   if (HostType_OSIsVMK()) {
-      return User_GetTid();
-   }
 #endif
 
+
    if (useTid) {
+#if defined(VMX86_SERVER) && defined(GLIBC_VERSION_25)
+      if (tid != -1) {
+         return tid;
+      }
+#endif
       tid = gettid();
       if (tid != (pid_t)-1) {
          return tid;

@@ -73,7 +73,9 @@
 #include <stdio.h>
 #include "vmware.h"
 #include "vm_product.h"
+#include "vm_atomic.h"
 #include "unicode/ucnv.h"
+#include "unicode/udata.h"
 #include "unicode/putil.h"
 #include "file.h"
 #include "util.h"
@@ -119,7 +121,6 @@
  */
 
 static Bool dontUseIcu = TRUE;
-DEBUG_ONLY(static Bool initedIcu = FALSE;)
 
 
 /*
@@ -178,6 +179,7 @@ CodeSetGetModulePath(HANDLE hModule) // IN
    return pathW;
 }
 
+
 #elif vmx86_devel // _WIN32
 
 /*
@@ -211,7 +213,7 @@ CodeSetGetModulePath(uint32 priv)
    uint32_t size;
 #else
    ssize_t size;
-   Bool isSuper = FALSE;
+   uid_t uid = -1;
 #endif
 
    if ((priv != HGMP_PRIVILEGE) && (priv != HGMP_NO_PRIVILEGE)) {
@@ -232,20 +234,21 @@ CodeSetGetModulePath(uint32 priv)
 #endif
 
    if (priv == HGMP_PRIVILEGE) {
-      isSuper = IsSuperUser();
-      SuperUser(TRUE);
+      uid = Id_BeginSuperUser();
    }
 
    size = readlink("/proc/self/exe", path, sizeof path);
    if (-1 == size) {
-      SuperUser(isSuper);
+      if (priv == HGMP_PRIVILEGE) {
+         Id_EndSuperUser(uid);
+      }
       goto exit;
    }
 
    path[size] = '\0';
 
    if (priv == HGMP_PRIVILEGE) {
-      SuperUser(isSuper);
+      Id_EndSuperUser(uid);
    }
 #endif
 
@@ -347,7 +350,8 @@ CodeSet_DontUseIcu(void)
  *    directory. If already inited, returns the current state (init
  *    failed/succeeded).
  *
- *    Call while single-threaded.
+ *    For Windows, CodeSet_Init is thread-safe (with critical section).
+ *    For Linux/Apple, call while single-threaded.
  *
  *    *********** WARNING ***********
  *    Do not call CodeSet_Init directly, it is called already by
@@ -374,6 +378,10 @@ CodeSet_Init(const char *icuDataDir) // IN: ICU data file location in Current co
    DWORD attribs;
    utf16_t *modPath = NULL;
    utf16_t *lastSlash;
+   utf16_t *wpath;
+   HANDLE hFile = INVALID_HANDLE_VALUE;
+   HANDLE hMapping = NULL;
+   void *memMappedData = NULL;
 #else
    struct stat finfo;
 #endif
@@ -381,9 +389,6 @@ CodeSet_Init(const char *icuDataDir) // IN: ICU data file location in Current co
    Bool ret = FALSE;
 
    DynBuf_Init(&dbpath);
-
-   DEBUG_ONLY(ASSERT(!initedIcu);)
-   DEBUG_ONLY(initedIcu = TRUE;)
 
 #ifdef USE_ICU
    /*
@@ -486,29 +491,24 @@ CodeSet_Init(const char *icuDataDir) // IN: ICU data file location in Current co
       }
 
       /*
-       * Check for file existence.
+       * Since u_setDataDirectory can't handle UTF-16, we would have to
+       * now convert this path to local encoding. But that fails when
+       * the module is in a path containing characters not in the
+       * local encoding (see 282524). So we'll memory-map the file
+       * instead and call udata_setCommonData() below.
        */
-      attribs = GetFileAttributesW((LPCWSTR) DynBuf_Get(&dbpath));
-
-      if ((INVALID_FILE_ATTRIBUTES == attribs) ||
-          (attribs & FILE_ATTRIBUTE_DIRECTORY)) {
+      wpath = (utf16_t *) DynBuf_Get(&dbpath);
+      hFile = CreateFileW(wpath, GENERIC_READ, 0, NULL, OPEN_ALWAYS, 0, NULL);
+      if (INVALID_HANDLE_VALUE == hFile) {
          goto exit;
       }
-
-      /*
-       * Convert path to local encoding using system APIs (old codeset).
-       */
-      if (!CodeSetOld_Utf16leToCurrent(DynBuf_Get(&dbpath),
-                                       DynBuf_GetSize(&dbpath),
-                                       &path, NULL)) {
-
-         /*
-          * The unicode path is not compatible in the current encoding.
-          */
-         path = CodeSet_GetAltPathName(DynBuf_Get(&dbpath));
-         if (!path) {
-            goto exit;
-         }
+      hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+      if (NULL == hMapping) {
+         goto exit;
+      }
+      memMappedData = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+      if (NULL == memMappedData) {
+         goto exit;
       }
    }
 
@@ -587,10 +587,28 @@ CodeSet_Init(const char *icuDataDir) // IN: ICU data file location in Current co
 found:
 #endif
 
-   /*
-    * Tell ICU to use this directory.
-    */
-   u_setDataDirectory(path);
+#ifdef _WIN32
+   if (memMappedData) {
+      /*
+       * Tell ICU to use this mapped data.
+       */
+      UErrorCode uerr = U_ZERO_ERROR;
+      ASSERT(memMappedData);
+
+      udata_setCommonData(memMappedData, &uerr);
+      if (uerr != U_ZERO_ERROR) {
+         UnmapViewOfFile(memMappedData);
+         goto exit;
+      }
+   } else {
+#endif
+      /*
+       * Tell ICU to use this directory.
+       */
+      u_setDataDirectory(path);
+#ifdef _WIN32
+   }
+#endif
 
    dontUseIcu = FALSE;
    ret = TRUE;
@@ -613,6 +631,12 @@ found:
 
 #ifdef _WIN32
    free(modPath);
+   if (hMapping) {
+      CloseHandle(hMapping);
+   }
+   if (hFile != INVALID_HANDLE_VALUE) {
+      CloseHandle(hFile);
+   }
 #endif
    free(path);
    DynBuf_Destroy(&dbpath);
@@ -1321,11 +1345,13 @@ CodeSet_Utf8FormDToUtf8FormC(const char *bufIn,     // IN
    }
 
 #if defined(__APPLE__)
-   DynBuf db;
-   Bool ok;
-   DynBuf_Init(&db);
-   ok = CodeSet_Utf8Normalize(bufIn, sizeIn, TRUE, &db);
-   return CodeSetDynBufFinalize(ok, &db, bufOut, sizeOut);
+   {
+      DynBuf db;
+      Bool ok;
+      DynBuf_Init(&db);
+      ok = CodeSet_Utf8Normalize(bufIn, sizeIn, TRUE, &db);
+      return CodeSetDynBufFinalize(ok, &db, bufOut, sizeOut);
+   }
 #else
    NOT_IMPLEMENTED();
 #endif
@@ -1368,11 +1394,13 @@ CodeSet_Utf8FormCToUtf8FormD(const char *bufIn,     // IN
    }
 
 #if defined(__APPLE__)
-   DynBuf db;
-   Bool ok;
-   DynBuf_Init(&db);
-   ok = CodeSet_Utf8Normalize(bufIn, sizeIn, FALSE, &db);
-   return CodeSetDynBufFinalize(ok, &db, bufOut, sizeOut);
+   {
+      DynBuf db;
+      Bool ok;
+      DynBuf_Init(&db);
+      ok = CodeSet_Utf8Normalize(bufIn, sizeIn, FALSE, &db);
+      return CodeSetDynBufFinalize(ok, &db, bufOut, sizeOut);
+   }
 #else
    NOT_IMPLEMENTED();
 #endif

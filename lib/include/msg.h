@@ -89,8 +89,14 @@ typedef struct MsgCallback {
    HintResult (*hint)(HintOptions options,
 		      const char *msgID, const char *message);
 
-   void *(*lazyProgressStart)(const char *msgID, const char *message);
-   void  (*lazyProgress)(void *handle, int percent);
+   void *(*lazyProgressStart)(const char *msgID,
+                              const char *message,
+                              Bool allowCancel);
+   Bool  (*lazyProgress)(void *handle,
+                         const char *msgID,
+                         const char *message,
+                         Bool allowCancel,
+                         int percent);
    void  (*lazyProgressEnd)(void *handle);
 
    void (*postList)(MsgSeverity severity, Msg_List *messages);
@@ -147,9 +153,16 @@ EXTERN int Msg_Progress(int percentDone, Bool cancelButton, const char *idFmt,
 EXTERN int Msg_ProgressScaled(int percentDone, int opsDone, int opsTotal,
                               Bool cancelButton);
 
-EXTERN void *Msg_LazyProgressStart(const char *idFmt, ...)
-       PRINTF_DECL(1, 2);
-EXTERN void Msg_LazyProgress(void *handle, int percent);
+EXTERN void *Msg_LazyProgressStart(Bool allowCancel,
+                                   const char *idFmt,
+                                   ...)
+       PRINTF_DECL(2, 3);
+EXTERN Bool Msg_LazyProgress(void *handle,
+                             Bool allowCancel,
+                             int percent,
+                             const char *idFmt,
+                             ...)
+       PRINTF_DECL(4, 5);
 EXTERN void Msg_LazyProgressEnd(void *handle);
 
 
@@ -179,8 +192,10 @@ EXTERN const char *Msg_GetMessages(void);
 EXTERN const char *Msg_GetMessagesAndReset(void);
 EXTERN Msg_List *Msg_GetMsgList(void);
 EXTERN Msg_List *Msg_GetMsgListAndReset(void);
+EXTERN Msg_List *Msg_CopyMsgList(const Msg_List *src);
 EXTERN void Msg_FreeMsgList(Msg_List *messages);
-EXTERN char *Msg_LocalizeList(Msg_List *messages);
+EXTERN char *Msg_LocalizeList(const Msg_List *messages);
+EXTERN const char *Msg_GetMsgListId(const Msg_List *messages);
 EXTERN void Msg_Reset(Bool log);
 EXTERN Bool Msg_Present(void);
 EXTERN void Msg_Exit(void);

@@ -158,74 +158,6 @@ GuestInfo_GetDiskInfo(PGuestDiskInfo di)     // IN/OUT
 }
 
 
-/*
- *-----------------------------------------------------------------------------
- *
- * GuestInfoGetOSName --
- *
- *      Return OS version information.
- *
- *      osFullName format:
- *        Linux/POSIX:
- *          <OS NAME> <OS RELEASE> <SPECIFIC_DISTRO_INFO>
- *        An example of such string would be:
- *          Linux 2.4.18-3 Red Hat Linux release 7.3 (Valhalla)
- *
- *        Win32:
- *          <OS NAME> <SERVICE PACK> (BUILD <BUILD_NUMBER>)
- *        An example of such string would be:
- *          Windows XP Professional Service Pack 2 (Build 2600)
- *
- *      osName contains an os name in the same format that is used
- *      in .vmx file.
- *
- * Results:
- *      Returns TRUE on success and FALSE on failure.
- *      Returns the guest's full OS name (osNameFull)
- *      Returns the guest's OS name in the same format as .vmx file (osName)
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-Bool
-GuestInfo_GetOSName(unsigned int outBufFullLen, // IN
-                    unsigned int outBufLen,     // IN
-                    char *osNameFull,           // OUT
-                    char *osName)               // OUT
-{
-   return GuestInfoGetOSName(outBufFullLen, outBufLen, osNameFull, osName);
-}
-
-
-#if defined(N_PLAT_NLM)
-/*
- *----------------------------------------------------------------------------
- *
- * GuestInfo_GetSystemBitness --
- *
- *      Determines the operating system's bitness.
- *
- * Return value:
- *      32 or 64 on success, negative value on failure. Check errno for more
- *      details of error.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------------
- */
-
-int
-GuestInfo_GetSystemBitness(void)
-{
-   return 32;
-}
-#endif // defined(N_PLAT_NLM)
-
-
 /**
  * Add a NIC into the given list. The macAddress of the new GuestNic is
  * initialized with the given address.
@@ -279,12 +211,14 @@ GuestInfoAddIpAddress(GuestNic *nic,                    // IN/OUT
 
 
 /**
- * Add an IPV4 subnet mask to the IpAddress in ASCII form.
+ * Add an IPv4 netmask / IPv6 prefix length to the IpAddress in ASCII form.
  *
  * If convertToMask is true the 'n' bits subnet mask is converted
  * to an ASCII string as a hexadecimal number (0xffffff00) and
- * added to the IPAddressEntry. If convertToMask is false the value
- * is added to the IPAddressEntry in string form - ie '24'.
+ * added to the IPAddressEntry.  (Applies to IPv4 only.)
+ *
+ * If convertToMask is false the value is added to the IPAddressEntry in
+ * string form - ie '24'.
  *
  * @param[in,out] ipAddressEntry    The IP address info.
  * @param[in]     subnetMaskBits    The mask.
@@ -300,6 +234,11 @@ GuestInfoAddSubnetMask(VmIpAddress *ipAddressEntry,            // IN/OUT
    uint32 subnetMask = 0;
 
    ASSERT(ipAddressEntry);
+   /*
+    * It's an error to set convertToMask on an IPv6 address.
+    */
+   ASSERT(ipAddressEntry->addressFamily == INFO_IP_ADDRESS_FAMILY_IPV4 ||
+          !convertToMask);
 
    if (convertToMask && (subnetMaskBits <= 32)) {
       /*
@@ -357,7 +296,8 @@ GuestInfoGetDiskInfo(PGuestDiskInfo di)
 
    for (i = 0; i < pl->size; i++) {
       nextPartition = pl->partitions[i];
-      if (!strlen(nextPartition.comment)) {
+      if (!strlen(nextPartition.comment) ||
+          strcmp(nextPartition.comment, WIPER_DEVICE_MAPPER_STRING) == 0) {
          PPartitionEntry newPartitionList;
          unsigned char *error;
          error = WiperSinglePartition_GetSpace(&nextPartition, &freeBytes, &totalBytes);

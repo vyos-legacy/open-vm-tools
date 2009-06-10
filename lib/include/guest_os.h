@@ -31,6 +31,7 @@
  * vmcore/vmx/main/monitorControl.c, or similar. Don't rely on every supported
  * guest having an entry in this list.
  */
+
 typedef enum GuestOSType {
    GUEST_OS_BASE                = 0x5000,
 
@@ -72,11 +73,19 @@ typedef enum GuestOSType {
    GUEST_OS_SOLARIS10           = GUEST_OS_BASE + 35,
    GUEST_OS_SOLARIS10_64        = GUEST_OS_BASE + 36,
    GUEST_OS_VMKERNEL            = GUEST_OS_BASE + 37,
-   GUEST_OS_DARWIN              = GUEST_OS_BASE + 38,
-   GUEST_OS_DARWIN_64           = GUEST_OS_BASE + 39,
-   GUEST_OS_OPENSERVER5         = GUEST_OS_BASE + 40,
-   GUEST_OS_OPENSERVER6         = GUEST_OS_BASE + 41,
-   GUEST_OS_UNIXWARE7           = GUEST_OS_BASE + 42,
+   GUEST_OS_DARWIN9             = GUEST_OS_BASE + 38, // Mac OS 10.5
+   GUEST_OS_DARWIN9_64          = GUEST_OS_BASE + 39,
+   GUEST_OS_DARWIN10            = GUEST_OS_BASE + 40, // Mac OS 10.6
+   GUEST_OS_DARWIN10_64         = GUEST_OS_BASE + 41,
+   GUEST_OS_OPENSERVER5         = GUEST_OS_BASE + 42,
+   GUEST_OS_OPENSERVER6         = GUEST_OS_BASE + 43,
+   GUEST_OS_UNIXWARE7           = GUEST_OS_BASE + 44,
+   GUEST_OS_DEBIAN45            = GUEST_OS_BASE + 45,
+   GUEST_OS_DEBIAN45_64         = GUEST_OS_BASE + 46,
+   GUEST_OS_WINSEVEN            = GUEST_OS_BASE + 47, // Windows 7
+   GUEST_OS_WINSEVEN_64         = GUEST_OS_BASE + 48, // Windows 7
+   GUEST_OS_WIN2008R2           = GUEST_OS_BASE + 49, // Server 2008 R2
+   GUEST_OS_WIN2008R2_64        = GUEST_OS_BASE + 50, // Server 2008 R2
 } GuestOSType;
 
 
@@ -92,6 +101,7 @@ typedef enum GuestOSFamilyType {
    GUEST_OS_FAMILY_NETWARE     = 0x0080
 } GuestOSFamilyType;
 
+#define ALLOS           (~CONST64U(0))
 #define B(guest)	((uint64) 1 << ((guest) - GUEST_OS_BASE))
 #define BS(suf)		B(GUEST_OS_##suf)
 #define ALLWIN9X	(BS(WIN95) | BS(WIN98) | BS(WINME))
@@ -111,9 +121,14 @@ typedef enum GuestOSFamilyType {
 #define ALLWINVISTA64   (BS(LONGHORN_64) | BS(WINVISTA_64))
 #define ALLWINVISTA     (ALLWINVISTA32 | ALLWINVISTA64)
 
+#define ALLWINSEVEN32   BS(WINSEVEN)
+#define ALLWINSEVEN64   BS(WINSEVEN_64)
+#define ALLWINSEVEN     (ALLWINSEVEN32 | ALLWINSEVEN64)
+
 #define ALLWINNT32	(BS(WINNT) | ALLWIN2000 | ALLWINXP32 | ALLWINNET32 | \
-                      ALLWINVISTA32)
-#define ALLWINNT64	(ALLWINXP64 | ALLWINNET64 | ALLWINVISTA64)
+                         ALLWINVISTA32 | ALLWINSEVEN32)
+#define ALLWINNT64	(ALLWINXP64 | ALLWINNET64 | ALLWINVISTA64 | \
+                         ALLWINSEVEN64)
 #define ALLWINNT	(ALLWINNT32 | ALLWINNT64)
 
 #define ALLWIN32	(ALLWIN9X | ALLWINNT32)
@@ -122,15 +137,18 @@ typedef enum GuestOSFamilyType {
 #define ALLSOLARIS      (BS(SOLARIS6) | BS(SOLARIS7) | BS(SOLARIS8) | \
                          BS(SOLARIS9) | BS(SOLARIS10) | BS(SOLARIS10_64))
 #define ALLNETWARE      (BS(NETWARE4) | BS(NETWARE5) | BS(NETWARE6))
-#define ALLLINUX32      (BS(UBUNTU) | BS(OTHER24XLINUX) | BS(VMKERNEL) | \
-                         BS(OTHER26XLINUX) | BS(OTHERLINUX))
-#define ALLLINUX64      (BS(OTHERLINUX_64) | BS(OTHER24XLINUX_64) | \
-                         BS(OTHER26XLINUX_64))
+#define ALL26XLINUX32   (BS(OTHER26XLINUX) | BS(DEBIAN45) | BS(UBUNTU))
+#define ALL26XLINUX64   (BS(OTHER26XLINUX_64) | BS(DEBIAN45_64))
+#define ALLLINUX32      (BS(OTHER24XLINUX) | BS(VMKERNEL) | \
+                         BS(OTHERLINUX) | ALL26XLINUX32)
+#define ALLLINUX64      (BS(OTHERLINUX_64) | BS(OTHER24XLINUX_64) | ALL26XLINUX64)
 #define ALLLINUX        (ALLLINUX32 | ALLLINUX64)
-#define ALLDARWIN       (BS(DARWIN) | BS(DARWIN_64))
-#define ALL64           (ALLWIN64 | ALLLINUX64 | BS(LONGHORN_64) | \
+#define ALLDARWIN32     (BS(DARWIN9) | BS(DARWIN10))
+#define ALLDARWIN64     (BS(DARWIN9_64) | BS(DARWIN10_64))
+#define ALLDARWIN       (ALLDARWIN32 | ALLDARWIN64)
+#define ALL64           (ALLWIN64 | ALLLINUX64 | \
                          BS(SOLARIS10_64) | BS(FREEBSD_64) | \
-                         BS(WINVISTA_64) | BS(DARWIN_64) | BS(OTHER_64))
+                         ALLDARWIN64 | BS(OTHER_64))
 
 
 /*
@@ -178,13 +196,17 @@ typedef enum GuestOSFamilyType {
 #define STR_OS_RED_HAT_EN_4_FULL "Red Hat Enterprise Linux 4"
 #define STR_OS_RED_HAT_FULL "Red Hat Linux"  
 #define STR_OS_SLACKWARE "Slackware"    
+#define STR_OS_SLES_10                  "sles10"
+#define STR_OS_SLES_10_FULL             "SUSE Linux Enterprise Server 10"
+#define STR_OS_SLES_11                  "sles11"
+#define STR_OS_SLES_11_FULL             "SUSE Linux Enterprise Server 11"
 #define STR_OS_SMESERVER "SMEServer"    
 #define STR_OS_SUN_DESK "sjds"    
 #define STR_OS_SUN_DESK_FULL "Sun Java Desktop System" 
 #define STR_OS_SUSE "suse"    
 #define STR_OS_SUSE_EN "sles"    
 #define STR_OS_SUSE_EN_FULL "SUSE Linux Enterprise Server" 
-#define STR_OS_SUSE_FULL "SUSE Linux"   
+#define STR_OS_SUSE_FULL "SUSE Linux"
 #define STR_OS_TINYSOFA "Tiny Sofa"   
 #define STR_OS_TURBO "turbolinux"    
 #define STR_OS_TURBO_FULL "Turbolinux"    
@@ -263,6 +285,14 @@ typedef enum GuestOSFamilyType {
 #define STR_OS_WIN_2008_ENTERPRISE_CORE_FULL "Windows Server 2008 Enterprise Edition (core installation)"
 #define STR_OS_WIN_2008_ENTERPRISE_ITANIUM "winServer2008EnterpriseItanium-32"
 #define STR_OS_WIN_2008_ENTERPRISE_ITANIUM_FULL "Windows Server 2008 Enterprise Edition for Itanium-based Systems"
+#define STR_OS_WIN_2008_MEDIUM_MANAGEMENT "winServer2008MediumManagement-32"
+#define STR_OS_WIN_2008_MEDIUM_MANAGEMENT_FULL "Windows Essential Business Server Management Server"
+#define STR_OS_WIN_2008_MEDIUM_MESSAGING "winServer2008MediumMessaging-32"
+#define STR_OS_WIN_2008_MEDIUM_MESSAGING_FULL "Windows Essential Business Server Messaging Server"
+#define STR_OS_WIN_2008_MEDIUM_SECURITY "winServer2008MediumSecurity-32"
+#define STR_OS_WIN_2008_MEDIUM_SECURITY_FULL "Windows Essential Business Server Security Server"
+#define STR_OS_WIN_2008_SERVER_FOR_SMALLBUSINESS "winServer2008ForSmallBusiness-32"
+#define STR_OS_WIN_2008_SERVER_FOR_SMALLBUSINESS_FULL "Windows Server 2008 for Windows Essential Server Solutions"
 #define STR_OS_WIN_2008_SMALL_BUSINESS "winServer2008SmallBusiness-32"
 #define STR_OS_WIN_2008_SMALL_BUSINESS_FULL "Windows Server 2008 Small Business Server"
 #define STR_OS_WIN_2008_SMALL_BUSINESS_PREMIUM "winServer2008SmallBusinessPremium-32"
@@ -271,8 +301,29 @@ typedef enum GuestOSFamilyType {
 #define STR_OS_WIN_2008_STANDARD_FULL "Windows Server 2008 Standard Edition"
 #define STR_OS_WIN_2008_STANDARD_CORE "winServer2008StandardCore-32"
 #define STR_OS_WIN_2008_STANDARD_CORE_FULL "Windows Server 2008 Standard Edition (core installation)"
+#define STR_OS_WIN_2008_STORAGE_ENTERPRISE "winServer2008StorageEnterprise-32"
+#define STR_OS_WIN_2008_STORAGE_ENTERPRISE_FULL "Windows Server 2008 Storage Server Enterprise"
+#define STR_OS_WIN_2008_STORAGE_EXPRESS "winServer2008StorageExpress-32"
+#define STR_OS_WIN_2008_STORAGE_EXPRESS_FULL "Windows Server 2008 Storage Server Express"
+#define STR_OS_WIN_2008_STORAGE_STANDARD "winServer2008StorageStandard-32"
+#define STR_OS_WIN_2008_STORAGE_STANDARD_FULL "Windows Server 2008 Storage Server Standard"
+#define STR_OS_WIN_2008_STORAGE_WORKGROUP "winServer2008StorageWorkgroup-32"
+#define STR_OS_WIN_2008_STORAGE_WORKGROUP_FULL "Windows Server 2008 Storage Server Workgroup"
 #define STR_OS_WIN_2008_WEB_SERVER "winServer2008Web-32"
 #define STR_OS_WIN_2008_WEB_SERVER_FULL "Windows Server 2008 Web Server Edition"
+
+/* Windows Server 2008 R2 */
+
+#define STR_OS_WIN_2008R2_STANDARD        "windows7srv-Std"
+#define STR_OS_WIN_2008R2_STANDARD_FULL   "Windows Server 2008 R2 Standard Edition"
+#define STR_OS_WIN_2008R2_ENTERPRISE      "windows7srv-Ent"
+#define STR_OS_WIN_2008R2_ENTERPRISE_FULL "Windows Server 2008 R2 Enterprise Edition"
+#define STR_OS_WIN_2008R2_DATACENTER      "windows7srv-Data"
+#define STR_OS_WIN_2008R2_DATACENTER_FULL "Windows Server 2008 R2 Datacenter Edition"
+#define STR_OS_WIN_2008R2_WEB_SERVER      "windows7srv-Web"
+#define STR_OS_WIN_2008R2_WEB_SERVER_FULL "Windows Web Server 2008 R2 Edition"
+
+/* Windows 64-bit */
 #define STR_OS_WIN_VISTA_ULTIMATE_X64 "winVistaUltimate-64"
 #define STR_OS_WIN_VISTA_HOME_PREMIUM_X64 "winVistaHomePremium-64"
 #define STR_OS_WIN_VISTA_HOME_BASIC_X64 "winVistaHomeBasic-64"
@@ -285,11 +336,33 @@ typedef enum GuestOSFamilyType {
 #define STR_OS_WIN_2008_ENTERPRISE_X64 "winServer2008Enterprise-64"
 #define STR_OS_WIN_2008_ENTERPRISE_CORE_X64 "winServer2008EnterpriseCore-64"
 #define STR_OS_WIN_2008_ENTERPRISE_ITANIUM_X64 "winServer2008EnterpriseItanium-64"
+#define STR_OS_WIN_2008_MEDIUM_MANAGEMENT_X64 "winServer2008MediumManagement-64"
+#define STR_OS_WIN_2008_MEDIUM_MESSAGING_X64 "winServer2008MediumMessaging-64"
+#define STR_OS_WIN_2008_MEDIUM_SECURITY_X64 "winServer2008MediumSecurity-64"
+#define STR_OS_WIN_2008_SERVER_FOR_SMALLBUSINESS_X64 "winServer2008ForSmallBusiness-64"
 #define STR_OS_WIN_2008_SMALL_BUSINESS_X64 "winServer2008SmallBusiness-64"
 #define STR_OS_WIN_2008_SMALL_BUSINESS_PREMIUM_X64 "winServer2008SmallBusinessPremium-64"
 #define STR_OS_WIN_2008_STANDARD_X64 "winServer2008Standard-64"
 #define STR_OS_WIN_2008_STANDARD_CORE_X64 "winServer2008StandardCore-64"
+#define STR_OS_WIN_2008_STORAGE_ENTERPRISE_X64 "winServer2008StorageEnterprise-64"
+#define STR_OS_WIN_2008_STORAGE_EXPRESS_X64 "winServer2008StorageExpress-64"
+#define STR_OS_WIN_2008_STORAGE_STANDARD_X64 "winServer2008StorageStandard-64"
+#define STR_OS_WIN_2008_STORAGE_WORKGROUP_X64 "winServer2008StorageWorkgroup-64"
 #define STR_OS_WIN_2008_WEB_SERVER_X64 "winServer2008Web-64"
+
+/* Windows 7 */
+#define STR_OS_WIN_SEVEN "windows7"
+#define STR_OS_WIN_SEVEN_X64 "windows7-64"
+#define STR_OS_WIN_SEVEN_FULL "Windows 7"
+
+/* Windows 2008 R2 */
+#define STR_OS_WIN_2008R2 "windows7srv"
+#define STR_OS_WIN_2008R2_X64 "windows7srv-64"
+#define STR_OS_WIN_2008R2_FULL "Windows Server 2008 R2"
+
+/* XXX */
+#define STR_OS_HYPERV "winHyperV"
+#define STR_OS_HYPERV_FULL "Hyper-V Server"
 
 /* Modifiers for Windows Vista and Windows Server 2008 */
 #define STR_OS_WIN_32_BIT_EXTENSION ", 32-bit"
@@ -299,7 +372,7 @@ typedef enum GuestOSFamilyType {
 #define STR_OS_FREEBSD "FreeBSD"
 
 /* Solaris */
-#define STR_OS_SOLARIS "Solaris"
+#define STR_OS_SOLARIS "solaris"
 
 /* All */
 #define STR_OS_64BIT_SUFFIX "-64"

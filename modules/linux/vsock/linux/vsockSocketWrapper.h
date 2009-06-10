@@ -28,19 +28,30 @@
 
 
 /*
- * Socket states and flags.  Note that MSG_WAITALL is only supported on 2K3,
+ * Socket states and flags.  Note that MSG_WAITALL is only defined on 2K3,
  * XP-SP2 and above.  Since we currently build for 2K to maintain backwards
- * compatibility, it will always be 0.
+ * compatibility, we pull the value from the newer header.
  */
 #if defined(_WIN32)
 #  define MSG_DONTWAIT        0
 #  define MSG_NOSIGNAL        0
 #  if (_WIN32_WINNT < 0x0502)
-#     define MSG_WAITALL      0
+#     define MSG_WAITALL      0x8
 #  endif
 #endif
 
-#if defined(_WIN32) || defined(VMKERNEL)
+#if defined __APPLE__
+#  define MSG_NOSIGNAL			0
+
+/*
+ * Custom options for setting socket behavious in kVsockSetOptions.
+ * These values fall after the common Mac OS X Socket options
+ * in /usr/inclue/sys/socket.h
+ */
+#define SO_NONBLOCKING  0x1200
+#endif // __APPLE__
+
+#if defined(_WIN32) || defined(VMKERNEL) || defined __APPLE__
 #  define SS_FREE             0
 #  define SS_UNCONNECTED      1
 #  define SS_CONNECTING       2
@@ -51,6 +62,32 @@
 #  define SHUTDOWN_MASK       3
 #endif // _WIN32 || VMKERNEL
 
+/*
+ * For signalling sockets.  These are defined as standard on Windows.  We do
+ * not use them on Linux.  So define them here only for VMKernel.
+ */
+#if defined(_WIN32)
+#  define SOCKET_EVENT_READ    FD_READ
+#  define SOCKET_EVENT_WRITE   FD_WRITE
+#  define SOCKET_EVENT_ACCEPT  FD_ACCEPT
+#  define SOCKET_EVENT_CONNECT FD_CONNECT
+#  define SOCKET_EVENT_CLOSE   FD_CLOSE
+#else
+#if defined(VMKERNEL)  || defined(__APPLE__)
+#  define SOCKET_EVENT_READ    0x1
+#  define SOCKET_EVENT_WRITE   0x2
+#  define SOCKET_EVENT_ACCEPT  0x8
+#  define SOCKET_EVENT_CONNECT 0x10
+#  define SOCKET_EVENT_CLOSE   0x20
+#endif // VMKERNEL
+#endif // _WIN32
+
+/*
+ * Custom socket control option values.  These are internal.  The public ones
+ * are in vmci_sockets.h.  As with the public options, use the address family
+ * as the option level.
+ */
+#define SO_VMCI_EVENT_ENUMERATE_SELECT 1000
 
 /*
  * Error codes.
@@ -96,6 +133,9 @@
 #  define ECONNREFUSED        WSAECONNREFUSED
 #  define EHOSTDOWN           WSAEHOSTDOWN
 #  define EHOSTUNREACH        WSAEHOSTUNREACH
+#  define __ELOCALSHUTDOWN    ESHUTDOWN
+#  define __EPEERSHUTDOWN     ECONNABORTED
+#  define __ECONNINPROGRESS   EWOULDBLOCK
 #else
 #if defined(VMKERNEL)
 #  define EINTR               VMK_WAIT_INTERRUPTED
@@ -135,6 +175,16 @@
 #  define ECONNREFUSED        VMK_ECONNREFUSED
 #  define EHOSTDOWN           VMK_EHOSTDOWN
 #  define EHOSTUNREACH        VMK_EHOSTUNREACH
+#  define EPIPE               VMK_BROKEN_PIPE
+#  define __ELOCALSHUTDOWN    EPIPE
+#  define __EPEERSHUTDOWN     EPIPE
+#  define __ECONNINPROGRESS   EINPROGRESS
+#else
+#if defined(__APPLE__)
+#  define __ELOCALSHUTDOWN    ESHUTDOWN
+#  define __EPEERSHUTDOWN     ECONNABORTED
+#  define __ECONNINPROGRESS   EINPROGRESS
+#endif // __APPLE
 #endif // VMKERNEL
 #endif // _WIN32
 
@@ -155,13 +205,17 @@
 #  define closesocket(_s)     close((_s))
    typedef int32              SOCKET;
 #else
-#if defined(linux)
+#if defined(linux) || defined(__APPLE__)
 #  define SOCKET_ERROR        (-1)
 #  define INVALID_SOCKET      ((SOCKET) -1)
 #  define sockerr()           errno
 #  define sockerr2err(_e)     (((_e) > 0) ? -(_e) : (_e))
 #  define sockcleanup()       do {} while (0)
+#if defined(linux)
 #  define closesocket(_s)     close((_s))
+#else
+#  define closesocket(_s)	VMCISock_close(_s)
+#endif
    typedef int32              SOCKET;
 #endif // linux
 #endif // VMKERNEL

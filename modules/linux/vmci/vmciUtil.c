@@ -43,6 +43,8 @@
 #  include <sys/ddi.h>
 #  include <sys/sunddi.h>
 #  include <sys/disp.h>
+#elif defined(__APPLE__)
+#  include <IOKit/IOLib.h>
 #else 
 #error "platform not supported."
 #endif //linux
@@ -336,6 +338,12 @@ VMCI_InInterrupt()
    return in_interrupt();
 #elif defined(SOLARIS)
    return servicing_interrupt();   /* servicing_interrupt is not part of DDI. */
+#elif defined(__APPLE__)
+   /*
+    * All interrupt servicing is handled by IOKit functions, by the time the IOService
+    * interrupt handler is called we're no longer in an interrupt dispatch level.
+    */
+   return false;
 #endif //
 }
 
@@ -435,7 +443,7 @@ VMCI_ReadDatagramsFromPort(VMCIIoHandle ioHandle,  // IN
    dg = (VMCIDatagram *)dgInBuffer; 
    remainingBytes = currentDgInBufferSize;
    
-   while (dg->dst.resource != VMCI_ERROR_INVALID_RESOURCE || remainingBytes > PAGE_SIZE) {
+   while (dg->dst.resource != VMCI_INVALID_ID || remainingBytes > PAGE_SIZE) {
       unsigned dgInSize;
       
       /*
@@ -443,7 +451,7 @@ VMCI_ReadDatagramsFromPort(VMCIIoHandle ioHandle,  // IN
        * start on any page boundary in the buffer. 
        */
 
-      if (dg->dst.resource == VMCI_ERROR_INVALID_RESOURCE) {
+      if (dg->dst.resource == VMCI_INVALID_ID) {
          ASSERT(remainingBytes > PAGE_SIZE);
          dg = (VMCIDatagram *)ROUNDUP((uintptr_t)dg + 1, PAGE_SIZE);
          ASSERT((uint8 *)dg < dgInBuffer + currentDgInBufferSize);
@@ -535,4 +543,31 @@ VMCI_ReadDatagramsFromPort(VMCIIoHandle ioHandle,  // IN
          remainingBytes = currentDgInBufferSize;
       }
    }
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * VMCIContext_GetPrivFlags --
+ *
+ *      Provided for compatibility with the host VMCI API.
+ *
+ * Results:
+ *      Always returns VMCI_NO_PRIVILEGE_FLAGS.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+#ifdef __linux__
+EXPORT_SYMBOL(VMCIContext_GetPrivFlags);
+#endif
+
+VMCIPrivilegeFlags
+VMCIContext_GetPrivFlags(VMCIId contextID) // IN
+{
+   return VMCI_NO_PRIVILEGE_FLAGS;
 }

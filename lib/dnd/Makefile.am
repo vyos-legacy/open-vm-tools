@@ -15,8 +15,10 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-noinst_LIBRARIES = libDnd.a
+noinst_LTLIBRARIES = libDnd.la
 
-libDnd_a_SOURCES =
-libDnd_a_SOURCES += dndCommon.c
-libDnd_a_SOURCES += dndLinux.c
+libDnd_la_SOURCES =
+libDnd_la_SOURCES += dndClipboard.c
+libDnd_la_SOURCES += dndCommon.c
+libDnd_la_SOURCES += dndLinux.c
+libDnd_la_SOURCES += dndMsg.c

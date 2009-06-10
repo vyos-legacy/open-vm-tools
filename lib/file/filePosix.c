@@ -112,13 +112,6 @@ struct WalkDirContextImpl
 
 
 /*
- * Local functions
- */
-
-static Bool FileIsGroupsMember(gid_t gid);
-
-
-/*
  *-----------------------------------------------------------------------------
  *
  * FileRemoveDirectory --
@@ -171,14 +164,15 @@ FileRename(ConstUnicode oldName,  // IN:
  *----------------------------------------------------------------------
  *
  *  FileDeletion --
- *	Delete the specified file
+ *	     Delete the specified file.  A NULL pathName will result in an error
+ *	     and errno will be set to EFAULT.
  *
  * Results:
  *	0	success
  *	> 0	failure (errno)
  *
  * Side effects:
- *      May change the host file system.
+ *      May change the host file system.  errno may be set.
  *
  *----------------------------------------------------------------------
  */
@@ -189,13 +183,17 @@ FileDeletion(ConstUnicode pathName,   // IN:
 {
    int err;
    char *linkPath = NULL;
-   char *primaryPath = Unicode_GetAllocBytes(pathName,
-                                             STRING_ENCODING_DEFAULT);
+   char *primaryPath;
 
-   if (primaryPath == NULL && pathName != NULL) {
+   if (pathName == NULL) {
+      errno = EFAULT;
+      return errno;
+   } else if ((primaryPath = Unicode_GetAllocBytes(pathName,
+                               STRING_ENCODING_DEFAULT)) == NULL) {
       Log(LGPFX" %s: failed to convert \"%s\" to current encoding\n",
           __FUNCTION__, UTF8(pathName));
-      return UNICODE_CONVERSION_ERRNO;
+      errno = UNICODE_CONVERSION_ERRNO;
+      return errno;
    }
 
    if (handleLink) {
@@ -384,6 +382,9 @@ File_IsRemote(ConstUnicode pathName)  // IN: Path name
    if (SMB_SUPER_MAGIC == sfbuf.f_type) {
       return TRUE;
    }
+   if (CIFS_SUPER_MAGIC == sfbuf.f_type) {
+      return TRUE;
+   }
    return FALSE;
 #endif
 }
@@ -543,7 +544,6 @@ File_FullPath(ConstUnicode pathName)  // IN:
 {
    Unicode cwd;
    Unicode ret;
-   Unicode temp;
 
    if ((pathName != NULL) && File_IsFullPath(pathName)) {
       cwd = NULL;
@@ -555,26 +555,25 @@ File_FullPath(ConstUnicode pathName)  // IN:
    }
 
    if ((pathName == NULL) || Unicode_IsEmpty(pathName)) {
-      temp = Unicode_Duplicate(cwd);
+      ret = Unicode_Duplicate(cwd);
    } else if (File_IsFullPath(pathName)) {
-      temp = Unicode_Duplicate(pathName);
+       ret = Posix_RealPath(pathName);
+       if (ret == NULL) {
+          ret = FileStripFwdSlashes(pathName);
+       }
    } else {
       Unicode path;
 
       path = Unicode_Join(cwd, DIRSEPS, pathName, NULL);
 
-      temp = Posix_RealPath(path);
+      ret = Posix_RealPath(path);
 
-      if (temp == NULL) {
-         temp = path;
-      } else {
-         Unicode_Free(path);
-      }
+      if (ret == NULL) {
+         ret = FileStripFwdSlashes(path);
+      } 
+      Unicode_Free(path);
    }
 
-   ret = FileStripFwdSlashes(temp);
-
-   Unicode_Free(temp);
    Unicode_Free(cwd);
 
    return ret;
@@ -881,7 +880,9 @@ FilePosixGetParent(Unicode *canPath)  // IN/OUT: Canonical file path
  *
  * FileGetStats --
  *
- *      Calls statfs on a full path (eg. something returned from File_FullPath)
+ *      Calls statfs on a full path (eg. something returned from File_FullPath).
+ *      If doNotAscend is FALSE, climb up the directory chain and call statfs
+ *      on each level until it succeeds.
  *
  * Results:
  *      TRUE	statfs succeeded
@@ -895,6 +896,7 @@ FilePosixGetParent(Unicode *canPath)  // IN/OUT: Canonical file path
 
 static Bool
 FileGetStats(ConstUnicode pathName,      // IN:
+             Bool doNotAscend,           // IN:
              struct statfs *pstatfsbuf)  // OUT:
 {
    Bool retval = TRUE;
@@ -902,7 +904,7 @@ FileGetStats(ConstUnicode pathName,      // IN:
 
    while (Posix_Statfs(dupPath ? dupPath : pathName,
                              pstatfsbuf) == -1) {
-      if (errno != ENOENT) {
+      if (errno != ENOENT || doNotAscend) {
          retval = FALSE;
          break;
       }
@@ -927,7 +929,9 @@ FileGetStats(ConstUnicode pathName,      // IN:
  * File_GetFreeSpace --
  *
  *      Return the free space (in bytes) available to the user on a disk where
- *      a file is or would be
+ *      a file is or would be.  If doNotAscend is FALSE, the helper function
+ *      ascends the directory chain on system call errors in order to obtain
+ *      the file system information.
  *
  * Results:
  *      -1 if error (reported to the user)
@@ -939,7 +943,8 @@ FileGetStats(ConstUnicode pathName,      // IN:
  */
 
 uint64
-File_GetFreeSpace(ConstUnicode pathName)  // IN: File name
+File_GetFreeSpace(ConstUnicode pathName,  // IN: File name
+                  Bool doNotAscend)       // IN: Do not ascend dir chain
 {
    uint64 ret;
    Unicode fullPath;
@@ -951,8 +956,8 @@ File_GetFreeSpace(ConstUnicode pathName)  // IN: File name
       goto end;
    }
 
-   if (!FileGetStats(fullPath, &statfsbuf)) {
-      Warning("%s: Couldn't statfs\n", __func__);
+   if (!FileGetStats(fullPath, doNotAscend, &statfsbuf)) {
+      Warning("%s: Couldn't statfs %s\n", __func__, fullPath);
       ret = -1;
       goto end;
    }
@@ -1176,7 +1181,7 @@ done:
  *----------------------------------------------------------------------
  */
 
-static int
+int
 File_GetVMFSfsType(ConstUnicode pathName,  // IN: File name to test
                    char **fsType)          // IN/OUT: VMFS fsType
 {
@@ -1245,7 +1250,7 @@ File_OnVMFS(ConstUnicode pathName)
          goto end;
       }
 
-      err = FileGetStats(fullPath, &statfsbuf);
+      err = FileGetStats(fullPath, FALSE, &statfsbuf);
 
       Unicode_Free(fullPath);
 
@@ -1297,7 +1302,7 @@ File_GetCapacity(ConstUnicode pathName)  // IN: Path name
       goto end;
    }
 
-   if (!FileGetStats(fullPath, &statfsbuf)) {
+   if (!FileGetStats(fullPath, FALSE, &statfsbuf)) {
       Warning(LGPFX" %s: Couldn't statfs\n", __func__);
       ret = -1;
       goto end;
@@ -1319,13 +1324,13 @@ end:
  *      Returns a string which uniquely identifies the underlying filesystem
  *      for a given path.
  *
- *      'path' can be relative (including empty) or absolute, and any number of
- *      non-existing components at the end of 'path' are simply ignored.
+ *      'path' can be relative (including empty) or absolute, and any number
+ *      of non-existing components at the end of 'path' are simply ignored.
  *
  *      XXX: On Posix systems, we choose the underlying device's name as the
- *           unique ID. I make no claim that this is 100% unique so if you need
- *           this functionality to be 100% perfect, I suggest you think about
- *           it more deeply than I did. -meccleston
+ *           unique ID. I make no claim that this is 100% unique so if you
+ *           need this functionality to be 100% perfect, I suggest you think
+ *           about it more deeply than I did. -meccleston
  *
  * Results:
  *      On success: Allocated and NUL-terminated filesystem ID.
@@ -1800,13 +1805,14 @@ File_IsSameFile(ConstUnicode path1,  // IN:
  * File_Replace --
  *
  *      Replace old file with new file, and attempt to reproduce
- *      file permissions.
+ *      file permissions.  A NULL value for either the oldName or
+ *      newName will result in failure and errno will be set to EFAULT.
  *
  * Results:
  *      TRUE on success.
  *
  * Side effects:
- *      None.
+ *      errno may be set.
  *
  *-----------------------------------------------------------------------------
  */
@@ -1821,16 +1827,22 @@ File_Replace(ConstUnicode oldName,  // IN: old file
    char *oldPath = NULL;
    struct stat st;
 
-   newPath = Unicode_GetAllocBytes(newName, STRING_ENCODING_DEFAULT);
-   if (newPath == NULL && newName != NULL) {
+   if (newName == NULL) {
+      status = EFAULT;
+      goto bail;
+   } else if ((newPath = Unicode_GetAllocBytes(newName,
+                           STRING_ENCODING_DEFAULT)) == NULL) {
       status = UNICODE_CONVERSION_ERRNO;
       Msg_Append(MSGID(filePosix.replaceConversionFailed)
                  "Failed to convert file path \"%s\" to current encoding\n",
                  newName);
       goto bail;
    }
-   oldPath = Unicode_GetAllocBytes(oldName, STRING_ENCODING_DEFAULT);
-   if (oldPath == NULL && oldName != NULL) {
+   if (oldName == NULL) {
+      status = EFAULT;
+      goto bail;
+   } else if ((oldPath = Unicode_GetAllocBytes(oldName,
+                           STRING_ENCODING_DEFAULT)) == NULL) {
       status = UNICODE_CONVERSION_ERRNO;
       Msg_Append(MSGID(filePosix.replaceConversionFailed)
                  "Failed to convert file path \"%s\" to current encoding\n",
@@ -2091,8 +2103,8 @@ File_SupportsFileSize(ConstUnicode pathName,  // IN:
     * We acquire the full path name for testing in 
     * FilePosixCreateTestFileSize().  This is also done in the event that
     * a user tries to create a virtual disk in the directory that they want
-    * a vmdk created in (setting filePath only to the disk name, not the entire
-    * path.
+    * a vmdk created in (setting filePath only to the disk name, not the
+    * entire path.
     */
 
    fullPath = File_FullPath(pathName);
@@ -2102,9 +2114,9 @@ File_SupportsFileSize(ConstUnicode pathName,  // IN:
    }
 
    /* 
-    * This function expects a filename. If given one, truncate the name to point
-    * to the parent directory so we can get accurate results from FileIsVMFS.
-    * If handed a directory directly, no truncation is necessary.
+    * This function expects a filename. If given one, truncate the name to
+    * point to the parent directory so we can get accurate results from
+    * FileIsVMFS. If handed a directory directly, no truncation is necessary.
     */
 
    if (File_IsDirectory(pathName)) {
@@ -2447,7 +2459,74 @@ File_WalkDirectoryEnd(WalkDirContext context) // IN
 /*
  *----------------------------------------------------------------------
  *
- * File_IsWritableDir --
+ * FileIsGroupsMember --
+ *
+ *	Determine if a gid is in the gid list of the current process
+ *
+ * Results:
+ *	FALSE if error (reported to the user)
+ *
+ * Side effects:
+ *	None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static Bool
+FileIsGroupsMember(gid_t gid)
+{
+   int nr_members;
+   gid_t *members;
+   int res;
+   int ret;
+
+   members = NULL;
+   nr_members = 0;
+   for (;;) {
+      gid_t *new;
+
+      res = getgroups(nr_members, members);
+      if (res == -1) {
+         Warning(LGPFX" %s: Couldn't getgroups\n", __FUNCTION__);
+         ret = FALSE;
+         goto end;
+      }
+
+      if (res == nr_members) {
+         break;
+      }
+
+      /* Was bug 17760 --hpreg */
+      new = realloc(members, res * sizeof *members);
+      if (new == NULL) {
+         Warning(LGPFX" %s: Couldn't realloc\n", __FUNCTION__);
+         ret = FALSE;
+         goto end;
+      }
+
+      members = new;
+      nr_members = res;
+   }
+
+   for (res = 0; res < nr_members; res++) {
+      if (members[res] == gid) {
+         ret = TRUE;
+         goto end;
+      }
+   }
+   ret = FALSE;
+
+end:
+   free(members);
+
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileIsWritableDir --
  *
  *	Determine in a non-intrusive way if the user can create a file in a
  *	directory
@@ -2467,16 +2546,11 @@ File_WalkDirectoryEnd(WalkDirContext context) // IN
  */
 
 Bool
-File_IsWritableDir(ConstUnicode dirName)  // IN:
+FileIsWritableDir(ConstUnicode dirName)  // IN:
 {
    int err;
    uid_t euid;
    FileData fileData;
-
-   if (dirName == NULL) {
-      errno = EFAULT;
-      return FALSE;
-   }
 
    err = FileAttributes(dirName, &fileData);
 
@@ -2531,7 +2605,7 @@ FileTryDir(const char *dirName) // IN: Is this a writable directory?
    }
 
    edirName = Util_ExpandString(dirName);
-   if (edirName != NULL && File_IsWritableDir(edirName)) {
+   if (edirName != NULL && FileIsWritableDir(edirName)) {
       return edirName;
    }
    free(edirName);
@@ -2623,72 +2697,6 @@ File_GetTmpDir(Bool useConf) // IN: Use the config file?
 /*
  *----------------------------------------------------------------------
  *
- * FileIsGroupsMember --
- *
- *	Determine if a gid is in the gid list of the current process
- *
- * Results:
- *	FALSE if error (reported to the user)
- *
- * Side effects:
- *	None
- *
- *----------------------------------------------------------------------
- */
-
-static Bool
-FileIsGroupsMember(gid_t gid)
-{
-   int nr_members;
-   gid_t *members;
-   int res;
-   int ret;
-
-   members = NULL;
-   nr_members = 0;
-   for (;;) {
-      gid_t *new;
-
-      res = getgroups(nr_members, members);
-      if (res == -1) {
-         Warning(LGPFX" %s: Couldn't getgroups\n", __FUNCTION__);
-         ret = FALSE;
-         goto end;
-      }
-
-      if (res == nr_members) {
-         break;
-      }
-
-      /* Was bug 17760 --hpreg */
-      new = realloc(members, res * sizeof *members);
-      if (new == NULL) {
-         Warning(LGPFX" %s: Couldn't realloc\n", __FUNCTION__);
-         ret = FALSE;
-         goto end;
-      }
-
-      members = new;
-      nr_members = res;
-   }
-
-   for (res = 0; res < nr_members; res++) {
-      if (members[res] == gid) {
-         ret = TRUE;
-         goto end;
-      }
-   }
-   ret = FALSE;
-
-end:
-   free(members);
-
-   return ret;
-}
-
-/*
- *----------------------------------------------------------------------
- *
  * File_MakeCfgFileExecutable --
  *
  *	Make a .vmx file executable. This is sometimes necessary 
@@ -2729,10 +2737,11 @@ File_MakeCfgFileExecutable(ConstUnicode pathName)
  *
  * File_GetSizeAlternate --
  *
- *      An alternate way to determine the filesize. Useful for finding problems
- *      with files on remote fileservers, such as described in bug 19036.
- *      However, in Linux we do not have an alternate way, yet, to determine the
- *      problem, so we call back into the regular getSize function.
+ *      An alternate way to determine the filesize. Useful for finding
+ *      problems with files on remote fileservers, such as described in bug
+ *      19036. However, in Linux we do not have an alternate way, yet, to
+ *      determine the problem, so we call back into the regular getSize
+ *      function.
  *
  * Results:
  *      Size of file or -1.

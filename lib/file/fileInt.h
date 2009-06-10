@@ -39,13 +39,22 @@
  * think once more.
  */
 
+#define ADFS_SUPER_MAGIC      0xADF5
 #define AFFS_SUPER_MAGIC      0xADFF
 #define EXT_SUPER_MAGIC       0x137D
 #define EXT2_OLD_SUPER_MAGIC  0xEF51
 #define EXT2_SUPER_MAGIC      0xEF53
+#define EXT3_SUPER_MAGIC      0xEF53
+#define EXT4_SUPER_MAGIC      0xEF53
 #define HFSPLUS_SUPER_MAGIC   0x482B
 #define NFS_SUPER_MAGIC       0x6969
 #define SMB_SUPER_MAGIC       0x517B
+#define ISOFS_SUPER_MAGIC     0x9660
+#define JFFS2_SUPER_MAGIC     0x72B6
+#define PROC_SUPER_MAGIC      0x9FA0
+#define OPENPROM_SUPER_MAGIC  0x9FA1
+#define USBDEVICE_SUPER_MAGIC 0x9FA2
+#define AUTOFS_SUPER_MAGIC    0x0187
 
 #if !defined(MSDOS_SUPER_MAGIC)
 #define MSDOS_SUPER_MAGIC     0x4D44
@@ -60,6 +69,8 @@
 #define VMFS_SUPER_MAGIC      0x2fABF15E
 #define TMPFS_SUPER_MAGIC     0x01021994
 #define JFS_SUPER_MAGIC       0x3153464A
+#define AFS_SUPER_MAGIC       0x5346414F
+#define CIFS_SUPER_MAGIC      0xFF534D42
 
 #if !defined(REISERFS_SUPER_MAGIC)
 #define REISERFS_SUPER_MAGIC  0x52654973
@@ -124,12 +135,20 @@ EXTERN int FileListDirectoryRetry(ConstUnicode pathName,
 #define FileCreateDirectory(a)  FileCreateDirectoryRetry((a), 0)
 #define FileRemoveDirectory(a)  FileRemoveDirectoryRetry((a), 0)
 
-#define FileListDirectoryRobust(a, b) FileListDirectoryRetry((a), 5, (b))
-#define FileAttributesRobust(a, b)    FileAttributesRetry((a), 5, (b))
-#define FileRenameRobust(a, b)        FileRenameRetry((a), (b), 5)
-#define FileDeletionRobust(a, b)      FileDeletionRetry((a), (b), 5)
-#define FileCreateDirectoryRobust(a)  FileCreateDirectoryRetry((a), 5)
-#define FileRemoveDirectoryRobust(a)  FileRemoveDirectoryRetry((a), 5)
+#define FILE_ROBUST_RETRIES 7
+
+#define FileListDirectoryRobust(a, b) \
+                    FileListDirectoryRetry((a), FILE_ROBUST_RETRIES, (b))
+#define FileAttributesRobust(a, b) \
+                    FileAttributesRetry((a), FILE_ROBUST_RETRIES, (b))
+#define FileRenameRobust(a, b) \
+                    FileRenameRetry((a), (b), FILE_ROBUST_RETRIES)
+#define FileDeletionRobust(a, b) \
+                    FileDeletionRetry((a), (b), FILE_ROBUST_RETRIES)
+#define FileCreateDirectoryRobust(a) \
+                    FileCreateDirectoryRetry((a), FILE_ROBUST_RETRIES)
+#define FileRemoveDirectoryRobust(a) \
+                    FileRemoveDirectoryRetry((a), FILE_ROBUST_RETRIES)
 #else
 EXTERN char *FilePosixGetBlockDevice(char const *path);
 
@@ -188,6 +207,8 @@ typedef HANDLE FILELOCK_FILE_HANDLE;
 typedef int FILELOCK_FILE_HANDLE;
 #endif
 
+EXTERN void FileSleeper(uint32 msecSleepTime);
+
 EXTERN const char *FileLockGetMachineID(void);
 
 EXTERN char *FileLockGetExecutionID(void);
@@ -232,6 +253,8 @@ EXTERN Bool FileLockValidOwner(const char *executionID,
                                const char *payload);
 
 EXTERN Bool FileLockValidName(ConstUnicode fileName);
+
+EXTERN Bool FileIsWritableDir(ConstUnicode dirName);
 
 #if defined(__APPLE__)
 EXTERN int PosixFileOpener(ConstUnicode pathName,

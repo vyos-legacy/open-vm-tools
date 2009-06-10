@@ -598,19 +598,36 @@ UnityPlatformSetTaskbarVisible(UnityPlatform *up,   // IN
    for (i = 0; i < numWindows; i++) {
       if (UNITY_WINDOW_TYPE_DOCK == allWindows[i]->windowType) {
          Window dockWindow;
+         UnityPlatformWindow *upw = allWindows[i];
 
-         dockWindow = allWindows[i]->clientWindow;
+         dockWindow = upw->clientWindow;
          if (!dockWindow) {
-            dockWindow = allWindows[i]->toplevelWindow;
+            dockWindow = upw->toplevelWindow;
          }
 
          if (currentSetting) {
+            /*
+             * If this flag is still set, that means that this window is being
+             * remapped -before- we received a _NET_WM_DESKTOP PropertyDelete
+             * notification.  (One such case may be if exiting Unity before the
+             * PropertyDelete is delivered.)  In that case, we'll go ahead and
+             * reset the property ourselves before remapping.
+             */
+            if (upw->wantSetDesktopNumberOnUnmap) {
+               UPWindow_SetEWMHDesktop(up, upw, upw->onUnmapDesktopNumber);
+               upw->wantSetDesktopNumberOnUnmap = FALSE;
+            }
             XMapWindow(up->display, dockWindow);
          } else {
+            /* Preserve _NET_WM_DESKTOP across unmap. */
+            if (!upw->wantSetDesktopNumberOnUnmap) {
+               upw->wantSetDesktopNumberOnUnmap = TRUE;
+               upw->onUnmapDesktopNumber = upw->desktopNumber;
+            }
             XWithdrawWindow(up->display, dockWindow, 0);
          }
 
-         UPWindow_CheckRelevance(up, allWindows[i], NULL);
+         UPWindow_CheckRelevance(up, upw, NULL);
       }
    }
 
@@ -986,5 +1003,5 @@ UnityPlatformShowTaskbar(UnityPlatform *up,   // IN
             __FUNCTION__);
    }
 
-   UnityPlatformSendPendingUpdates(up, UNITY_UPDATE_INCREMENTAL);
+   UnityPlatformDoUpdate(up, TRUE);
 }

@@ -70,8 +70,8 @@
 #define VM_SYSTEM_HAS_GETGRNAM_R 1
 #endif
 
-# if defined(__FreeBSD__) && __FreeBSD_version >= 503000
-#  include <syslimits.h>  // PATH_MAX
+# if defined(__FreeBSD__)
+#  include <sys/syslimits.h>  // PATH_MAX
 # else
 #  include <limits.h>  // PATH_MAX
 # endif
@@ -1333,7 +1333,7 @@ Posix_ReadLink(ConstUnicode pathName)  // IN:
       return NULL;
    }
 
-   bytes = readlink(path, link, sizeof link);
+   bytes = readlink(path, link, sizeof link - 1);
    ASSERT_NOT_IMPLEMENTED(bytes < (ssize_t) sizeof link);
 
    free(path);

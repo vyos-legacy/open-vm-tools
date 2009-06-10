@@ -55,17 +55,15 @@ ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/libtool.m4 \
 	$(top_srcdir)/m4/ltoptions.m4 $(top_srcdir)/m4/ltsugar.m4 \
 	$(top_srcdir)/m4/ltversion.m4 $(top_srcdir)/m4/lt~obsolete.m4 \
-	$(top_srcdir)/configure.ac
+	$(top_srcdir)/m4/vmtools.m4 $(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 mkinstalldirs = $(install_sh) -d
 CONFIG_CLEAN_FILES =
-LIBRARIES = $(noinst_LIBRARIES)
-ARFLAGS = cru
-libDynxdr_a_AR = $(AR) $(ARFLAGS)
-libDynxdr_a_LIBADD =
-am_libDynxdr_a_OBJECTS = dynxdr.$(OBJEXT) xdrutil.$(OBJEXT)
-libDynxdr_a_OBJECTS = $(am_libDynxdr_a_OBJECTS)
+LTLIBRARIES = $(noinst_LTLIBRARIES)
+libDynxdr_la_LIBADD =
+am_libDynxdr_la_OBJECTS = dynxdr.lo xdrutil.lo
+libDynxdr_la_OBJECTS = $(am_libDynxdr_la_OBJECTS)
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -78,8 +76,8 @@ CCLD = $(CC)
 LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-SOURCES = $(libDynxdr_a_SOURCES)
-DIST_SOURCES = $(libDynxdr_a_SOURCES)
+SOURCES = $(libDynxdr_la_SOURCES)
+DIST_SOURCES = $(libDynxdr_la_SOURCES)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -103,9 +101,9 @@ CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
-DNET_CONFIG = @DNET_CONFIG@
 DNET_CPPFLAGS = @DNET_CPPFLAGS@
 DNET_LIBS = @DNET_LIBS@
+DOT = @DOT@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -114,13 +112,23 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
+GMODULE_CPPFLAGS = @GMODULE_CPPFLAGS@
+GMODULE_LIBS = @GMODULE_LIBS@
+GOBJECT_CPPFLAGS = @GOBJECT_CPPFLAGS@
+GOBJECT_LIBS = @GOBJECT_LIBS@
 GREP = @GREP@
+GTHREAD_CPPFLAGS = @GTHREAD_CPPFLAGS@
+GTHREAD_LIBS = @GTHREAD_LIBS@
+GTKMM_CPPFLAGS = @GTKMM_CPPFLAGS@
+GTKMM_LIBS = @GTKMM_LIBS@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
-GUESTD_LDADD = @GUESTD_LDADD@
-HAVE_CXX = @HAVE_CXX@
+HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
-ICU_CONFIG = @ICU_CONFIG@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -132,11 +140,11 @@ KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CONFIG = @LIBPNG_CONFIG@
 LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -152,6 +160,8 @@ MKDIR_P = @MKDIR_P@
 MODULES = @MODULES@
 MODULES_DIR = @MODULES_DIR@
 MODULES_OS = @MODULES_OS@
+MSCGEN = @MSCGEN@
+MSCGEN_DIR = @MSCGEN_DIR@
 NM = @NM@
 NMEDIT = @NMEDIT@
 OBJEXT = @OBJEXT@
@@ -161,21 +171,36 @@ PACKAGE_NAME = @PACKAGE_NAME@
 PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
+PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
+PLUGIN_LDFLAGS = @PLUGIN_LDFLAGS@
+PROCPS_CPPFLAGS = @PROCPS_CPPFLAGS@
 PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
+RPCGENFLAGS = @RPCGENFLAGS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
+SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
+TOOLS_VERSION = @TOOLS_VERSION@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VIX_LIBADD = @VIX_LIBADD@
+VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
+VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
@@ -190,6 +215,7 @@ abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
 ac_ct_CXX = @ac_ct_CXX@
 ac_ct_DUMPBIN = @ac_ct_DUMPBIN@
+ac_vmw_lib_cfg = @ac_vmw_lib_cfg@
 am__include = @am__include@
 am__leading_dot = @am__leading_dot@
 am__quote = @am__quote@
@@ -207,6 +233,9 @@ datarootdir = @datarootdir@
 docdir = @docdir@
 dvidir = @dvidir@
 exec_prefix = @exec_prefix@
+have_cxx = @have_cxx@
+have_doxygen = @have_doxygen@
+have_genmarshal = @have_genmarshal@
 host = @host@
 host_alias = @host_alias@
 host_cpu = @host_cpu@
@@ -235,8 +264,8 @@ sysconfdir = @sysconfdir@
 target_alias = @target_alias@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-noinst_LIBRARIES = libDynxdr.a
-libDynxdr_a_SOURCES = dynxdr.c xdrutil.c
+noinst_LTLIBRARIES = libDynxdr.la
+libDynxdr_la_SOURCES = dynxdr.c xdrutil.c
 all: all-am
 
 .SUFFIXES:
@@ -271,12 +300,16 @@ $(top_srcdir)/configure:  $(am__configure_deps)
 $(ACLOCAL_M4):  $(am__aclocal_m4_deps)
 	cd $(top_builddir) && $(MAKE) $(AM_MAKEFLAGS) am--refresh
 
-clean-noinstLIBRARIES:
-	-test -z "$(noinst_LIBRARIES)" || rm -f $(noinst_LIBRARIES)
-libDynxdr.a: $(libDynxdr_a_OBJECTS) $(libDynxdr_a_DEPENDENCIES) 
-	-rm -f libDynxdr.a
-	$(libDynxdr_a_AR) libDynxdr.a $(libDynxdr_a_OBJECTS) $(libDynxdr_a_LIBADD)
-	$(RANLIB) libDynxdr.a
+clean-noinstLTLIBRARIES:
+	-test -z "$(noinst_LTLIBRARIES)" || rm -f $(noinst_LTLIBRARIES)
+	@list='$(noinst_LTLIBRARIES)'; for p in $$list; do \
+	  dir="`echo $$p | sed -e 's|/[^/]*$$||'`"; \
+	  test "$$dir" != "$$p" || dir=.; \
+	  echo "rm -f \"$${dir}/so_locations\""; \
+	  rm -f "$${dir}/so_locations"; \
+	done
+libDynxdr.la: $(libDynxdr_la_OBJECTS) $(libDynxdr_la_DEPENDENCIES) 
+	$(LINK)  $(libDynxdr_la_OBJECTS) $(libDynxdr_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -284,8 +317,8 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dynxdr.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/xdrutil.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dynxdr.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/xdrutil.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -390,7 +423,7 @@ distdir: $(DISTFILES)
 	done
 check-am: all-am
 check: check-am
-all-am: Makefile $(LIBRARIES)
+all-am: Makefile $(LTLIBRARIES)
 installdirs:
 install: install-am
 install-exec: install-exec-am
@@ -418,7 +451,7 @@ maintainer-clean-generic:
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-generic clean-libtool clean-noinstLIBRARIES \
+clean-am: clean-generic clean-libtool clean-noinstLTLIBRARIES \
 	mostlyclean-am
 
 distclean: distclean-am
@@ -478,7 +511,7 @@ uninstall-am:
 .MAKE: install-am install-strip
 
 .PHONY: CTAGS GTAGS all all-am check check-am clean clean-generic \
-	clean-libtool clean-noinstLIBRARIES ctags distclean \
+	clean-libtool clean-noinstLTLIBRARIES ctags distclean \
 	distclean-compile distclean-generic distclean-libtool \
 	distclean-tags distdir dvi dvi-am html html-am info info-am \
 	install install-am install-data install-data-am install-dvi \

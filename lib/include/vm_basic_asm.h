@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * vm_basic_asm.h
  *
@@ -852,5 +866,22 @@ RDTSC(void)
 #else  /* __GNUC__  */
 #error No compiler defined for RDTSC
 #endif /* __GNUC__  */
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * DEBUGBREAK --
+ *
+ *    Does an int3 for MSVC / GCC. This is a macro to make sure int3 is
+ *    always inlined.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+#ifdef _MSC_VER
+#define DEBUGBREAK()   __debugbreak()
+#else
+#define DEBUGBREAK()   __asm__ (" int $3 ")
+#endif
 
 #endif

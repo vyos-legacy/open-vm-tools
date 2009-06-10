@@ -136,9 +136,7 @@ Str_Vsnprintf(char *str,          // OUT
    ASSERT(str != NULL);
    ASSERT(format != NULL);
 
-#ifndef HAS_BSD_PRINTF
-   retval = vsnprintf(str, size, format, ap);
-#elif defined __linux__
+#ifdef HAS_BSD_PRINTF
    {
       va_list aq;
 
@@ -147,7 +145,7 @@ Str_Vsnprintf(char *str,          // OUT
       va_end(aq);
    }
 #else
-   retval = bsd_vsnprintf(&str, size, format, ap);
+   retval = vsnprintf(str, size, format, ap);
 #endif
 
    /*
@@ -247,6 +245,41 @@ Str_Strcpy(char *buf,       // OUT
    }
    return memcpy(buf, src, len + 1);
 }
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Str_Strlen --
+ *
+ *      Calculate length of the string.
+ *
+ * Results:
+ *      Length of s not including the terminating '\0' character. 
+ *      If there is no '\0' for first maxLen bytes, then it
+ *      returns maxLen.
+ *
+ * Side Effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+size_t
+Str_Strlen(const char *s,  	// IN 
+	   size_t maxLen)     	// IN
+
+{
+   const char *end;
+
+   ASSERT(s != NULL);
+
+   if ((end = memchr(s, '\0', maxLen)) == NULL) {
+      return maxLen;
+   } 
+   return end - s;
+}
+
 
 /*
  *----------------------------------------------------------------------
@@ -494,16 +527,13 @@ StrVasprintf_Internal(size_t *length,       // OUT
    int ret;
 
 #ifdef HAS_BSD_PRINTF
-   #ifdef __linux__
-      {
-	 va_list aq;
-	 va_copy(aq, arguments);
-	 ret = bsd_vsnprintf(&buf, 0, format, aq);
-	 va_end(aq);
-      }
-   #else
-      ret = bsd_vsnprintf(&buf, 0, format, arguments);
-   #endif
+   {
+      va_list aq;
+
+      va_copy(aq, arguments);
+      ret = bsd_vsnprintf(&buf, 0, format, aq);
+      va_end(aq);
+   }
 
 #elif !defined sun && !defined STR_NO_WIN32_LIBS
    ret = vasprintf(&buf, format, arguments);

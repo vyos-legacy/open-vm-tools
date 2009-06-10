@@ -15,85 +15,129 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-noinst_LIBRARIES = libGuestRpc.a
+noinst_LTLIBRARIES = libGuestRpc.la
 
-libGuestRpc_a_SOURCES =
-libGuestRpc_a_SOURCES += ghiGetBinaryHandlers_xdr.c
-libGuestRpc_a_SOURCES += ghiProtocolHandler_xdr.c
-libGuestRpc_a_SOURCES += nicinfo_xdr.c
-libGuestRpc_a_SOURCES += unityActive_xdr.c
-
-nodist_libGuestRpc_a_SOURCES =
-nodist_libGuestRpc_a_SOURCES += ghiGetBinaryHandlers.h
-nodist_libGuestRpc_a_SOURCES += ghiGetBinaryHandlers_xdr.c
-nodist_libGuestRpc_a_SOURCES += ghiProtocolHandler.h
-nodist_libGuestRpc_a_SOURCES += ghiProtocolHandler_xdr.c
-nodist_libGuestRpc_a_SOURCES += nicinfo.h
-nodist_libGuestRpc_a_SOURCES += nicinfo_xdr.c
-nodist_libGuestRpc_a_SOURCES += unityActive.h
-nodist_libGuestRpc_a_SOURCES += unityActive_xdr.c
+libGuestRpc_la_SOURCES =
+libGuestRpc_la_SOURCES += cpFileContents_xdr.c
+libGuestRpc_la_SOURCES += ghiGetBinaryHandlers_xdr.c
+libGuestRpc_la_SOURCES += ghiProtocolHandler_xdr.c
+libGuestRpc_la_SOURCES += guestlibV3_xdr.c
+libGuestRpc_la_SOURCES += nicinfo_xdr.c
+libGuestRpc_la_SOURCES += unityActive_xdr.c
 
 # XXX: Autoreconf complains about this and recommends using AM_CFLAGS instead.
-# Neither that nor libGuestRpc_a_CFLAGS work, though. What gives?
+# Problem is, $(CFLAGS) is appended to the compiler command line after AM_CFLAGS
+# and after libGuestRpc_la_CFLAGS, so "-Wall -Werror" will override this flag.
 CFLAGS += -Wno-unused
 
 CLEANFILES =
+CLEANFILES += cpFileContents.h
+CLEANFILES += cpFileContents_xdr.c
 CLEANFILES += ghiGetBinaryHandlers.h
 CLEANFILES += ghiGetBinaryHandlers_xdr.c
 CLEANFILES += ghiProtocolHandler.h
 CLEANFILES += ghiProtocolHandler_xdr.c
+CLEANFILES += guestlibV3.h
+CLEANFILES += guestlibV3_xdr.c
 CLEANFILES += nicinfo.h
 CLEANFILES += nicinfo_xdr.c
 CLEANFILES += unityActive.h
 CLEANFILES += unityActive_xdr.c
 
 EXTRA_DIST =
+EXTRA_DIST += cpFileContents.x
 EXTRA_DIST += ghiGetBinaryHandlers.x
 EXTRA_DIST += ghiProtocolHandler.x
+EXTRA_DIST += guestlibV3.x
 EXTRA_DIST += nicinfo.x
 EXTRA_DIST += unityActive.x
 
 ## `make clean` should also remove the copied headers.
 clean-local:
-	$(RM) -rf $(top_builddir)/lib/include/guestrpc
+	rm -rf $(top_builddir)/lib/include/guestrpc
+	if [ $(top_builddir) != $(top_srcdir) ]; then	\
+	   rm -f *.x;												\
+	fi
+
+# Rules to invoke rpcgen. rpcgen will generate funny paths in the generated
+# files if not invoked in the same directory as the source file, so we need
+# to copy the sources to the build dir before compiling them.
+
+cpFileContents.h: cpFileContents.x
+	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
+	   cp -f $(top_srcdir)/lib/guestRpc/cpFileContents.x $(builddir); \
+	fi
+	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/cpFileContents.x
+	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
+	mv $@.tmp $@
+	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
+	cp $@ $(top_builddir)/lib/include/guestrpc
+
+cpFileContents_xdr.c: cpFileContents.x cpFileContents.h
+	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/cpFileContents.x
 
 ghiGetBinaryHandlers.h: ghiGetBinaryHandlers.x
-	$(RPCGEN) -h -o $@ ghiGetBinaryHandlers.x
+	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
+	   cp -f $(top_srcdir)/lib/guestRpc/ghiGetBinaryHandlers.x $(builddir); \
+	fi
+	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiGetBinaryHandlers.x
 	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
 	mv $@.tmp $@
 	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
 	cp $@ $(top_builddir)/lib/include/guestrpc
 
 ghiGetBinaryHandlers_xdr.c: ghiGetBinaryHandlers.x ghiGetBinaryHandlers.h
-	$(RPCGEN) -c -o $@ ghiGetBinaryHandlers.x
+	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/ghiGetBinaryHandlers.x
 
 ghiProtocolHandler.h: ghiProtocolHandler.x
-	$(RPCGEN) -h -o $@ ghiProtocolHandler.x
+	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
+	   cp -f $(top_srcdir)/lib/guestRpc/ghiProtocolHandler.x $(builddir);   \
+	fi
+	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiProtocolHandler.x
 	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
 	mv $@.tmp $@
 	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
 	cp $@ $(top_builddir)/lib/include/guestrpc
 
 ghiProtocolHandler_xdr.c: ghiProtocolHandler.x ghiProtocolHandler.h
-	$(RPCGEN) -c -o $@ ghiProtocolHandler.x
+	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/ghiProtocolHandler.x
 
 nicinfo.h: nicinfo.x
-	$(RPCGEN) -h -o $@ nicinfo.x
+	if [ $(top_builddir) != $(top_srcdir) ]; then               \
+	   cp -f $(top_srcdir)/lib/guestRpc/nicinfo.x $(builddir);  \
+	fi
+	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/nicinfo.x
 	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
 	mv $@.tmp $@
 	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
 	cp $@ $(top_builddir)/lib/include/guestrpc
 
 nicinfo_xdr.c: nicinfo.x nicinfo.h
-	$(RPCGEN) -c -o $@ nicinfo.x
+	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/nicinfo.x
+
+guestlibV3.h: guestlibV3.x
+	if [ $(top_builddir) != $(top_srcdir) ]; then                  \
+	   cp -f $(top_srcdir)/lib/guestRpc/guestlibV3.x $(builddir);  \
+	fi
+	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/guestlibV3.x
+	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
+	mv $@.tmp $@
+	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
+	cp $@ $(top_builddir)/lib/include/guestrpc
+
+guestlibV3_xdr.c: guestlibV3.x guestlibV3.h
+	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/guestlibV3.x
 
 unityActive.h: unityActive.x
-	$(RPCGEN) -h -o $@ unityActive.x
+	if [ $(top_builddir) != $(top_srcdir) ]; then                  \
+	   cp -f $(top_srcdir)/lib/guestRpc/unityActive.x $(builddir); \
+	fi
+	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/unityActive.x
 	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
 	mv $@.tmp $@
 	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
 	cp $@ $(top_builddir)/lib/include/guestrpc
 
 unityActive_xdr.c: unityActive.x unityActive.h
-	$(RPCGEN) -c -o $@ unityActive.x
+	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/unityActive.x
 

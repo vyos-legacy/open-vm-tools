@@ -63,6 +63,18 @@
 #endif
 
 /*
+ * We want to have commands and arguments on Windows to be
+ * case-instensitive, everywhere else we expect lowercase
+ * for commands and case-sensitivity for arguments.
+ */
+#ifdef _WIN32
+#   define toolbox_strcmp  stricmp
+#else
+#   define toolbox_strcmp  strcmp
+#endif
+
+
+/*
  * Devices Operations
  */
 
@@ -110,11 +122,5 @@ int Stat_GetMemoryBallooned(void);
 int Stat_GetMemorySwapped(void);
 int Stat_GetMemoryLimit(void);
 int Stat_GetMemoryReservation(void);
-
-/*
- * Record commands
- */
-Bool Record_StartRecording(void);
-Bool Record_StopRecording(void);
 
 #endif /*_TOOLBOX_CMD_H_*/

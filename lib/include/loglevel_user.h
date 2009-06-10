@@ -33,6 +33,7 @@
    LOGLEVEL_VAR(aio), \
    LOGLEVEL_VAR(passthrough), \
    LOGLEVEL_VAR(tools), \
+   LOGLEVEL_VAR(vsockLookup), \
    LOGLEVEL_VAR(license), \
    LOGLEVEL_VAR(vui), \
    LOGLEVEL_VAR(stats), \
@@ -88,6 +89,7 @@
    LOGLEVEL_VAR(vmxnet3), \
    LOGLEVEL_VAR(pci_vmxnet3), \
    LOGLEVEL_VAR(vcpuhotplug), \
+   LOGLEVEL_VAR(heci), \
    \
    /* user/disk */ \
    LOGLEVEL_VAR(aioMgr), \
@@ -116,11 +118,13 @@
    LOGLEVEL_VAR(mksHostOps), \
    LOGLEVEL_VAR(mksGLManager), \
    LOGLEVEL_VAR(mksGLShader), \
+   LOGLEVEL_VAR(vdpPlugin), \
    \
    /* user/sound */ \
    LOGLEVEL_VAR(sound), \
    LOGLEVEL_VAR(hdaudio), \
    LOGLEVEL_VAR(pci_hdaudio), \
+   LOGLEVEL_VAR(hdaudio_alsa), \
    \
    /* user/disklib */ \
    LOGLEVEL_VAR(disklib), \
@@ -189,13 +193,14 @@
    LOGLEVEL_VAR(worker), \
    LOGLEVEL_VAR(duiDevices), \
    LOGLEVEL_VAR(duiProxyApps), \
+   LOGLEVEL_VAR(docker), \
    LOGLEVEL_VAR(uwt), /* lib/unityWindowTracker */ \
    LOGLEVEL_VAR(cui), \
    LOGLEVEL_VAR(automation), \
    LOGLEVEL_VAR(oemDevice), \
    LOGLEVEL_VAR(cptOps), \
    LOGLEVEL_VAR(VProbeExec), \
-   LOGLEVEL_VAR(VProbeVP), \
+   LOGLEVEL_VAR(VP), \
    LOGLEVEL_VAR(device), \
    LOGLEVEL_VAR(devicePowerOn), \
    LOGLEVEL_VAR(vmxvmdbCallbacks), \
@@ -203,6 +208,12 @@
    LOGLEVEL_VAR(migrateVM), \
    LOGLEVEL_VAR(vmUpsellController), \
    LOGLEVEL_VAR(objc), /* lib/objc */ \
+   LOGLEVEL_VAR(blit), /* lib/blit */ \
+   LOGLEVEL_VAR(vmnetBridge), \
+   LOGLEVEL_VAR(wifi), /* macWireless and wpa_supplicant */ \
+   LOGLEVEL_VAR(pvfslib), \
+   LOGLEVEL_VAR(brtalk), /* macWireless and wpa_supplicant */ \
+   LOGLEVEL_VAR(button),
 
 LOGLEVEL_EXTENSION_DECLARE(LOGLEVEL_USER);
 

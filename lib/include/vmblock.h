@@ -16,6 +16,48 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of VMware Inc. nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission of VMware Inc.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *********************************************************/
+
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * vmblock.h --
  *
@@ -52,91 +94,82 @@
 # include <sys/param.h>
 #endif
 
-#define VMBLOCK_FS_NAME                "vmblock"
+
+/*
+ * FUSE definitions. They are supposed to be used by userspace code and
+ * therefore not guarded by ARCH defines since FUSE can potentially
+ * be used on different operating systems.
+ */
+
+#define VMBLOCK_FUSE_ADD_FILEBLOCK     'a'
+#define VMBLOCK_FUSE_DEL_FILEBLOCK     'd'
+#ifdef VMX86_DEVEL
+# define VMBLOCK_FUSE_LIST_FILEBLOCKS  'l'
+#endif /* VMX86_DEVEL */
+
+/*
+ * If you try 'read'-ing from file descriptor vmblock-fuse is supposed
+ * to respond with the following. It is used to check whether we deal
+ * with FUSE or in-kernel implementation.
+ */
+#define VMBLOCK_FUSE_READ_RESPONSE     "I am VMBLOCK-FUSE"
+
+#define VMBLOCK_FUSE_FS_NAME           "fuse.vmware-vmblock"
+#define VMBLOCK_FUSE_MOUNT_POINT       "/tmp/vmblock-fuse"
+#define VMBLOCK_FUSE_CTRL_MNTPNT       "blockdir"
+#define VMBLOCK_FUSE_FS_ROOT           VMBLOCK_FUSE_MOUNT_POINT "/" VMBLOCK_FUSE_CTRL_MNTPNT
+#define VMBLOCK_FUSE_DEVICE_NAME       "dev"
+#define VMBLOCK_FUSE_DEVICE            VMBLOCK_FUSE_MOUNT_POINT "/" VMBLOCK_FUSE_DEVICE_NAME
+#define VMBLOCK_FUSE_DEVICE_MODE       O_RDWR
 
 /* Commands for the control half of vmblock driver */
 #if defined(vmblock_fuse)
+/* These definitions are for vmblock-fuse module itself */
 # include <unistd.h>
 # include <limits.h>
 # include <string.h>
 # include <errno.h>
 # include "vm_basic_types.h"
-# define VMBLOCK_ADD_FILEBLOCK        'a'
-# define VMBLOCK_DEL_FILEBLOCK        'd'
+# define VMBLOCK_ADD_FILEBLOCK         VMBLOCK_FUSE_ADD_FILEBLOCK
+# define VMBLOCK_DEL_FILEBLOCK         VMBLOCK_FUSE_DEL_FILEBLOCK
 # ifdef VMX86_DEVEL
-#  define VMBLOCK_LIST_FILEBLOCKS     'l'
+#  define VMBLOCK_LIST_FILEBLOCKS      VMBLOCK_FUSE_LIST_FILEBLOCKS
 # endif /* VMX86_DEVEL */
 /*
  * Some of the following names don't actually make much sense on their own.
  * They're used for consistency with the other ports. See the file header for
  * explanations of what they're used for.
  */
-# define VMBLOCK_DEVICE_NAME          "dev"
-# define VMBLOCK_CONTROL_MOUNTPOINT   "blockdir"
-# define VMBLOCK_DEVICE               "/tmp/vmblock/" VMBLOCK_DEVICE_NAME
-# define VMBLOCK_DEVICE_MODE          O_WRONLY
-# define VMBLOCK_MOUNT_POINT          "/tmp/vmblock/" VMBLOCK_CONTROL_MOUNTPOINT
-static INLINE ssize_t
-         VMBLOCK_CONTROL(int fd, char op, const char *path)
-{
-   /*
-    * buffer needs room for an operation character and a string with max length
-    * PATH_MAX - 1.
-    */
-
-   char buffer[PATH_MAX];
-   size_t pathLength;
-
-   pathLength = strlen(path);
-   if (pathLength >= PATH_MAX) {
-      errno = ENAMETOOLONG;
-      return -1;
-   }
-
-   buffer[0] = op;
-   memcpy(buffer + 1, path, pathLength);
-
-   /*
-    * The lseek is only to prevent the file pointer from overflowing;
-    * vmblock-fuse ignores the file pointer / offset. Overflowing the file
-    * pointer causes write to fail:
-    * http://article.gmane.org/gmane.comp.file-systems.fuse.devel/6648
-    * There's also a race condition here where many threads all calling
-    * VMBLOCK_CONTROL at the same time could have all their seeks executed one
-    * after the other, followed by all the writes. Again, it's not a problem
-    * unless the file pointer overflows which is very unlikely with 32 bit
-    * offsets and practically impossible with 64 bit offsets.
-    */
-
-   if (lseek(fd, 0, SEEK_SET) < 0) {
-      return -1;
-   }
-   if (write(fd, buffer, pathLength + 1) < 0) {
-      return -1;
-   }
-   return 0;
-}
+# define VMBLOCK_FS_NAME               VMBLOCK_FUSE_FS_NAME
+# define VMBLOCK_DEVICE_NAME           VMBLOCK_FUSE_DEVICE_NAME
+# define VMBLOCK_CONTROL_MOUNTPOINT    VMBLOCK_FUSE_CTRL_MNTPNT
+# define VMBLOCK_DEVICE                VMBLOCK_FUSE_DEVICE
+# define VMBLOCK_DEVICE_MODE           VMBLOCK_FUSE_DEVICE_MODE
+# define VMBLOCK_MOUNT_POINT           VMBLOCK_FUSE_MOUNT_POINT
 
 #elif defined(linux)
-# define VMBLOCK_ADD_FILEBLOCK          98
-# define VMBLOCK_DEL_FILEBLOCK          99
+# define VMBLOCK_ADD_FILEBLOCK         98
+# define VMBLOCK_DEL_FILEBLOCK         99
 # ifdef VMX86_DEVEL
-#  define VMBLOCK_LIST_FILEBLOCKS       100
+#  define VMBLOCK_LIST_FILEBLOCKS      100
 # endif
-# define VMBLOCK_CONTROL_DIRNAME        VMBLOCK_FS_NAME
-# define VMBLOCK_CONTROL_DEVNAME        "dev"
-# define VMBLOCK_CONTROL_MOUNTPOINT     "mountPoint"
-# define VMBLOCK_CONTROL_PROC_DIRNAME	"fs/" VMBLOCK_CONTROL_DIRNAME
+# define VMBLOCK_FS_NAME               "vmblock"
+# define VMBLOCK_CONTROL_DIRNAME       VMBLOCK_FS_NAME
+# define VMBLOCK_CONTROL_DEVNAME       "dev"
+# define VMBLOCK_CONTROL_MOUNTPOINT    "mountPoint"
+# define VMBLOCK_CONTROL_PROC_DIRNAME  "fs/" VMBLOCK_CONTROL_DIRNAME
 
 # define VMBLOCK_MOUNT_POINT            "/proc/" VMBLOCK_CONTROL_PROC_DIRNAME   \
                                        "/" VMBLOCK_CONTROL_MOUNTPOINT
+# define VMBLOCK_FS_ROOT                VMBLOCK_MOUNT_POINT
 # define VMBLOCK_DEVICE                 "/proc/" VMBLOCK_CONTROL_PROC_DIRNAME   \
                                        "/" VMBLOCK_CONTROL_DEVNAME
 # define VMBLOCK_DEVICE_MODE            O_WRONLY
-# define VMBLOCK_CONTROL(fd, op, path)  write(fd, path, op)
 
 #elif defined(sun) || defined(__FreeBSD__)
+# define VMBLOCK_FS_NAME                "vmblock"
 # define VMBLOCK_MOUNT_POINT            "/var/run/" VMBLOCK_FS_NAME
+# define VMBLOCK_FS_ROOT                VMBLOCK_MOUNT_POINT
 # define VMBLOCK_DEVICE                 VMBLOCK_MOUNT_POINT
 # define VMBLOCK_DEVICE_MODE            O_RDONLY
 # if defined(sun)                       /* if (sun) { */
@@ -150,7 +183,6 @@ static INLINE ssize_t
 #  ifdef VMX86_DEVEL
 #   define VMBLOCK_LIST_FILEBLOCKS       _IO('v', 3)
 #  endif
-#  define VMBLOCK_CONTROL(fd, op, path)  ioctl(fd, op, path)
 
 # elif defined(__FreeBSD__)              /* } else if (FreeBSD) { */
    /*
@@ -166,18 +198,7 @@ static INLINE ssize_t
 #   define VMBLOCK_LIST_FILEBLOCKS       _IO('Z', 3)
 #   define VMBLOCK_PURGE_FILEBLOCKS      _IO('Z', 4)
 #  endif
-   /*
-    * FreeBSD's ioctl data parameters must be of fixed size.  Guarantee a safe
-    * buffer of size MAXPATHLEN by copying the user's string to one of our own.
-    */
-#  define VMBLOCK_CONTROL(fd, cmd, path)                                \
-({                                                                      \
-   char tpath[MAXPATHLEN];                                              \
-   if (path != NULL) {                                                  \
-      strlcpy(tpath, path, MAXPATHLEN);                                 \
-   }                                                                    \
-   ioctl((fd), (cmd), tpath);                                           \
-})
+
 # endif                                 /* } */
 #else
 # error "Unknown platform for vmblock."

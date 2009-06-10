@@ -33,7 +33,6 @@
 #include <sys/dirent.h>         // for struct dirent
 
 #include "cpName.h"
-#include "staticEscape.h"
 
 #include "hgfsUtil.h"
 
@@ -66,6 +65,8 @@ static vop_readdir_t	HgfsVopReaddir;
 static vop_inactive_t   HgfsVopInactive;
 static vop_reclaim_t	HgfsVopReclaim;
 static vop_print_t	HgfsVopPrint;
+static vop_readlink_t   HgfsVopReadlink;
+static vop_symlink_t    HgfsVopSymlink;
 
 /*
  * Global data
@@ -93,6 +94,8 @@ struct vop_vector HgfsVnodeOps = {
    .vop_inactive        = HgfsVopInactive,
    .vop_reclaim         = HgfsVopReclaim,
    .vop_print           = HgfsVopPrint,
+   .vop_readlink        = HgfsVopReadlink,
+   .vop_symlink         = HgfsVopSymlink,
 };
 
 
@@ -213,7 +216,7 @@ struct vop_open_args {
    struct vnode *vp = ap->a_vp;
    int mode = ap->a_mode;
 
-   return HgfsOpenInt(vp, mode);
+   return HgfsOpenInt(vp, mode, FALSE);
 }
 
 
@@ -323,8 +326,30 @@ struct vop_access_args {
 {
    struct vnode *vp = ap->a_vp;
    int mode = ap->a_mode;
+   HgfsAccessMode accessMode = 0;
+   Bool isDir = vp->v_type == VDIR;
+   if (mode & VREAD) {
+      accessMode |= isDir ? HGFS_MODE_LIST_DIRECTORY : HGFS_MODE_READ_DATA;
+      accessMode |=  HGFS_MODE_READ_ATTRIBUTES;
+   }
+   if (mode & VWRITE) {
+      if (isDir) {
+         accessMode |= HGFS_MODE_ADD_FILE | HGFS_MODE_ADD_SUBDIRECTORY |
+                       HGFS_MODE_DELETE | HGFS_MODE_DELETE_CHILD |
+                       HGFS_MODE_WRITE_ATTRIBUTES;
+      } else {
+         accessMode |= HGFS_MODE_WRITE_DATA | HGFS_MODE_ADD_SUBDIRECTORY |
+                       HGFS_MODE_DELETE | HGFS_MODE_WRITE_ATTRIBUTES;
+      }
+   }
+   if (mode & VAPPEND) {
+      accessMode |= isDir ? HGFS_MODE_ADD_SUBDIRECTORY : HGFS_MODE_APPEND_DATA;
+   }
+   if (mode & VEXEC) {
+      accessMode |= isDir ? HGFS_MODE_TRAVERSE_DIRECTORY : HGFS_MODE_GENERIC_EXECUTE;
+   }
 
-   return HgfsAccessInt(vp, mode);
+   return HgfsAccessInt(vp, accessMode);
 }
 
 
@@ -430,7 +455,7 @@ struct vop_read_args {
    struct vnode *vp = ap->a_vp;
    struct uio *uiop = ap->a_uio;
 
-   return HgfsReadInt(vp, uiop);
+   return HgfsReadInt(vp, uiop, FALSE);
 }
 
 
@@ -466,7 +491,7 @@ struct vop_write_args {
    struct uio *uiop = ap->a_uio;
    int ioflag = ap->a_ioflag;
 
-   return HgfsWriteInt(vp, uiop, ioflag);
+   return HgfsWriteInt(vp, uiop, ioflag, FALSE);
 }
 
 
@@ -704,12 +729,6 @@ struct vop_inactive_args {
 };
 */
 {
-   /*
-    * On FreeBSD we can always call vgone because there is no possibility that the
-    * vnode is being shared by more than one open file.
-    */
-   vgone(ap->a_vp);
-
    return 0;
 }
 
@@ -743,7 +762,7 @@ struct vop_reclaim_args {
 
    HgfsSuperInfo *sip = HGFS_VP_TO_SIP(vp);
 
-   HgfsVnodePut(vp, &sip->fileHashTable);
+   HgfsReleaseVnodeContext(vp, &sip->fileHashTable);
    vp->v_data = NULL;
 
    return 0;
@@ -771,5 +790,75 @@ static int
 HgfsVopPrint(struct vop_print_args *ap)
 {
    return 0;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsVopReadlink --
+ *
+ *      Invoked when a user calls readlink(2) on a file in our filesystem.
+ *
+ * Results:
+ *      Returns zero on success and an error code on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+HgfsVopReadlink(struct vop_readlink_args *ap)
+/*
+struct vop_readlink_args {
+   vnode  *vp;              // IN : vnode of file
+   struct uio *uio;         // OUT: location to copy symlink name.
+   struct ucred *cred;      // IN   : caller's credentials
+};
+*/
+{
+   struct vnode *vp = ap->a_vp;
+   struct uio *uiop = ap->a_uio;
+
+   return HgfsReadlinkInt(vp, uiop);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsVopSymlink --
+ *
+ *      Invoked when a user calls symlink(2) to create a symbolic link.
+ *
+ * Results:
+ *      Returns zero on success and an error code on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+HgfsVopSymlink(struct vop_symlink_args *ap)
+/*
+struct vop_symlink_args {
+   vnode *dvp;                  // IN : vnode of directory
+   vnode **vp;                  // OUT: location to place resultant vnode
+   struct componentname *cnp;   // IN : symlink pathname info
+   struct vatttr *vap;          // IN : attributes to create new object with
+   char *target;                // IN : Target name
+};
+*/
+{
+   struct vnode **vp = ap->a_vpp;
+   struct vnode *dvp = ap->a_dvp;
+   struct componentname *cnp = ap->a_cnp;
+   char *target = ap->a_target;
+
+   return HgfsSymlinkInt(dvp, vp, cnp, target);
 }
 

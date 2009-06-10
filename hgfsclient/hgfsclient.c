@@ -27,14 +27,14 @@
 #include "vmware.h"
 #include "guestApp.h"
 #include "vmcheck.h"
-#include "toolsLogger.h"
 #include "escBitvector.h"
-#include "staticEscape.h"
+#include "hgfsEscape.h"
 #include "hgfs.h"
 #include "hgfsBd.h"
 #include "hgfsProto.h"
 #include "conf.h"
 #include "str.h"
+#include "vmtools.h"
 
 #include "hgfsclient_version.h"
 #include "embed_version.h"
@@ -48,11 +48,7 @@ VM_EMBED_VERSION(HGFSCLIENT_VERSION_STRING);
 
 RpcOut *gChannel = NULL;
 char *gPacketBuffer = NULL;
-static GuestApp_Dict *gConfDict = NULL;
-static int HgfsEscapeBuffer(char const *bufIn,
-                            uint32 sizeIn,
-                            uint32 sizeBufOut,
-                            char *bufOut);
+
 static Bool HgfsClient_Open(HgfsHandle *rootHandle);
 static HgfsFileName *HgfsClient_Read(HgfsHandle rootHandle,
                                      int offset);
@@ -60,240 +56,6 @@ static Bool HgfsClient_Close(HgfsHandle rootHandle);
 static Bool HgfsClient_PrintShares(void);
 static Bool HgfsClient_Init(void);
 static Bool HgfsClient_Cleanup(void);
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * Debug --
- *
- *    Debugging output. Useless to the end user.
- *
- * Results:
- *    None.
- *
- * Side effects:
- *    None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void 
-Debug(const char *fmt, // IN: Duh
-      ...)             // IN: Variadic arguments to duh
-{
-#ifdef VMX86_DEVEL
-   va_list args;
-
-   va_start(args, fmt);
-   ToolsLogger_LogV(TOOLSLOG_TYPE_LOG, fmt, args);
-   va_end(args);
-#endif
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * Log --
- *
- *    Log something. Slightly more important than Debug, but less important
- *    than Warning.
- *
- * Results:
- *    None.
- *
- * Side effects:
- *    None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void 
-Log(const char *fmt, // IN: Duh
-    ...)             // IN: Variadic arguments to duh
-{
-   va_list args;
-
-   va_start(args, fmt);
-   ToolsLogger_LogV(TOOLSLOG_TYPE_LOG, fmt, args);
-   va_end(args);
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * Warning --
- *
- *    Warn the user of something. Probably fairly important, but not as
- *    critical as Panic.
- *
- * Results:
- *    None.
- *
- * Side effects:
- *    None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-Warning(const char *fmt, // IN: Duh
-        ...)             // IN: Variadic arguments to duh
-{
-   va_list args;
-
-   va_start(args, fmt);
-   ToolsLogger_LogV(TOOLSLOG_TYPE_WARNING, fmt, args);
-   va_end(args);
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * Panic --
- *
- *    Warn the user and quit the app. Something very bad must have happened.
- *
- * Results:
- *    None.
- *
- * Side effects:
- *    None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-Panic(const char *fmt, // IN: Duh
-      ...)             // IN: Variadic arguments to duh
-{
-   va_list args;
-
-   va_start(args, fmt);
-   ToolsLogger_LogV(TOOLSLOG_TYPE_PANIC, fmt, args);
-   va_end(args);
-
-   exit(255);
-   NOT_REACHED();
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * HgfsEscapeBuffer --
- *
- *    Escape any characters that are not legal in a filename.
- *
- *    sizeBufOut must account for the NUL terminator.
- *
- *    This function is based on code in the Linux driver.
- *
- *    XXX: See the comments in staticEscape.c and staticEscapeW.c to understand
- *    why this interface sucks.
- *
- * Results:
- *    On success, the size (excluding the NUL terminator) of the
- *    escaped, NUL terminated buffer.
- *    On failure (bufOut not big enough to hold result), negative value.
- *
- * Side effects:
- *    None
- *
- *-----------------------------------------------------------------------------
- */
-
-static int
-HgfsEscapeBuffer(char const *bufIn, // IN:  Buffer with unescaped input
-                 uint32 sizeIn,     // IN:  Size of input buffer (chars)
-                 uint32 sizeBufOut, // IN:  Size of output buffer (bytes)
-                 char *bufOut)      // OUT: Buffer for escaped output
-{
-   int result;
-
-   /*
-    * This is just a wrapper around the more general escape
-    * routine; we pass it the correct bitvector and the
-    * buffer to escape.
-    */
-   EscBitVector bytesToEsc;
-
-   ASSERT(bufIn);
-   ASSERT(bufOut);
-
-   /* Set up the bitvector for "/" and "%" */
-   EscBitVector_Init(&bytesToEsc);
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'%');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'/');
-
-#if defined(_WIN32)
-   /* Windows can't handle these characters either. */
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'\\');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'*');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'?');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)':');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'\"');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'<');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'>');
-   EscBitVector_Set(&bytesToEsc, (unsigned char)'|');
-#endif
-
-   result = StaticEscape_Do('%',
-                            &bytesToEsc,
-                            bufIn,
-                            sizeIn,
-                            sizeBufOut,
-                            bufOut);
-
-#if defined (_WIN32)
-   {
-      /* 
-       * Windows needs to escape a '.' if it's the last character in
-       * a filename. But not if the filename is actually '.' or '..'!
-       */
-      char escapedPeriod[5];     // To contain the escaped equivalent of '.'
-      int escapedPeriodSize;
-      EscBitVector periodToEsc;
-      
-      /* Don't escape if filename is '.' or '..'. */
-      if ((strcmp(bufIn, ".") == 0) || 
-          (strcmp(bufIn, "..") == 0)) {
-         return result;
-      }
-      
-      /* But if the last character is '.', escape it. */
-      if (sizeIn && bufIn[sizeIn - 1] == '.') {
-         EscBitVector_Init(&periodToEsc);
-         EscBitVector_Set(&periodToEsc, (unsigned char)'.');
-         
-         escapedPeriodSize = StaticEscape_Do('%', &periodToEsc, ".", 
-                                             sizeof ".", sizeof escapedPeriod, 
-                                             escapedPeriod);
-         
-         if (escapedPeriodSize < 0) {
-            return escapedPeriodSize;
-         }
-
-         if (result + escapedPeriodSize > sizeBufOut) {
-            return -1;
-         }
-            
-         /* 
-          * Overwrite the trailing '.' in the output buffer with its 
-          * escaped equivalent. 
-          */
-         Str_Strcpy(bufOut + result - 1, escapedPeriod, 
-                    sizeBufOut - result + 1);
-         result += (escapedPeriodSize - sizeof (char));
-      }
-   }
-#endif
-
-   return result;
-}
 
 
 /*
@@ -513,7 +275,7 @@ HgfsClient_PrintShares(void)
        * Escape this filename. If we get back a negative result, it means that
        * the escaped filename is too big, so skip this share.
        */
-      if (HgfsEscapeBuffer(fileName->name, fileName->length,
+      if (HgfsEscape_Do(fileName->name, fileName->length,
                            sizeof escapedName, escapedName) < 0) {
          continue;
       } 
@@ -554,9 +316,20 @@ static Bool
 HgfsClient_Init(void)
 {
    Bool success = FALSE;
+   gchar *confFile;
+   GKeyFile *conf;
 
-   gConfDict = Conf_Load();
-   ToolsLogger_Init("hgfsclient", gConfDict);
+   confFile = VMTools_GetToolsConfFile();
+   conf = VMTools_LoadConfig(confFile, G_KEY_FILE_NONE, FALSE);
+
+   if (conf != NULL) {
+      VMTools_ConfigLogging(conf);
+      g_key_file_free(conf);
+      conf = NULL;
+   }
+
+   g_free(confFile);
+   confFile = NULL;
 
    if (!VmCheck_IsVirtualWorld()) {
       Warning("This application must be run in a Virtual Machine.\n");
@@ -619,10 +392,6 @@ HgfsClient_Cleanup(void)
          Warning("Failed to close RPC channel\n");
          success = FALSE;
       }
-   }
-   ToolsLogger_Cleanup();
-   if (gConfDict) {
-      GuestApp_FreeDict(gConfDict);
    }
    return success;
 }

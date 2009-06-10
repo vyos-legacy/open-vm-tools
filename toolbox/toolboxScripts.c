@@ -29,17 +29,18 @@
 #include <sys/stat.h>
 #if defined(__FreeBSD__)
 #include <sys/param.h>
-#if __FreeBSD_version >= 530000
-#include <syslimits.h>
-#endif
+#include <sys/syslimits.h>
 #endif
 
 #include "toolboxGtkInt.h"
 #include "guestApp.h"
 #include "conf.h"
+#include "debug.h"
 #include "str.h"
+#include "posix.h"
 #include "procMgr.h"
 #include "file.h"
+#include "util.h"
 
 /*
  * From toolboxInt.h
@@ -53,7 +54,7 @@ GtkWidget *scriptsApply;
 /* X terminal application and option (to launch vi to edit scripts). */
 static char *termApp;
 static char *termAppOption;
-static GuestApp_Dict *confDict;
+static GKeyFile *confDict;
 static GtkWidget *scriptsUseScript;
 static GtkWidget *scriptsDefaultScript;
 static GtkWidget *scriptsCustomScript;
@@ -64,6 +65,8 @@ static GtkWidget *scriptsBrowse;
 static GtkWidget *scriptsFileDlg;
 static GtkWidget *scriptsCombo;
 
+static int scriptsUseFileDlg;
+
 void Scripts_UpdateEnabled(void);
 void Scripts_OnComboChanged(gpointer entry, gpointer data);
 void Scripts_OnUseScriptToggled(gpointer entry, gpointer data);
@@ -72,6 +75,8 @@ void Scripts_OnBrowse(gpointer btn, gpointer data);
 void Scripts_OnEdit(gpointer btn, gpointer data);
 void Scripts_OnRun(gpointer btn, gpointer data);
 void Scripts_BrowseOnOk(gpointer btn, gpointer data);
+void Scripts_BrowseOnCancel(gpointer btn, gpointer data);
+gint Scripts_BrowseOnClose(GtkWidget *widget, GdkEvent *event, gpointer data);
 void Scripts_BrowseOnChanged(gpointer entry, gpointer data);
 void Scripts_PathOnChanged(GtkEditable *editable, gpointer data);
 
@@ -101,7 +106,7 @@ Scripts_Create(GtkWidget* mainWnd)
    GList *items = NULL;
    GSList *radiobtn_group = NULL;
 
-   confDict = Conf_Load();
+   confDict = Toolbox_LoadToolsConf();
 
    scriptstab = gtk_vbox_new(FALSE, 10);
    gtk_widget_show(scriptstab);
@@ -142,7 +147,7 @@ Scripts_Create(GtkWidget* mainWnd)
 #ifdef GTK2
       gtk_label_set_mnemonic_widget(GTK_LABEL(label), GTK_COMBO(scriptsCombo)->entry);
 
-      scriptsUseScript = gtk_check_button_new_with_mnemonic("_Use Script");
+      scriptsUseScript = gtk_check_button_new_with_mnemonic("Use Scr_ipt");
 #else
       scriptsUseScript = gtk_check_button_new_with_label("Use Script");
 #endif
@@ -155,13 +160,13 @@ Scripts_Create(GtkWidget* mainWnd)
                          GTK_SIGNAL_FUNC(Scripts_OnUseScriptToggled), NULL);
 
       /*
-       * Try to find an available x terminal app to launch vi.
+       * Try to find an available x terminal app to launch a text editor.
        *
-       * Options with different X terminal apps to launch vi:
-       *    xterm -e vi foo.txt
-       *    rxvt -e vi foo.txt
-       *    konsole -e vi foo.txt
-       *    gnome-terminal -x vi foo.txt
+       * Options with different X terminal apps to launch the editor:
+       *    xterm -e [app] foo.txt
+       *    rxvt -e [app] foo.txt
+       *    konsole -e [app] foo.txt
+       *    gnome-terminal -x [app] foo.txt
        */
       termApp = NULL;
       termAppOption = "-e";
@@ -339,26 +344,37 @@ void
 Scripts_OnComboChanged(gpointer entry, // IN: the entry selected
                        gpointer data)  // IN: unused
 {
-   const char *path, *defaultPath;
+   const char *defaultPath;
    const char *currentState;
+   const char *confName = NULL;
+   gchar *path;
+
    currentState = gtk_entry_get_text(GTK_ENTRY(GTK_COMBO(scriptsCombo)->entry));
    if (strcmp(currentState, SCRIPT_SUSPEND) == 0) {
-      path = GuestApp_GetDictEntry(confDict, CONFNAME_SUSPENDSCRIPT);
-      defaultPath = GuestApp_GetDictEntryDefault(confDict, CONFNAME_SUSPENDSCRIPT);
+      confName = CONFNAME_SUSPENDSCRIPT;
    } else if (strcmp(currentState, SCRIPT_RESUME) == 0) {
-      path = GuestApp_GetDictEntry(confDict, CONFNAME_RESUMESCRIPT);
-      defaultPath = GuestApp_GetDictEntryDefault(confDict, CONFNAME_RESUMESCRIPT);
+      confName = CONFNAME_RESUMESCRIPT;
    } else if (strcmp(currentState, SCRIPT_OFF) == 0) {
-      path = GuestApp_GetDictEntry(confDict, CONFNAME_POWEROFFSCRIPT);
-      defaultPath = GuestApp_GetDictEntryDefault(confDict, CONFNAME_POWEROFFSCRIPT);
+      confName = CONFNAME_POWEROFFSCRIPT;
    } else if (strcmp(currentState, SCRIPT_ON) == 0) {
-      path = GuestApp_GetDictEntry(confDict, CONFNAME_POWERONSCRIPT);
-      defaultPath = GuestApp_GetDictEntryDefault(confDict, CONFNAME_POWERONSCRIPT);
-   } else {
-      path = "";
-      defaultPath = "";
+      confName = CONFNAME_POWERONSCRIPT;
    }
 
+   if (confName != NULL) {
+      path = g_key_file_get_string(confDict, "powerops", confName, NULL);
+      defaultPath = GuestApp_GetDefaultScript(confName);
+      if (path == NULL) {
+         if (g_key_file_has_key(confDict, "powerops", confName, NULL)) {
+            path = g_strdup("");
+         } else {
+            path = g_strdup(defaultPath);
+         }
+      }
+   } else {
+      path = g_strdup("");
+      defaultPath = "";
+   }
+   
    gtk_signal_handler_block_by_func(GTK_OBJECT(scriptsUseScript),
                                     GTK_SIGNAL_FUNC(Scripts_OnUseScriptToggled),
                                     NULL);
@@ -367,7 +383,7 @@ Scripts_OnComboChanged(gpointer entry, // IN: the entry selected
                                     NULL);
    if (strcmp(path, "") == 0) {
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(scriptsUseScript), FALSE);
-      path = defaultPath;
+      path = g_strdup(defaultPath);
    } else {
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(scriptsUseScript), TRUE);
    }
@@ -392,6 +408,7 @@ Scripts_OnComboChanged(gpointer entry, // IN: the entry selected
                                       GTK_SIGNAL_FUNC(Scripts_OnUseScriptToggled),
                                       NULL);
    Scripts_UpdateEnabled();
+   g_free(path);
 }
 
 
@@ -470,8 +487,9 @@ Scripts_OnApply(gpointer btn,  // IN: unused
                 gpointer data) // IN: unused
 {
    const char *path;
+   const char *defaultPath;
    const char *currentState;
-   char *confName;
+   const char *confName = NULL;
    Bool enabledUse, enabledDef;
 
    currentState = gtk_entry_get_text(GTK_ENTRY(GTK_COMBO(scriptsCombo)->entry));
@@ -484,9 +502,11 @@ Scripts_OnApply(gpointer btn,  // IN: unused
    } else if (strcmp(currentState, SCRIPT_ON) == 0) {
       confName = CONFNAME_POWERONSCRIPT;
    } else {
-      confName = "";
+      /* Not reached? */
+      return;
    }
 
+   defaultPath = GuestApp_GetDefaultScript(confName);
    enabledUse = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(scriptsUseScript));
    enabledDef = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(scriptsDefaultScript));
 
@@ -494,15 +514,15 @@ Scripts_OnApply(gpointer btn,  // IN: unused
       path = "";
    } else {
       if (enabledDef) {
-         path = GuestApp_GetDictEntryDefault(confDict, confName);
+         path = defaultPath;
       } else {
          path = gtk_editable_get_chars(GTK_EDITABLE(scriptsPath), 0, -1);
       }
    }
 
-   GuestApp_SetDictEntry(confDict, confName, path);
+   g_key_file_set_string(confDict, "powerops", confName, path);
 
-   GuestApp_WriteDict(confDict);
+   Toolbox_SaveToolsConf(confDict);
    Scripts_UpdateEnabled();
    gtk_widget_set_sensitive(scriptsApply, FALSE);
 
@@ -537,8 +557,10 @@ void
 Scripts_OnEdit(gpointer btn,  // IN: unused
                gpointer data) // IN: unused
 {
+   char *editor;
    const char *scriptName;
-   char *cmd;
+   const char *argv[5];
+   size_t idx = 0;
 
    if (!termApp) {
       ToolsMain_MsgBox("Error", "Unable to locate terminal application in "
@@ -546,20 +568,51 @@ Scripts_OnEdit(gpointer btn,  // IN: unused
       return;
    }
 
+   editor = Posix_Getenv("EDITOR");
+   if (editor == NULL || strlen(editor) == 0) {
+      Debug("EDITOR not set, defaulting to vi.\n");
+      editor = g_find_program_in_path("vi");
+      if (editor == NULL) {
+         ToolsMain_MsgBox("Error",
+                          "Cannot edit script because the an editor was not found.");
+         return;
+      } else {
+         /*
+          * Make sure "editor" is allocated with malloc(), so that the call to
+          * free() later does the right thing.
+          */
+         char *tmp = editor;
+         editor = Util_SafeStrdup(tmp);
+         g_free(tmp);
+      }
+   } else {
+      /*
+       * Strings retuned by Posix_Getenv should not be freed
+       * so we make a duplicate that can be freed so we can
+       * have a common code path below.
+       */
+      editor = Util_SafeStrdup(editor);
+   }
+
    scriptName = gtk_entry_get_text(GTK_ENTRY(scriptsPath));
-   cmd = Str_Asprintf(NULL, "%s %s vi %s >/dev/null 2>&1",
-                      termApp, termAppOption, scriptName);
-   if (!cmd) {
-      ToolsMain_MsgBox("Error", "Failure creating command to edit script.");
-      return;
+   argv[idx++] = termApp;
+   if (termAppOption != NULL && strlen(termAppOption) > 0) {
+      argv[idx++] = termAppOption;
+   }
+   argv[idx++] = editor;
+   argv[idx++] = scriptName;
+   argv[idx++] = NULL;
+
+   /* Restore the original LD_LIBRARY_PATH before invoking external apps. */
+   if (!g_spawn_sync(NULL, (gchar **) argv, (gchar **) gNativeEnviron,
+                     G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL, NULL, NULL)) {
+      gchar *msg = g_strdup_printf("Cannot edit script: failed to execute editor %s.",
+                                   editor);
+      ToolsMain_MsgBox("Error", msg);
+      g_free(msg);
    }
 
-   if (!ProcMgr_ExecSync(cmd, NULL)) {
-      ToolsMain_MsgBox("Error", "Cannot edit script because the vi editor "
-                       "was not found.");
-   }
-
-   free(cmd);
+   free(editor);
 }
 
 
@@ -585,12 +638,22 @@ Scripts_OnRun(gpointer btn,  // IN: unused
               gpointer data) // IN: unused
 {
    const char *scriptName;
+   gchar *cmd = NULL;
 
    scriptName = gtk_entry_get_text(GTK_ENTRY(scriptsPath));
-   if (!ProcMgr_ExecSync(scriptName, NULL)) {
+   if (!g_path_is_absolute(scriptName)) {
+      char *toolsPath = GuestApp_GetInstallPath();
+      ASSERT_MEM_ALLOC(toolsPath);
+      cmd = g_strdup_printf("%s%c%s", toolsPath, DIRSEPC, scriptName);
+      free(toolsPath);
+   }
+
+   if (!ProcMgr_ExecSync((cmd != NULL) ? cmd : scriptName, NULL)) {
       ToolsMain_MsgBox("Error", "Failure executing script, please ensure the "
                        "file exists and is executable.");
    }
+
+   g_free(cmd);
 }
 
 
@@ -622,6 +685,9 @@ Scripts_OnBrowse(gpointer btn,  // IN: unused
    struct stat statBuf;
 
    scriptsFileDlg = gtk_file_selection_new("Select a file");
+
+   scriptsUseFileDlg = TRUE;
+
    gtk_widget_show(scriptsFileDlg);
 
    defaultPath = gtk_entry_get_text(GTK_ENTRY(scriptsPath));
@@ -650,25 +716,26 @@ Scripts_OnBrowse(gpointer btn,  // IN: unused
                                 GTK_SELECTION_BROWSE);
 #endif
    gtk_signal_connect(GTK_OBJECT(GTK_FILE_SELECTION(scriptsFileDlg)->ok_button),
-                       "clicked", (GtkSignalFunc)Scripts_BrowseOnOk, &path);
-   gtk_signal_connect(GTK_OBJECT(scriptsFileDlg), "destroy",
-                      (GtkSignalFunc)gtk_widget_destroyed, &scriptsFileDlg);
-   gtk_signal_connect_object(GTK_OBJECT(GTK_FILE_SELECTION(scriptsFileDlg)->
-                                        cancel_button),
-                             "clicked", (GtkSignalFunc)gtk_widget_destroy,
-                             GTK_OBJECT(scriptsFileDlg));
+                      "clicked", GTK_SIGNAL_FUNC(Scripts_BrowseOnOk), &path);
+   gtk_signal_connect(GTK_OBJECT(GTK_FILE_SELECTION(scriptsFileDlg)->cancel_button),
+                      "clicked", GTK_SIGNAL_FUNC(Scripts_BrowseOnCancel), NULL);
+   gtk_signal_connect(GTK_OBJECT(scriptsFileDlg),
+                      "delete_event", GTK_SIGNAL_FUNC(Scripts_BrowseOnClose), NULL);
    gtk_signal_connect(GTK_OBJECT(GTK_FILE_SELECTION(scriptsFileDlg)->selection_entry),
-                      "changed",
-                      (GtkSignalFunc)Scripts_BrowseOnChanged,
+                      "changed", GTK_SIGNAL_FUNC(Scripts_BrowseOnChanged), 
                       GTK_FILE_SELECTION(scriptsFileDlg)->ok_button);
 
 
    /* Block here and pump messages */
-   while (gtk_events_pending() || scriptsFileDlg != NULL) {
+   while (gtk_events_pending() || scriptsUseFileDlg) {
       gtk_main_iteration();
    }
 
-   if (*path != 0) {
+   if (scriptsFileDlg != NULL) {
+      gtk_widget_destroy(scriptsFileDlg);
+   }
+
+   if (*path != 0 && strcmp(path, defaultPath) != 0) {
       gtk_entry_set_text(GTK_ENTRY(scriptsPath), path);
       gtk_widget_set_sensitive(scriptsApply, TRUE);
    }
@@ -707,9 +774,42 @@ Scripts_BrowseOnChanged(gpointer entry, // IN: selection_entry
  *
  * Scripts_BrowseOnOk --
  *
- *      Callback for the gtk signal "clicked" on the Scripts file browser OK
- *      button.  Set "okPressed" to 1 so the Scripts_OnBrowse code knows to
- *      quit looping and that OK was the reason we closed.
+ *      Callback for the gtk signal "clicked" on the Scripts File Browser OK
+ *      button. We save the selected path, hide the File Browser and set the
+ *      flag for File Browser use to FALSE so that to quit looping.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+*/
+
+void
+Scripts_BrowseOnOk(gpointer btn,  // IN: OK button
+                   gpointer data) // IN: path
+{
+   const char *ret;
+
+   gtk_widget_hide(scriptsFileDlg);
+
+   scriptsUseFileDlg = FALSE;
+
+   ret = gtk_file_selection_get_filename(GTK_FILE_SELECTION(scriptsFileDlg));
+   strncpy((char*)data, ret, PATH_MAX);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Scripts_BrowseOnCancel --
+ *
+ *      Callback for the gtk signal "clicked" on the Scripts File Browser 
+ *      Cancel button. We hide the File Browser and set the flag for 
+ *      File Browser use to FALSE so that to quit looping.
  *
  * Results:
  *      None.
@@ -721,16 +821,44 @@ Scripts_BrowseOnChanged(gpointer entry, // IN: selection_entry
  */
 
 void
-Scripts_BrowseOnOk(gpointer btn,  // IN: OK button
-                   gpointer data) // IN: path
+Scripts_BrowseOnCancel(gpointer btn,  // IN: OK button
+                       gpointer data) // IN: data
 {
-   const char *ret;
+   gtk_widget_hide(scriptsFileDlg);
 
-   ret = gtk_file_selection_get_filename(GTK_FILE_SELECTION(scriptsFileDlg));
-   strncpy((char*)data, ret, PATH_MAX);
-   gtk_widget_destroy(scriptsFileDlg);
+   scriptsUseFileDlg = FALSE;
 }
 
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Scripts_BrowseOnClose --
+ *
+ *      Callback for the gtk signal "delete_event" on the Scripts File Browser 
+ *      Close button from titlebar. We hide the File Browser and set the flag 
+ *      for File Browser use to FALSE so that to quit looping and return TRUE
+ *      so that not to destroy the window object until we get out of events
+ *      loop, after that we will destroy the window.
+ *
+ * Results:
+ *      FALSE if you want the widget to be destroyed or TRUE otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+gint
+Scripts_BrowseOnClose(GtkWidget *widget, GdkEvent *event, gpointer data)
+{
+   gtk_widget_hide(scriptsFileDlg);
+
+   scriptsUseFileDlg = FALSE;
+
+   return TRUE;
+}
 
 /*
  *----------------------------------------------------------------------------

@@ -578,16 +578,16 @@ CopyPasteSelectionGetCB(GtkWidget        *widget,         // IN: unused
       gHGFCPFileTransferStatus = FCP_FILE_TRANSFERRING;
    }
 
-   if (gBlockFd > 0) {
+   if (DnD_BlockIsReady(&gBlockCtrl)) {
       /* Add a block on the staging directory for this command. */
-      if (DnD_AddBlock(gBlockFd, gFileRoot)) {
+      if (gBlockCtrl.AddBlock(gBlockCtrl.fd, gFileRoot)) {
          Debug("CopyPasteSelectionGetCB: add block [%s].\n", gFileRoot);
          blockAdded = TRUE;
       } else {
          Warning("CopyPasteSelectionGetCB: Unable to add block [%s].\n", gFileRoot);
       }
    }
-   
+
    if (!blockAdded) {
       /*
        * If there is no blocking driver, wait here till file copy is done.
@@ -649,7 +649,7 @@ CopyPasteSelectionGetCB(GtkWidget        *widget,         // IN: unused
 
    /*
     * Set begin to first non-NUL character and end to last NUL character to
-    * prevent errors in calling CPName_GetComponentGeneric().
+    * prevent errors in calling CPName_GetComponent().
     */
    for(begin = gHostClipboardBuf; *begin == '\0'; begin++)
       ;
@@ -657,7 +657,7 @@ CopyPasteSelectionGetCB(GtkWidget        *widget,         // IN: unused
    ASSERT(end);
 
    /* Build up selection data */
-   while ((len = CPName_GetComponentGeneric(begin, end, "", &next)) != 0) {
+   while ((len = CPName_GetComponent(begin, end, &next)) != 0) {
       const size_t origTextLen = textLen;
       Bool freeBegin = FALSE;
 
@@ -956,6 +956,9 @@ CopyPasteRpcInGHSetDataCB(char const **result,  // OUT
    }
 
    /* First check which one is newer, primary selection or clipboard. */
+   gGuestSelPrimaryTime = 0;
+   gGuestSelClipboardTime = 0;
+
    gWaitingOnGuestSelection = TRUE;
    gtk_selection_convert(gUserMainWidget,
                          GDK_SELECTION_PRIMARY,
@@ -975,6 +978,7 @@ CopyPasteRpcInGHSetDataCB(char const **result,  // OUT
       source = gGuestSelClipboardBuf;
    }
 
+try_again:
    /* Check if it is file list in the active selection. */
    for (iAtom = 0; iAtom < NR_FCP_TARGETS; iAtom++) {
       gWaitingOnGuestSelection = TRUE;
@@ -1104,6 +1108,23 @@ CopyPasteRpcInGHSetDataCB(char const **result,  // OUT
                               GDK_SELECTION_TYPE_STRING,
                               GDK_CURRENT_TIME);
          while (gWaitingOnGuestSelection) gtk_main_iteration();
+      }
+
+      /*
+       * With 'cut' operation OpenOffice will put data into clipboard but
+       * set same timestamp for both clipboard and primary selection.
+       * If primary timestamp is same as clipboard timestamp, we should try
+       * clipboard again if primary selection is empty. For details please
+       * refer to bug 300780.
+       */
+      if (source[0] == '\0' &&
+          gGuestSelPrimaryTime == gGuestSelClipboardTime &&
+          gGuestSelPrimaryTime != 0) {
+         gGuestSelPrimaryTime = 0;
+         gGuestSelClipboardTime = 0;
+         activeSelection = GDK_SELECTION_CLIPBOARD;
+         source = gGuestSelClipboardBuf;
+         goto try_again;
       }
 
       if (source[0] != '\0') {
@@ -1278,7 +1299,7 @@ CopyPasteGHFileListGetNext(char **fileName,       // OUT: fill with filename loc
    ASSERT(end);
 
    /* Get the length of this filename and a pointer to the next one */
-   len = CPName_GetComponentGeneric(gFcpGHState.fileListNext, end, "", &next);
+   len = CPName_GetComponent(gFcpGHState.fileListNext, end, &next);
    if (len < 0) {
       Warning("CopyPasteGHFileListGetNext: error retrieving next component\n");
       return FALSE;
@@ -1445,7 +1466,8 @@ CopyPasteRpcInHGDataFinishCB(char const **result,   // OUT
    ASSERT(gHGFCPFileTransferStatus == FCP_FILE_TRANSFERRING);
    gHGFCPFileTransferStatus = FCP_FILE_TRANSFERRED;
 
-   if (gBlockFd > 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+   if (DnD_BlockIsReady(&gBlockCtrl) &&
+       !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
       Warning("CopyPasteRpcInHGDataFinishCB: Unable to remove block [%s].\n",
               gFileRoot);
    }
@@ -1499,6 +1521,7 @@ CopyPasteHGSetFileList(char const **result,     // OUT
    Bool ret = FALSE;
    char *retStr;
    int iAtom;
+   Bool usingDnDBlock;
 
    gHGFCPFileTransferStatus = FCP_FILE_TRANSFER_NOT_YET;
    /* Parse value string. */
@@ -1540,18 +1563,8 @@ CopyPasteHGSetFileList(char const **result,     // OUT
    memcpy(data, args + index, listSize);
    data[listSize] = '\0';
 
-   /*
-    * This data could have come from either a Windows or Linux host.
-    * Therefore, we need to verify that it doesn't contain any illegal
-    * characters for the current platform.
-    */
-   if (DnD_DataContainsIllegalCharacters(data, listSize)) {
-      Debug("CopyPasteHGSetFileList: data contains illegal characters\n");
-      retStr = DND_ILLEGAL_CHARACTERS;
-      goto exit;
-   }
-
-   if (gBlockFd > 0) {
+   usingDnDBlock = DnD_BlockIsReady(&gBlockCtrl);
+   if (usingDnDBlock) {
       /*
        * Here we take the last component of the actual file root, which is
        * a temporary directory for this DnD operation, and append it to the
@@ -1565,18 +1578,18 @@ CopyPasteHGSetFileList(char const **result,     // OUT
          retStr = "error construct stagingDirName";
          goto exit;
       }
-      if (sizeof VMBLOCK_MOUNT_POINT - 1 +
+      if (strlen(gBlockCtrl.blockRoot) +
           (sizeof DIRSEPS - 1) * 2 + strlen(stagingDirName) >= sizeof mountDirName) {
          Debug("CopyPasteHGSetFileList: directory name too large.\n");
          retStr = "directory name too large";
          goto exit;
       }
       Str_Sprintf(mountDirName, sizeof mountDirName,
-                  VMBLOCK_MOUNT_POINT DIRSEPS"%s"DIRSEPS, stagingDirName);
+                  "%s" DIRSEPS "%s" DIRSEPS, gBlockCtrl.blockRoot, stagingDirName);
    }
 
    /* Add the file root to the relative paths received from host */
-   if (!DnD_PrependFileRoot(gBlockFd > 0 ? mountDirName : gFileRoot,
+   if (!DnD_PrependFileRoot(usingDnDBlock ? mountDirName : gFileRoot,
                             &data, &listSize)) {
       Debug("CopyPasteHGSetFileList: error prepending guest file root\n");
       retStr = "error prepending file root";
@@ -1983,7 +1996,8 @@ CopyPaste_OnReset(void)
 {
    if (gHGFCPFileTransferStatus == FCP_FILE_TRANSFERRING) {
       File_DeleteDirectoryTree(gFileRoot);
-      if (gBlockFd > 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+      if (DnD_BlockIsReady(&gBlockCtrl) &&
+          !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
          Warning("CopyPasteRpcInHGDataFinishCB: Unable to remove block [%s].\n",
                  gFileRoot);
       }

@@ -67,11 +67,21 @@
 #   undef Bool
 typedef Display *       InitHandle;
 
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) || defined(RESOLUTION_WIN32)
 typedef void *          InitHandle;
 #else
 #   error Unknown display backend
 #endif
+
+/*
+ * Arguments to VMwareResolutionSet.exe
+ */
+#define RESOLUTION_SET_APP_NAME "VMwareResolutionSet.exe"
+typedef enum {
+   RESOLUTION_SET_NORESET   = 0,
+   RESOLUTION_SET_RESET     = 1,
+   RESOLUTION_SET_ARBITRARY = 2,
+} ResolutionSetDisplayReset;
 
 
 /*

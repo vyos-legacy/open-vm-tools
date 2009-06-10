@@ -1,4 +1,3 @@
-
 /*********************************************************
  * Copyright (C) 2005 VMware, Inc. All rights reserved.
  *
@@ -36,6 +35,7 @@
 #include "vm_basic_types.h"
 #include "rpcout.h"
 #include "rpcin.h"
+#include "dnd.h"
 
 #include "guestApp.h"
 
@@ -48,7 +48,7 @@
 
 #define RPCIN_POLL_TIME        10  /* in 1/1000ths of a second */
 #define POINTER_POLL_TIME      15  /* in 1/1000ths of a second */
-#define UNGRABBED_POS -100
+#define UNGRABBED_POS (-100)
 #define DEBUG_PREFIX           "vmusr"
 
 #define FCP_FILE_TRANSFER_NOT_YET            0
@@ -120,7 +120,6 @@ extern Display *gXDisplay;
 extern Window gXRoot;
 extern DblLnkLst_Links *gEventQueue;
 extern GtkWidget *gUserMainWidget;
-extern Bool optionCopyPaste;
-extern int gBlockFd;
+extern DnDBlockControl gBlockCtrl;
 
 #endif // _VMWAREUSER_INT_H_

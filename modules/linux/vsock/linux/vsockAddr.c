@@ -38,6 +38,8 @@
 #elif defined(VMKERNEL)
 # include "vm_libc.h"
 # include "return_status.h"
+#elif defined(__APPLE__)
+# include <sys/errno.h>
 #endif
 
 #include "vsockCommon.h"
@@ -69,7 +71,7 @@ VSockAddr_Init(struct sockaddr_vm *addr, // OUT
    ASSERT(addr);
    memset(addr, 0, sizeof *addr);
    VSockAddr_InitNoFamily(addr, cid, port);
-   addr->svm_family = VMCISock_GetAFValue();
+   addr->svm_family = VMCISockGetAFValueInt();
    VSOCK_ADDR_ASSERT(addr);
 }
 
@@ -137,7 +139,7 @@ VSockAddr_Validate(const struct sockaddr_vm *addr) // IN
       goto exit;
    }
 
-   if (VMCISock_GetAFValue() != addr->svm_family) {
+   if (VMCISockGetAFValueInt() != addr->svm_family) {
       err = EAFNOSUPPORT;
       goto exit;
    }

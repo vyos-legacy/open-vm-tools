@@ -18,32 +18,14 @@
 bin_PROGRAMS = vmware-hgfsclient
 
 vmware_hgfsclient_LDADD =
-vmware_hgfsclient_LDADD += ../lib/conf/libConf.a
-vmware_hgfsclient_LDADD += ../lib/guestApp/libGuestApp.a
-vmware_hgfsclient_LDADD += ../lib/hgfs/libHgfs.a
-vmware_hgfsclient_LDADD += ../lib/hgfsBd/libHgfsBd.a
-vmware_hgfsclient_LDADD += ../lib/rpcOut/libRpcOut.a
-vmware_hgfsclient_LDADD += ../lib/string/libString.a
-vmware_hgfsclient_LDADD += ../lib/toolsLogger/libToolsLogger.a
-vmware_hgfsclient_LDADD += ../lib/vmCheck/libVmCheck.a
-vmware_hgfsclient_LDADD += ../lib/vmSignal/libVmSignal.a
-# In the absence of the linker options --start-group and --end-group (which can't
-# be put in LDADD), we need to bring the following libraries out of the alphebetical
-# order so their symbols are properly resolved.
-vmware_hgfsclient_LDADD += ../lib/backdoor/libBackdoor.a
-vmware_hgfsclient_LDADD += ../lib/dict/libDict.a
-vmware_hgfsclient_LDADD += ../lib/err/libErr.a
-vmware_hgfsclient_LDADD += ../lib/file/libFile.a
-vmware_hgfsclient_LDADD += ../lib/message/libMessage.a
-vmware_hgfsclient_LDADD += ../lib/rpcVmx/libRpcVmx.a
-vmware_hgfsclient_LDADD += ../lib/unicode/libUnicode.a
-vmware_hgfsclient_LDADD += ../lib/sync/libSync.a
-vmware_hgfsclient_LDADD += ../lib/misc/libMisc.a
-vmware_hgfsclient_LDADD += ../lib/stubs/libStubs.a
+vmware_hgfsclient_LDADD += ../lib/hgfsBd/libHgfsBd.la
+vmware_hgfsclient_LDADD += @VMTOOLS_LIBS@
+
+vmware_hgfsclient_CPPFLAGS =
+vmware_hgfsclient_CPPFLAGS += @VMTOOLS_CPPFLAGS@
 
 vmware_hgfsclient_SOURCES =
 vmware_hgfsclient_SOURCES += hgfsclient.c
-vmware_hgfsclient_SOURCES += stub-user-util.c
 
 if HAVE_ICU
    vmware_hgfsclient_LDADD += @ICU_LIBS@

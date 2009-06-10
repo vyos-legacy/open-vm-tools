@@ -16,13 +16,13 @@
  *
  *********************************************************/
 
-/*
- * unityPlatformX11.c --
+/**
+ * @file unityPlatformX11.c
  *
- *    Implementation of Unity for guest operating systems that use the X11 windowing
- *    system. This file holds the basic things such as initialization/destruction of the
- *    UnityPlatform object, overall event handling, and handling of some Unity
- *    RPCs that are not window-centric.
+ * Implementation of Unity for guest operating systems that use the X11 windowing
+ * system. This file holds the basic things such as initialization/destruction of the
+ * UnityPlatform object, overall event handling, and handling of some Unity
+ * RPCs that are not window-centric.
  */
 
 #include "unityX11.h"
@@ -142,23 +142,23 @@ UnityPlatformIsSupported(void)
  */
 
 UnityPlatform *
-UnityPlatformInit(UnityWindowTracker *tracker, // IN
-                  int *blockedWnd)             // UNUSED
+UnityPlatformInit(UnityWindowTracker *tracker,          // IN
+                  UnityUpdateChannel *updateChannel,    // IN
+                  int *blockedWnd)                      // UNUSED
 {
    UnityPlatform *up;
    char *displayName;
+
+   ASSERT(tracker);
+   ASSERT(updateChannel);
 
    Debug("UnityPlatformInit: Running\n");
 
    up = Util_SafeCalloc(1, sizeof *up);
    up->tracker = tracker;
+   up->updateChannel = updateChannel;
 
    up->savedScreenSaverTimeout = -1;
-
-   if (!UnityUpdateThreadInit(&up->updateData)) {
-      free(up);
-      return NULL;
-   }
 
    /*
     * Because GDK filters events heavily, and we need to do a lot of low-level X work, we
@@ -284,6 +284,7 @@ UnityPlatformInit(UnityWindowTracker *tracker, // IN
    INIT_ATOM(_NET_SUPPORTED);
    INIT_ATOM(_NET_FRAME_EXTENTS);
    INIT_ATOM(WM_CLASS);
+   INIT_ATOM(WM_CLIENT_LEADER);
    INIT_ATOM(WM_DELETE_WINDOW);
    INIT_ATOM(WM_ICON);
    INIT_ATOM(WM_NAME);
@@ -348,8 +349,6 @@ UnityPlatformCleanup(UnityPlatform *up) // IN
       XCloseDisplay(up->display);
       up->display = NULL;
    }
-
-   UnityUpdateThreadCleanup(&up->updateData);
 
    free(up->desktopInfo.guestDesktopToUnity);
    up->desktopInfo.guestDesktopToUnity = NULL;
@@ -1183,41 +1182,6 @@ UnityPlatformUpdateWindowState(UnityPlatform *up,               // IN
 }
 
 
-/*
- *-----------------------------------------------------------------------------
- *
- * UnityPlatformSendPendingUpdates --
- *
- *      Pushes any pending window tracker updates out to the host.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-UnityPlatformSendPendingUpdates(UnityPlatform *up, // IN
-                                int flags)         // IN
-{
-
-   DynBuf_SetSize(&up->updateData.updates, up->updateData.cmdSize);
-   UnityWindowTracker_RequestUpdates(up->tracker,
-                                     flags,
-                                     &up->updateData.updates);
-   DynBuf_AppendString(&up->updateData.updates, "");
-   if (DynBuf_GetSize(&up->updateData.updates) > (up->updateData.cmdSize + 1)) {
-      UnityPlatformDumpUpdate(up);
-      if (!UnitySendUpdates(&up->updateData)) {
-         Debug("UPDATE TRANSMISSION FAILED! --------------------\n");
-      }
-   }
-}
-
-
 #ifdef GTK2
 
 
@@ -1325,6 +1289,7 @@ UnityPlatformHandleEvents(gboolean errorOccurred,  // IN
    Bool restackDetWnd = FALSE;
 
    ASSERT(up);
+   ASSERT(up->isRunning);
 
    if (errorOccurred) {
       /*
@@ -1405,7 +1370,7 @@ UnityPlatformHandleEvents(gboolean errorOccurred,  // IN
          UnityPlatformStackDnDDetWnd(up);
       }
       UnityPlatformUpdateZOrder(up);
-      UnityPlatformSendPendingUpdates(up, UNITY_UPDATE_INCREMENTAL);
+      UnityPlatformDoUpdate(up, TRUE);
    }
 
    return TRUE;
@@ -1910,44 +1875,6 @@ UnityPlatformWMProtocolSupported(UnityPlatform *up,         // IN
 
 
 /*
- *-----------------------------------------------------------------------------
- *
- * UnityPlatformDumpUpdate --
- *
- *      Prints a Unity update via debug output...
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-UnityPlatformDumpUpdate(UnityPlatform *up) // IN
-{
-   int i, len;
-   char *buf;
-
-   return;
-
-   len = up->updateData.updates.size;
-   buf = alloca(len + 1);
-   memcpy(buf, up->updateData.updates.data, len);
-   buf[len] = '\0';
-   for (i = 0 ; i < len; i++) {
-      if (buf[i] == '\0') {
-         buf[i] = '!';
-      }
-   }
-
-   Debug("Sending update: %s\n", buf);
-}
-
-
-/*
  *----------------------------------------------------------------------------
  *
  * UnityPlatformSendClientMessageFull --
@@ -2198,6 +2125,11 @@ UnityPlatformStackDnDDetWnd(UnityPlatform *up)
 {
    static const Atom onDesktop[] = { 0xFFFFFFFF, 0, 0, 0, 0 };
 
+   if (!up->dnd.setMode || !up->dnd.detWnd) {
+      Debug("%s: DnD not yet initialized.\n", __func__);
+      return;
+   }
+
    if (!up->desktopWindow) {
       Debug("Desktop Window not cached. Tracker isn't populated.\n");
       return;
@@ -2343,29 +2275,15 @@ UnityPlatformSetDesktopWorkAreas(UnityPlatform *up,     // IN
                                  UnityRect workAreas[], // IN
                                  uint32 numWorkAreas)   // IN
 {
+   int iScreens;
    int i;
    XineramaScreenInfo *screenInfo = NULL;
    int numScreens;
-   RegionPtr bigDaddyRegion;
+   RegionPtr strutsRegion;
    RegionPtr screenRegion;
    RegionPtr workAreasRegion;
-   xRectangle *screenRects;
-   xRectangle *workAreaRects;
-   uint32 rootX;
-   uint32 rootY;
-   uint32 rootWidth;
-   uint32 rootHeight;
-   uint32 dummy;
-   Window winDummy;
-   BoxRec screenSize;
    XID (*strutInfos)[12];
    int numStrutInfos;
-
-   /*
-    * XXX TODO: rework this so that we create a Region with workAreas, and then figure
-    * out what struts we need to set to get that effect... That will also deal with the
-    * other bugs this code has.
-    */
 
    if (!up->rootWindows) {
       /*
@@ -2386,23 +2304,32 @@ UnityPlatformSetDesktopWorkAreas(UnityPlatform *up,     // IN
    ASSERT(up);
    ASSERT(up->rootWindows);
 
-   if (!XGetGeometry(up->display, up->rootWindows->windows[0], &winDummy,
-                     &rootX, &rootY, &rootWidth, &rootHeight,
-                     &dummy, &dummy)) {
-      return FALSE;
-   }
-   screenSize.x1 = rootX;
-   screenSize.y1 = rootY;
-   screenSize.x2 = rootX + rootWidth;
-   screenSize.y2 = rootY + rootHeight;
-
+   /*
+    * Get the geometry of all attached screens.  If we're running multi-mon,
+    * we'll query the Xinerama extension.  Otherwise we just fall back to
+    * examining our root window's geometry.
+    */
    if (XineramaQueryExtension(up->display, &i, &i)) {
       screenInfo = XineramaQueryScreens(up->display, &numScreens);
    }
+
    if (!screenInfo) {
+      uint32 rootX;
+      uint32 rootY;
+      uint32 rootWidth;
+      uint32 rootHeight;
+      uint32 dummy;
+      Window winDummy;
+
       if (numWorkAreas > 1) {
          Debug("Xinerama extension not present, or XineramaQueryScreens failed,"
                " but multiple work areas were requested.\n");
+         return FALSE;
+      }
+
+      if (!XGetGeometry(up->display, up->rootWindows->windows[0], &winDummy,
+                        &rootX, &rootY, &rootWidth, &rootHeight,
+                        &dummy, &dummy)) {
          return FALSE;
       }
 
@@ -2415,92 +2342,170 @@ UnityPlatformSetDesktopWorkAreas(UnityPlatform *up,     // IN
       screenInfo->height = rootHeight;
    }
 
-   screenRects = alloca(numScreens * sizeof *screenRects);
-   for (i = 0; i < numScreens; i++) {
-      screenRects[i].x = screenInfo[i].x_org;
-      screenRects[i].y = screenInfo[i].y_org;
-      screenRects[i].width = screenInfo[i].width;
-      screenRects[i].height = screenInfo[i].height;
-      screenRects[i].info.type = UpdateRect;
-   }
-   screenRegion = miRectsToRegion(numScreens, screenRects, 0);
-
-   workAreaRects = alloca(numWorkAreas * sizeof *workAreaRects);
-   for (i = 0; i < numWorkAreas; i++) {
-      workAreaRects[i].x = workAreas[i].x;
-      workAreaRects[i].y = workAreas[i].y;
-      workAreaRects[i].width = workAreas[i].width;
-      workAreaRects[i].height = workAreas[i].height;
-      workAreaRects[i].info.type = UpdateRect;
-   }
-   workAreasRegion = miRectsToRegion(numWorkAreas, workAreaRects, 0);
-
-   bigDaddyRegion = miRegionCreate(NULL, 0);
-   miSubtract(bigDaddyRegion, screenRegion, workAreasRegion);
-   miRegionDestroy(workAreasRegion);
-   miRegionDestroy(screenRegion);
+   /*
+    * New and improved wild'n'crazy scheme to map the host's work area
+    * coordinates to a collection of struts.
+    *
+    * This implementation depends upon the y-x banded rectangles
+    * implementation of lib/region.
+    *
+    * In short, here's how things go:
+    *
+    *    1.  For each Xinerama screen (or the root window in case we have no
+    *        Xinerama) and host work area, a region is created.  A strut
+    *        region is then created by subtracting the work area region from
+    *        the screen region.
+    *
+    *    2.  This remaining region will contain between 0 and 4 rectangles,
+    *        each of which will be transformed into a strut window.
+    *
+    *        For each of these rectangles, we infer based on their dimensions
+    *        which screen boundary the resulting strut should be bound to.
+    *
+    *        a.  Boxes touching both the left and right sides of the screen
+    *            are either top or bottom struts, depending on whether they
+    *            also touch the top or bottom edge.
+    *
+    *        b.  Any remaining box will touch either the left OR the right
+    *            side, but not both.  (Such an irregular layout cannot be
+    *            described by the work areas RPC.)  That box's strut will
+    *            then be attached to the same side of the screen.
+    *
+    * While also not perfect, this algorithm should do a better job of creating
+    * struts along their correct sides of a screen than its predecessor.  It
+    * will let us assume the common case that what we define as a strut attached
+    * to the left or right side really should be attached to the left or right,
+    * rather than attached to the top or bottom and spanning the height of the
+    * display.
+    *
+    * Pathological case:
+    *    1.  Screen geometry: 1280x960.
+    *        Left strut: 100px wide, 600px tall.  Touches top of screen.
+    *        Right strut: 1180px wide, 100px tall.  Touches top of screen.
+    *
+    *    2.  Note that these struts touch each other.  We'd interpret the resulting
+    *        work area as follows:
+    *
+    *        Top strut: 1280px wide, 100px tall.
+    *        Left strut: 100px wide, 500px tall, starting from y = 100.
+    *
+    * I believe this sort of layout to be uncommon enough that we can accept
+    * failure here.  If we -really- want to get these things right, then
+    * we should send strut information explicitly, rather than having the
+    * guest try to deduce it from work area geometry.
+    */
 
    /*
-    * In order to deal with all the odd possibilities for workarea setups, we make a
-    * Region that includes all the space taken up by the struts, and then turn each of
-    * that region's rectangles into a separate strut. It's less efficient than packing
-    * the information into as few _NET_WM_STRUT_PARTIAL properties as possible, but it's
-    * simpler.
+    * One strut per screen edge = at most 4 strutInfos.
     */
-   strutInfos = alloca(REGION_NUM_RECTS(bigDaddyRegion) * sizeof *strutInfos);
-   memset(strutInfos, 0, REGION_NUM_RECTS(bigDaddyRegion) * sizeof *strutInfos);
+   strutInfos = alloca(4 * sizeof *strutInfos * numScreens);
+   memset(strutInfos, 0, 4 * sizeof *strutInfos * numScreens);
    numStrutInfos = 0;
-   for (i = 0; i < REGION_NUM_RECTS(bigDaddyRegion); i++) {
-      BoxPtr p = REGION_RECTS(bigDaddyRegion) + i;
-      int leftDiff;
-      int rightDiff;
-      int topDiff;
-      int bottomDiff;
+
+   for (iScreens = 0; iScreens < numScreens; iScreens++) {
+      int iRects;
+
+      xRectangle screenRect;
+      xRectangle workAreaRect;
 
       /*
-       * Because EWMH struts are currently assumed to be locked to an edge of the screen,
-       * this code hopes that finding the closest edge will work well enough.
-       *
-       * XXX This may produce results that are not 100% correct from a technical
-       * perspective, and fall apart in pathological cases, but it'll work well enough in
-       * typical usage, and is better than just ignoring multimon use cases.
+       * Steps 1a. Create screen, work area regions.
        */
-      leftDiff = p->x1 - screenSize.x1;
-      topDiff = p->y1 - screenSize.y1;
-      rightDiff = screenSize.x2 - p->x2;
-      bottomDiff = screenSize.y2 - p->y2;
+      screenRect.x = screenInfo[iScreens].x_org;
+      screenRect.y = screenInfo[iScreens].y_org;
+      screenRect.width = screenInfo[iScreens].width;
+      screenRect.height = screenInfo[iScreens].height;
+      screenRect.info.type = UpdateRect;
 
-      if (topDiff <= leftDiff && topDiff <= rightDiff && topDiff <= bottomDiff) {
+      workAreaRect.x = workAreas[iScreens].x;
+      workAreaRect.y = workAreas[iScreens].y;
+      workAreaRect.width = workAreas[iScreens].width;
+      workAreaRect.height = workAreas[iScreens].height;
+      workAreaRect.info.type = UpdateRect;
+
+      screenRegion = miRectsToRegion(1, &screenRect, 0);
+      workAreasRegion = miRectsToRegion(1, &workAreaRect, 0);
+
+      /*
+       * Step 1b.  Create struts region by subtracting work area from screen.
+       */
+      strutsRegion = miRegionCreate(NULL, 0);
+      miSubtract(strutsRegion, screenRegion, workAreasRegion);
+      miRegionDestroy(workAreasRegion);
+      miRegionDestroy(screenRegion);
+
+      /*
+       * Step 2.  Transform struts region rectangles into individual struts.
+       */
+      for (iRects = 0; iRects < REGION_NUM_RECTS(strutsRegion);
+           iRects++, numStrutInfos++) {
+         BoxPtr p = REGION_RECTS(strutsRegion) + iRects;
+         int bounds = 0;
+#define TOUCHES_LEFT          0x1
+#define TOUCHES_RIGHT         0x2
+#define TOUCHES_TOP           0x4
+#define TOUCHES_BOTTOM        0x8
+
+         if (p->x1 == screenRect.x) { bounds |= TOUCHES_LEFT; }
+         if (p->x2 == screenRect.x + screenRect.width) { bounds |= TOUCHES_RIGHT; }
+         if (p->y1 == screenRect.y) { bounds |= TOUCHES_TOP; }
+         if (p->y2 == screenRect.y + screenRect.height) { bounds |= TOUCHES_BOTTOM; }
+
          /*
-          * It's closest to the top side of the screen.
+          * strutInfos is passed directly to
+          * XSetProperty(..._NET_WM_STRUTS_PARTIAL).  I.e., look up that
+          * property's entry in NetWM/wm-spec for more info on the indices.
+          *
+          * I went the switch/case route only because it does a better job (for me)
+          * of organizing & showing -all- possible cases.  YMMV.
           */
-         strutInfos[numStrutInfos][2] = p->y2 - screenSize.y1;
-         strutInfos[numStrutInfos][8] = p->x1;
-         strutInfos[numStrutInfos][9] = p->x2;
-      } else if (bottomDiff <= leftDiff && bottomDiff <= rightDiff && bottomDiff <= topDiff) {
-         /*
-          * It's closest to the bottom side.
-          */
-         strutInfos[numStrutInfos][3] = screenSize.y2 - p->y1;
-         strutInfos[numStrutInfos][10] = p->x1;
-         strutInfos[numStrutInfos][11] = p->x2;
-      } else if (leftDiff <= rightDiff && leftDiff <= topDiff && leftDiff <= bottomDiff) {
-         /*
-          * It's closest to the left side.
-          */
-         strutInfos[numStrutInfos][0] = p->x2 - screenSize.x1;
-         strutInfos[numStrutInfos][4] = p->y1;
-         strutInfos[numStrutInfos][5] = p->y2;
-      } else {
-         /*
-          * Assume it's along the right hand side.
-          */
-         strutInfos[numStrutInfos][1] = screenSize.x2 - p->x1;
-         strutInfos[numStrutInfos][6] = p->y1;
-         strutInfos[numStrutInfos][7] = p->y2;
+         switch (bounds) {
+         case TOUCHES_LEFT | TOUCHES_RIGHT | TOUCHES_TOP:
+            /* Top strut. */
+            strutInfos[numStrutInfos][2] = p->y2 - p->y1;
+            strutInfos[numStrutInfos][8] = p->x1;
+            strutInfos[numStrutInfos][9] = p->x2;
+            break;
+         case TOUCHES_LEFT | TOUCHES_RIGHT | TOUCHES_BOTTOM:
+            /* Bottom strut. */
+            strutInfos[numStrutInfos][3] = p->y2 - p->y1;
+            strutInfos[numStrutInfos][10] = p->x1;
+            strutInfos[numStrutInfos][11] = p->x2;
+            break;
+         case TOUCHES_LEFT:
+         case TOUCHES_LEFT | TOUCHES_TOP:
+         case TOUCHES_LEFT | TOUCHES_BOTTOM:
+         case TOUCHES_LEFT | TOUCHES_TOP | TOUCHES_BOTTOM:
+            /* Left strut. */
+            strutInfos[numStrutInfos][0] = p->x2 - p->x1;
+            strutInfos[numStrutInfos][4] = p->y1;
+            strutInfos[numStrutInfos][5] = p->y2;
+            break;
+         case TOUCHES_RIGHT:
+         case TOUCHES_RIGHT | TOUCHES_TOP:
+         case TOUCHES_RIGHT | TOUCHES_BOTTOM:
+         case TOUCHES_RIGHT | TOUCHES_TOP | TOUCHES_BOTTOM:
+            /* Right strut. */
+            strutInfos[numStrutInfos][1] = p->x2 - p->x1;
+            strutInfos[numStrutInfos][6] = p->y1;
+            strutInfos[numStrutInfos][7] = p->y2;
+            break;
+         case TOUCHES_LEFT | TOUCHES_RIGHT | TOUCHES_TOP | TOUCHES_BOTTOM:
+            Warning("%s: Struts occupy entire display.", __func__);
+            /* FALLTHROUGH */
+         default:
+            Warning("%s: Irregular strut configuration: bounds %4x\n", __func__, bounds);
+            miRegionDestroy(strutsRegion);
+            goto out;
+            break;
+         }
       }
+#undef TOUCHES_LEFT
+#undef TOUCHES_RIGHT
+#undef TOUCHES_TOP
+#undef TOUCHES_BOTTOM
 
-      numStrutInfos++;
+      miRegionDestroy(strutsRegion);
    }
 
    /*
@@ -2564,6 +2569,7 @@ UnityPlatformSetDesktopWorkAreas(UnityPlatform *up,     // IN
                       32, PropModeReplace, (unsigned char *)strutInfos[i], ARRAYSIZE(strutInfos[i]));
    }
 
+out:
    free(screenInfo);
 
    return TRUE;
@@ -2855,7 +2861,7 @@ UnityPlatformSetDesktopConfig(UnityPlatform *up,                             // 
     */
    i = 0;
    memset(guestDesktopLayout, 0xFF, sizeof guestDesktopLayout); // Set all entries to -1
-   if (up->desktopInfo.layoutData[0] == _NET_WM_ORIENTATION_VERT) {
+   if (up->desktopInfo.layoutData[0] == _NET_WM_ORIENTATION_HORZ) {
       for (y = 0; y <= desktopSpread.y; y++) {
          for (x = 0; x <= desktopSpread.x; x++) {
             if (unityDesktopLayout[x][y] >= 0) {
@@ -2969,3 +2975,102 @@ UnityPlatformSetDesktopActive(UnityPlatform *up,         // IN
 
    return TRUE;
 }
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UnityPlatformDoUpdate --
+ *
+ *      This function is used to (possibly asynchronously) collect Unity window
+ *      updates and send them to the host via the RPCI update channel.
+ *
+ * Results:
+ *      Updates will be collected.  Updates may be sent.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+UnityPlatformDoUpdate(UnityPlatform *up,        // IN:
+                      Bool incremental)         // IN: Incremental vs. full update
+{
+   ASSERT(up);
+   ASSERT(up->updateChannel);
+
+   DynBuf_SetSize(&up->updateChannel->updates, up->updateChannel->cmdSize);
+
+   if (!incremental) {
+      UnityPlatformUpdateWindowState(up, up->tracker);
+   }
+
+   UnityWindowTracker_RequestUpdates(up->tracker,
+                                     incremental ? UNITY_UPDATE_INCREMENTAL : 0,
+                                     &up->updateChannel->updates);
+
+   DynBuf_AppendString(&up->updateChannel->updates, "");
+
+   if (DynBuf_GetSize(&up->updateChannel->updates) > (up->updateChannel->cmdSize + 1)) {
+      if (!UnitySendUpdates(up->updateChannel)) {
+         Debug("UPDATE TRANSMISSION FAILED! --------------------\n");
+      }
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * Unity_UnityToLocalPoint --
+ *
+ *      Initializes localPt structure based on the input unityPt structure.
+ *      Translate point from Unity coordinate to local coordinate.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *----------------------------------------------------------------------------
+ */
+
+void
+Unity_UnityToLocalPoint(UnityPoint *localPt, // IN/OUT
+                        UnityPoint *unityPt) // IN
+{
+   ASSERT(localPt);
+   ASSERT(unityPt);
+   localPt->x = unityPt->x;
+   localPt->y = unityPt->y;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * Unity_LocalToUnityPoint --
+ *
+ *      Initializes unityPt structure based on the input localPt structure.
+ *      Translate point from local coordinate to Unity coordinate.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *----------------------------------------------------------------------------
+ */
+
+void
+Unity_LocalToUnityPoint(UnityPoint *unityPt, // IN/OUT
+                        UnityPoint *localPt) // IN
+{
+   ASSERT(unityPt);
+   ASSERT(localPt);
+   unityPt->x = localPt->x;
+   unityPt->y = localPt->y;
+}
+

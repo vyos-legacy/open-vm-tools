@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 
 /*
  * hgfsProto.h --
@@ -120,6 +134,54 @@ typedef enum {
 #define HGFS_REQ_GET_PAYLOAD_V3(hgfsReq) ((char *)(hgfsReq) + sizeof(HgfsRequest))
 #define HGFS_REP_GET_PAYLOAD_V3(hgfsRep) ((char *)(hgfsRep) + sizeof(HgfsReply))
 
+/* Some fudged values for TCP over sockets. */
+#define HGFS_HOST_PORT 2000
+
+/* Socket packet magic. */
+#define HGFS_SOCKET_VERSION1   1
+
+/*
+ * Socket status codes.
+ */
+
+typedef enum {
+   HGFS_SOCKET_STATUS_SUCCESS,                  /* Socket header is good. */
+   HGFS_SOCKET_STATUS_SIZE_MISMATCH,            /* Size and version are incompatible. */
+   HGFS_SOCKET_STATUS_VERSION_NOT_SUPPORTED,    /* Version not handled by remote. */
+   HGFS_SOCKET_STATUS_INVALID_PACKETLEN,        /* Message len exceeds maximum. */
+} HgfsSocketStatus;
+
+/*
+ * Socket flags.
+ */
+
+typedef uint32 HgfsSocketFlags;
+
+/* Used by backdoor proxy socket client to Hgfs server (out of VMX process). */
+#define HGFS_SOCKET_SYNC         (1 << 0)
+
+/* Socket packet header. */
+typedef
+#include "vmware_pack_begin.h"
+struct HgfsSocketHeader {
+   uint32 version;            /* Header version. */
+   uint32 size;               /* Header size, should match for the specified version. */
+   HgfsSocketStatus status;   /* Status: always success when sending (ignored) valid on replies. */
+   uint32 packetLen;          /* The length of the packet to follow. */
+   HgfsSocketFlags flags;     /* The flags to indicate how to deal with the packet. */
+}
+#include "vmware_pack_end.h"
+HgfsSocketHeader;
+
+#define HgfsSocketHeaderInit(hdr, _version, _size, _status, _pktLen, _flags) \
+   do {                                                                      \
+      (hdr)->version    = (_version);                                        \
+      (hdr)->size       = (_size);                                           \
+      (hdr)->status     = (_status);                                         \
+      (hdr)->packetLen  = (_pktLen);                                         \
+      (hdr)->flags      = (_flags);                                          \
+   } while (0)
+
 
 /*
  * File types, used in HgfsAttr. We support regular files,
@@ -178,6 +240,55 @@ typedef uint8 HgfsPermissions;
 #define HGFS_PERM_WRITE 2
 #define HGFS_PERM_EXEC  1
 
+/*
+ * Access mode bits.
+ *
+ * Different operating systems have different set of file access mode.
+ * Here are constants that are rich enough to describe all access modes in an OS
+ * independent way.
+ */
+
+typedef uint32 HgfsAccessMode;
+/*
+ * Generic access rights control coarse grain access for the file.
+ * A particular generic rigth can be expanded into different set of specific rights
+ * on different OS.
+ */
+
+/*
+ * HGFS_MODE_GENERIC_READ means ability to read file data and read various file
+ * attributes and properties.
+ */
+#define HGFS_MODE_GENERIC_READ        (1 << 0)
+/*
+ * HGFS_MODE_GENERIC_WRITE means ability to write file data and updaate various file
+ * attributes and properties.
+ */
+#define HGFS_MODE_GENERIC_WRITE       (1 << 1)
+/*
+ * HGFS_MODE_GENERIC_EXECUE means ability to execute file. For network redirectors
+ * ability to execute usualy implies ability to read data; for local file systems
+ * HGFS_MODE_GENERIC_EXECUTE does not imply ability to read data.
+ */
+#define HGFS_MODE_GENERIC_EXECUTE     (1 << 2)
+
+/* Specific rights define fine grain access modes. */
+#define HGFS_MODE_READ_DATA           (1 << 3)  // Ability to read file data
+#define HGFS_MODE_WRITE_DATA          (1 << 4)  // Ability to writge file data
+#define HGFS_MODE_APPEND_DATA         (1 << 5)  // Appending data to the end of file
+#define HGFS_MODE_DELETE              (1 << 6)  // Ability to delete the file
+#define HGFS_MODE_TRAVERSE_DIRECTORY  (1 << 7)  // Ability to access files in a directory 
+#define HGFS_MODE_LIST_DIRECTORY      (1 << 8)  // Ability to list file names
+#define HGFS_MODE_ADD_SUBDIRECTORY    (1 << 9)  // Ability to create a new subdirectory
+#define HGFS_MODE_ADD_FILE            (1 << 10) // Ability to create a new file
+#define HGFS_MODE_DELETE_CHILD        (1 << 11) // Ability to delete file/subdirectory
+#define HGFS_MODE_READ_ATTRIBUTES     (1 << 12) // Ability to read attributes
+#define HGFS_MODE_WRITE_ATTRIBUTES    (1 << 13) // Ability to write attributes
+#define HGFS_MODE_READ_EXTATTRIBUTES  (1 << 14) // Ability to read extended attributes
+#define HGFS_MODE_WRITE_EXTATTRIBUTES (1 << 15) // Ability to write extended attributes
+#define HGFS_MODE_READ_SECURITY       (1 << 16) // Ability to read permissions/ACLs/owner
+#define HGFS_MODE_WRITE_SECURITY      (1 << 17) // Ability to change permissions/ACLs
+#define HGFS_MODE_TAKE_OWNERSHIP      (1 << 18) // Ability to change file owner/group
 
 /*
  * Server-side locking (oplocks and leases).
@@ -356,6 +467,15 @@ typedef uint64 HgfsAttrValid;
  *       only to determine if the ID is valid.
  */
 #define HGFS_ATTR_VALID_NON_STATIC_FILEID (1 << 16)
+/*
+ * File permissions that are in effect for the user which runs HGFS server.
+ * Client needs to know effective permissions in order to implement access(2).
+ * Client can't derive it from group/owner/other permissions because of two resaons:
+ * 1. It does not know user/group id of the user which runs HGFS server
+ * 2. Effective permissions account for additional restrictions that may be imposed
+ *    by host file system, for example by ACL.
+ */
+#define HGFS_ATTR_VALID_EFFECTIVE_PERMS   (1 << 17)
 
 
 /*
@@ -371,6 +491,7 @@ typedef uint64 HgfsCreateDirValid;
 #define HGFS_CREATE_DIR_VALID_GROUP_PERMS       (1 << 2)
 #define HGFS_CREATE_DIR_VALID_OTHER_PERMS       (1 << 3)
 #define HGFS_CREATE_DIR_VALID_FILE_NAME         (1 << 4)
+#define HGFS_CREATE_DIR_VALID_FILE_ATTR         (1 << 5)
 
 /*
  *  Version 2 of HgfsAttr
@@ -400,7 +521,7 @@ struct HgfsAttrV2 {
    uint32 groupId;               /* group identifier, ignored by Windows */
    uint64 hostFileId;            /* File Id of the file on host: inode_t on Linux */
    uint32 volumeId;              /* volume identifier, non-zero is valid. */
-   uint32 reserved1;             /* Reserved for future use */
+   uint32 effectivePerms;        /* Permissions in effect for the user on the host. */
    uint64 reserved2;             /* Reserved for future use */
 }
 #include "vmware_pack_end.h"
@@ -1184,7 +1305,7 @@ struct HgfsRequestCreateDirV3 {
    HgfsPermissions ownerPerms;
    HgfsPermissions groupPerms;
    HgfsPermissions otherPerms;
-   uint64 reserved;              /* Reserved for future use */
+   HgfsAttrFlags fileAttr;
    HgfsFileNameV3 fileName;
 }
 #include "vmware_pack_end.h"

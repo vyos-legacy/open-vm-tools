@@ -38,9 +38,6 @@ extern "C" {
 #   include "vm_basic_types.h"
 #   include "removable_device.h"
 
-//#define ALLOW_TOOLS_IN_FOREIGN_VM 0
-extern Bool runningInForeignVM;
-
 typedef struct GuestApp_Dict GuestApp_Dict;
 
 uint32
@@ -95,6 +92,9 @@ GuestApp_LoadDict(GuestApp_Dict *dict); // IN
 Bool
 GuestApp_WriteDict(GuestApp_Dict *dict); // IN
 
+const char *
+GuestApp_GetDefaultScript(const char *confName); // IN
+
 Bool
 GuestApp_GetUnifiedLoopCap(const char *channel); // IN
 
@@ -112,9 +112,6 @@ GuestApp_GetConfPath(void);
 
 char *
 GuestApp_GetLogPath(void);
-
-char *
-GuestApp_GetCmdOutput(const char *cmd); // IN
 
 Bool
 GuestApp_IsHgfsCapable(void);
@@ -174,6 +171,14 @@ GuestApp_RpcSendOneCPName(char const *cmd, // IN: RPCI command
                           size_t argSize); // IN: size of arg
 
 Bool GuestApp_OpenUrl(const char *url, Bool maximize);
+
+typedef enum {
+   GUESTAPP_ABSMOUSE_UNAVAILABLE,
+   GUESTAPP_ABSMOUSE_AVAILABLE,
+   GUESTAPP_ABSMOUSE_UNKNOWN
+} GuestAppAbsoluteMouseState;
+
+GuestAppAbsoluteMouseState GuestApp_GetAbsoluteMouseState(void);
 
 #if defined(_WIN32)
 void GuestApp_SetDictEntryW(GuestApp_Dict *dict,

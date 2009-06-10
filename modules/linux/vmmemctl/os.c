@@ -417,7 +417,9 @@ static int os_timer_thread_loop(void *data)
    /* main loop */
    while (1) {
       /* sleep for specified period */
-      wait_event_interruptible_timeout(t->delay, compat_kthread_should_stop(),
+      wait_event_interruptible_timeout(t->delay,
+                                       compat_wait_check_freezing() ||
+                                       compat_kthread_should_stop(),
                                        t->period);
       compat_try_to_freeze();
       if (compat_kthread_should_stop()) {
@@ -652,3 +654,10 @@ MODULE_AUTHOR("VMware, Inc.");
 MODULE_DESCRIPTION("VMware Memory Control Driver");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(VMMEMCTL_DRIVER_VERSION_STRING);
+/*
+ * Starting with SLE10sp2, Novell requires that IHVs sign a support agreement
+ * with them and mark their kernel modules as externally supported via a
+ * change to the module header. If this isn't done, the module will not load
+ * by default (i.e., neither mkinitrd nor modprobe will accept it).
+ */
+MODULE_INFO(supported, "external");

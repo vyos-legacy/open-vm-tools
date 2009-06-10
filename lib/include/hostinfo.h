@@ -54,13 +54,20 @@ extern Bool Hostinfo_GetCOSMemoryInfoInPages(unsigned int *minSize,
 #endif
 extern Bool Hostinfo_GetRatedCpuMhz(int32 cpuNumber,
                                     uint32 *mHz);
-extern char* Hostinfo_GetCpuDescription(uint32 cpuNumber);
+extern char *Hostinfo_GetCpuDescription(uint32 cpuNumber);
 extern void Hostinfo_GetTimeOfDay(VmTimeType *time);
 extern VmTimeType Hostinfo_SystemUpTime(void);
 extern VmTimeType Hostinfo_RawSystemTimerUS(void);
 extern VmTimeType Hostinfo_SystemTimerUS(void);
 extern int Hostinfo_OSVersion(int i);
+extern int Hostinfo_GetSystemBitness(void);
 extern const char *Hostinfo_OSVersionString(void);
+
+extern Bool Hostinfo_GetOSName(uint32 outBufFullLen,
+                               uint32 outBufLen,
+                               char *osNameFull,
+                               char *osName);
+
 extern Bool Hostinfo_OSIsSMP(void);
 #if defined(_WIN32)
 extern Bool Hostinfo_OSIsWinNT(void);
@@ -78,6 +85,18 @@ extern Unicode Hostinfo_GetModulePath(uint32 priv);
 extern void Hostinfo_ResetProcessState(const int *keepFds, size_t numKeepFds);
 extern int Hostinfo_Execute(const char *command, char * const *args,
 			    Bool wait);
+typedef enum HostinfoDaemonizeFlags {
+   HOSTINFO_DAEMONIZE_DEFAULT = 0,
+   HOSTINFO_DAEMONIZE_NOCHDIR = (1 << 0),
+   HOSTINFO_DAEMONIZE_NOCLOSE = (1 << 1),
+   HOSTINFO_DAEMONIZE_EXIT    = (1 << 2),
+} HostinfoDaemonizeFlags;
+extern Bool Hostinfo_Daemonize(const char *path,
+                               char * const *args,
+                               HostinfoDaemonizeFlags flags,
+                               const char *pidPath,
+                               const int *openFds,
+                               size_t numFds);
 #endif
 
 extern Unicode Hostinfo_GetUser(void);
@@ -116,6 +135,46 @@ extern Bool Hostinfo_HTDisabled(void);
 #endif
 
 #if defined(_WIN32)
+typedef enum {
+   OS_WIN95                  = 1,
+   OS_WIN98                  = 2,
+   OS_WINME                  = 3,
+   OS_WINNT                  = 4,
+   OS_WIN2K                  = 5,
+   OS_WINXP                  = 6,
+   OS_WIN2K3                 = 7,
+   OS_VISTA                  = 8,
+   OS_WINSEVEN               = 9,    // Windows 7
+   OS_UNKNOWN                = 99999 // last, highest value
+} OS_TYPE;
+
+typedef enum {
+   OS_DETAIL_WIN95           = 1,
+   OS_DETAIL_WIN98           = 2,
+   OS_DETAIL_WINME           = 3,
+   OS_DETAIL_WINNT           = 4,
+   OS_DETAIL_WIN2K           = 5,
+   OS_DETAIL_WIN2K_PRO       = 6,
+   OS_DETAIL_WIN2K_SERV      = 7,
+   OS_DETAIL_WIN2K_ADV_SERV  = 8,
+   OS_DETAIL_WINXP           = 9,
+   OS_DETAIL_WINXP_HOME      = 10,
+   OS_DETAIL_WINXP_PRO       = 11,
+   OS_DETAIL_WINXP_X64_PRO   = 12,
+   OS_DETAIL_WIN2K3          = 13,
+   OS_DETAIL_WIN2K3_WEB      = 14,
+   OS_DETAIL_WIN2K3_ST       = 15,
+   OS_DETAIL_WIN2K3_EN       = 16,
+   OS_DETAIL_WIN2K3_BUS      = 17,
+   OS_DETAIL_VISTA           = 18,
+   OS_DETAIL_WINSEVEN        = 19,    // Windows 7
+   OS_DETAIL_UNKNOWN         = 99999  // last, highest value
+} OS_DETAIL_TYPE;
+
+/* generic names (to protect the future) but Windows specific for now */
+OS_TYPE Hostinfo_GetOSType(void);
+OS_DETAIL_TYPE Hostinfo_GetOSDetailType(void);
+
 Bool Hostinfo_GetPCFrequency(uint64 *pcHz);
 Bool Hostinfo_GetMhzOfProcessor(int32 processorNumber, 
 				uint32 *currentMhz, uint32 *maxMhz);

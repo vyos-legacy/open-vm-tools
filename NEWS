@@ -1,3 +1,113 @@
+open-vm-tools 2009.05.22 changes:
+	* Mostly a cleanup and bug fix release.
+
+	* Fix a build issue where a symlink attack could cause the open-vm-tools
+	build to overwrite data (by placing a symlink in /tmp).
+
+	* Second (and last?) batch of changes to clean up duplicate files
+	in the source tree, including Solaris and FreeBSD kernel modules and
+	other module-specific shared files.
+
+	* Plugins now are properly built using plugins_LTLIBRARIES so that
+	"-rpath" doesn't need to be used (this would cause an RPATH entry to
+	be added to the final binary, which some tools didn't like). Thanks to
+	Dominique Leuenberger for the suggestion.
+
+	* open-vm-tools now properly detects PAM and enables PAM support in the
+	code.
+
+open-vm-tools 2009.04.23 changes:
+	* Implemented copy & paste support for RTF data and file contents.
+
+	* guestd has been removed from open-vm-tools; vmtoolsd is now the only
+	option for the main tools service.
+
+	* Added vmblock and vmmemctl modules for Solaris (under the CDDL).
+
+	* vmware-user can now work with both vmblock-fuse and vmblock.
+
+	* Linux HGFS now has a stream-based (TCP, vsock) transport, still under
+	development.
+
+	* First batch of changes to cleanup duplicated files in the source tree.
+	Most duplicated files in the Linux kernel modules have been cleaned up.
+
+open-vm-tools 2009.03.18 changes:
+	* Mostly a bug fix release.
+
+	* Solaris vmxnet3 driver was added; open-vm-tools now should also compile on
+	OpenSolaris (tested on 08.11), as long as the --without-gtkmm option is used.
+
+	* The new DnD V3 protocol is now available in open-vm-tools.
+
+	* Added "rpctool", a simple, stand-alone tool to send RPC commands to the
+	host software.
+
+	* vmtoolsd is now preferred in lieu of vmware-guestd; vmware-guestd will
+	most probably be completely removed in the next release.
+
+open-vm-tools 2009.02.18 changes:
+	* open-vm-tools now depend on glib 2.6.0 as a minimum requirement.
+
+	* Added vmxnet module for Solaris, and reworked the HGFS module so it
+	works without help from vmware-guestd.
+
+	* Added implementation of new DnD protocol, which adds a dependency on
+	a C++ compiler and the gtkmm library to vmware-user.
+
+	* The code from the "core services" has been added to open-vm-tools,
+	including a few tests. vmtoolsd + plugins are now capable of replacing
+	vmware-guestd (vmware-user still needs to have some features ported
+	over), but this code is still not to be considered as stable as the
+	legacy services, so vmware-guestd is still included.
+
+	* A few fixes for compatibility with non-GNU toolchains, newer Linux
+	kernels and old gcc compilers.
+
+open-vm-tools 2009.01.21 changes:
+	* First open source release of the HGFS module for Solaris, under the CDDL.
+	Other modules are expected to be added in the upcoming releases.
+
+	* Added an implementation of vmblock on top of FUSE; vmware-user still
+	doesn't use this module even if it is available, though.
+
+	* Linux modules now add the "supported" tag used by Novell in their
+	SLES 10 SP2 release when loading modules.
+
+	* Fix compilation of modules in newer Linux kernels which don't include
+	$(LINUXINCLUDE) in the compiler flags anymore.
+
+open-vm-tools 2008.12.23 changes:
+	* Lots of makefile cleanup with the switch to using libtool archives.
+
+	* Automatically disable Unity if multimon support is disabled.
+
+	* Actually build the pvscsi modules.
+
+	* First bits of the "Core Service" project are starting to show up; the
+	base "vmtools" library was added to the package. It currently is mostly
+	a collection of the existing libraries already shipped with open-vm-tools,
+	plus some extra functionality build on top of glib. Currently no other
+	code in open-vm-tools uses it, so it's optional.
+
+	* The HGFS driver was fixed for the Linux 2.6.28 kernel.
+
+open-vm-tools 2009.11.18 changes:
+	* The pvscsi Linux kernel module has been added (for kernels >= 2.6.8).
+	It provides access to VMware's new paravirtualized SCSI device.
+
+	* The HGFS driver and user-level code has seen a lot of refactoring to
+	enable more consistent name escaping. The FreeBSD driver now supports
+	symlinks.
+
+	* The Linux module makefiles now support exporting symbol version files,
+	allowing modules with dependencies (such as vsock, which depends on vmci)
+	to correctly build and load on Linux >= 2.6.26 with CONFIG_MODVERSIONS.
+
+	* Rudimentary support for dkms.
+
+	* Assortment of bug fixes.
+
 open-vm-tools 2009.10.13 changes:
 	* The vmxnet3 Linux kernel module has been added. This module provides
 	better network performance for the guest. The corresponding virtual

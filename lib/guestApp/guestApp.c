@@ -39,6 +39,7 @@ extern "C" {
 #include "hgfs.h"
 #include "backdoor.h"
 #include "backdoor_def.h"
+#include "conf.h"
 #include "rpcout.h"
 #include "debug.h"
 #include "strutil.h"
@@ -46,8 +47,6 @@ extern "C" {
 #include "dictll.h"
 #include "msg.h"
 #include "file.h"
-#include "dynbuf.h"
-#include "vmstdio.h"
 #include "codeset.h"
 #include "productState.h"
 #include "posix.h"
@@ -104,8 +103,6 @@ struct GuestApp_Dict {
 typedef HRESULT (WINAPI *PSHGETFOLDERPATH)(HWND, int, HANDLE, DWORD, LPWSTR);
 static PSHGETFOLDERPATH pfnSHGetFolderPath = NULL;
 #endif
-
-Bool runningInForeignVM = FALSE;
 
 
 /*
@@ -539,15 +536,11 @@ GuestApp_OldGetOptions(void)
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0);
-   } else {
-      Debug("Retrieving tools options (old)\n");
+   Debug("Retrieving tools options (old)\n");
 
-      bp.in.cx.halfs.low = BDOOR_CMD_GETGUIOPTIONS;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETGUIOPTIONS;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 
@@ -572,13 +565,11 @@ GuestApp_OldSetOptions(uint32 options) // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      Debug("Setting tools options (old)\n");
+   Debug("Setting tools options (old)\n");
 
-      bp.in.cx.halfs.low = BDOOR_CMD_SETGUIOPTIONS;
-      bp.in.size = options;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETGUIOPTIONS;
+   bp.in.size = options;
+   Backdoor(&bp);
 }
 
 
@@ -847,6 +838,40 @@ GuestApp_WriteDict(GuestApp_Dict *dict)  // IN/OUT
 
    return retVal;
 }
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * GuestApp_GetDefaultScript --
+ *
+ *    Returns the default power script for the given configuration option.
+ *
+ * Results:
+ *    Script name on success, NULL of the option is not recognized.
+ *
+ * Side effects:
+ *    None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+const char *
+GuestApp_GetDefaultScript(const char *confName) // IN
+{
+   const char *value = NULL;
+   if (strcmp(confName, CONFNAME_SUSPENDSCRIPT) == 0) {
+      value = CONFVAL_SUSPENDSCRIPT_DEFAULT;
+   } else if (strcmp(confName, CONFNAME_RESUMESCRIPT) == 0) {
+      value = CONFVAL_RESUMESCRIPT_DEFAULT;
+   } else if (strcmp(confName, CONFNAME_POWEROFFSCRIPT) == 0) {
+      value = CONFVAL_POWEROFFSCRIPT_DEFAULT;
+   } else if (strcmp(confName, CONFNAME_POWERONSCRIPT) == 0) {
+      value = CONFVAL_POWERONSCRIPT_DEFAULT;
+   }
+   return value;
+}
+
 
 /*
  *----------------------------------------------------------------------
@@ -1121,86 +1146,6 @@ GuestApp_GetLogPath(void)
 /*
  *----------------------------------------------------------------------
  *
- * GuestApp_GetCmdOutput --
- *
- *      Run a cmd & get its cmd line output
- *
- * Results:
- *      An allocated string or NULL if an error occurred.
- *
- * Side effects:
- *	The cmd is run.
- *
- *----------------------------------------------------------------------
- */
-
-char *
-GuestApp_GetCmdOutput(const char *cmd) // IN
-{
-#ifdef N_PLAT_NLM
-   Debug("Trying to execute command \"%s\" and catch its output... No way on NetWare...\n", cmd);
-   return NULL;
-#else
-   DynBuf db;
-   FILE *stream;
-   char *out = NULL;
-
-   DynBuf_Init(&db);
-
-   stream = Posix_Popen(cmd, "r");
-   if (stream == NULL) {
-      Debug("Unable to get output of command \"%s\"\n", cmd);
-
-      return NULL;
-   }
-
-   for (;;) {
-      char *line = NULL;
-      size_t size;
-
-      switch (StdIO_ReadNextLine(stream, &line, 0, &size)) {
-      case StdIO_Error:
-         goto close;
-         break;
-
-      case StdIO_EOF:
-         break;
-
-      case StdIO_Success:
-         break;
-
-      default:
-         ASSERT_NOT_IMPLEMENTED(FALSE);
-      }
-
-      if (line == NULL) {
-         break;
-      }
-
-      DynBuf_Append(&db, line, size);
-      free(line);
-   }
-
-   if (DynBuf_Get(&db)) {
-      out = (char *)DynBuf_AllocGet(&db);
-   }
- close:
-   DynBuf_Destroy(&db);
-
-#ifndef _WIN32
-   pclose(stream);
-#else
-   _pclose(stream);
-#endif
-
-   return out;
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
  * GuestApp_IsHgfsCapable --
  *
  *      Is the host capable of handling hgfs requests?
@@ -1219,6 +1164,40 @@ Bool
 GuestApp_IsHgfsCapable(void)
 {
    return RpcOut_sendOne(NULL, NULL, HGFS_SYNC_REQREP_CLIENT_CMD);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * GuestApp_IsMouseAbsolute
+ *
+ *    Are the host/guest capable of using absolute mouse mode?
+ *
+ * Results:
+ *    TRUE if host is in absolute mouse mode, FALSE otherwise.
+ *
+ * Side effects:
+ *    Issues Tools RPC.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+GuestAppAbsoluteMouseState
+GuestApp_GetAbsoluteMouseState(void)
+{
+   Backdoor_proto bp;
+   GuestAppAbsoluteMouseState state = GUESTAPP_ABSMOUSE_UNKNOWN;
+
+   bp.in.cx.halfs.low = BDOOR_CMD_ISMOUSEABSOLUTE;
+   Backdoor(&bp);
+   if (bp.out.ax.word == 0) {
+      state = GUESTAPP_ABSMOUSE_UNAVAILABLE;
+   } else if (bp.out.ax.word == 1) {
+      state = GUESTAPP_ABSMOUSE_AVAILABLE;
+   }
+
+   return state;
 }
 
 
@@ -1324,15 +1303,10 @@ GuestApp_GetPos(int16 *x, // OUT
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      *x = 0;
-      *y = 0;
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETPTRLOCATION;
-      Backdoor(&bp);
-      *x = bp.out.ax.word >> 16;
-      *y = bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETPTRLOCATION;
+   Backdoor(&bp);
+   *x = bp.out.ax.word >> 16;
+   *y = bp.out.ax.word;
 }
 
 
@@ -1359,11 +1333,9 @@ GuestApp_SetPos(uint16 x, // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      bp.in.cx.halfs.low = BDOOR_CMD_SETPTRLOCATION;
-      bp.in.size = (x << 16) | y;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETPTRLOCATION;
+   bp.in.size = (x << 16) | y;
+   Backdoor(&bp);
 }
 
 
@@ -1400,13 +1372,9 @@ GuestApp_GetHostSelectionLen(void)
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0);
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETSELLENGTH;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETSELLENGTH;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 
@@ -1431,13 +1399,9 @@ GuestAppGetNextPiece(void)
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0); 
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETNEXTPIECE;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETNEXTPIECE;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 
@@ -1495,11 +1459,9 @@ GuestApp_SetSelLength(uint32 length) // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      bp.in.cx.halfs.low = BDOOR_CMD_SETSELLENGTH;
-      bp.in.size = length;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETSELLENGTH;
+   bp.in.size = length;
+   Backdoor(&bp);
 }
 
 
@@ -1524,11 +1486,9 @@ GuestApp_SetNextPiece(uint32 data) // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      bp.in.cx.halfs.low = BDOOR_CMD_SETNEXTPIECE;
-      bp.in.size = data;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETNEXTPIECE;
+   bp.in.size = data;
+   Backdoor(&bp);
 }
 
 
@@ -1555,14 +1515,10 @@ GuestApp_SetDeviceState(uint16 id,      // IN: Device ID
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(TRUE);
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_TOGGLEDEVICE;
-      bp.in.size = (connected ? 0x80000000 : 0) | id;
-      Backdoor(&bp);
-      return bp.out.ax.word ? TRUE : FALSE;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_TOGGLEDEVICE;
+   bp.in.size = (connected ? 0x80000000 : 0) | id;
+   Backdoor(&bp);
+   return bp.out.ax.word ? TRUE : FALSE;
 }
 
 
@@ -1597,19 +1553,14 @@ GuestAppGetDeviceListElement(uint16 id,     // IN : Device ID
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      *data = 0;
-      return TRUE;
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETDEVICELISTELEMENT;
-      bp.in.size = (id << 16) | offset;
-      Backdoor(&bp);
-      if (bp.out.ax.word == FALSE) {
-         return FALSE;
-      }
-      *data = bp.out.bx.word;
-      return TRUE;
+   bp.in.cx.halfs.low = BDOOR_CMD_GETDEVICELISTELEMENT;
+   bp.in.size = (id << 16) | offset;
+   Backdoor(&bp);
+   if (bp.out.ax.word == FALSE) {
+      return FALSE;
    }
+   *data = bp.out.bx.word;
+   return TRUE;
 }
 
 
@@ -1686,14 +1637,10 @@ GuestApp_HostCopyStep(uint8 c) // IN
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0);
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_HOSTCOPY;
-      bp.in.size = c;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_HOSTCOPY;
+   bp.in.size = c;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 

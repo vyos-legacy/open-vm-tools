@@ -323,9 +323,13 @@ int     FileIO_Sync(const FileIODescriptor *file);
 
 int64   FileIO_GetSize(const FileIODescriptor *fd);
 
+int64   FileIO_GetAllocSize(const FileIODescriptor *fd);
+
+Bool    FileIO_SetAllocSize(const FileIODescriptor *fd, uint64 size);
+
 int64   FileIO_GetSizeByPath(ConstUnicode pathName);
 
-int     FileIO_Close(FileIODescriptor *file);
+Bool    FileIO_Close(FileIODescriptor *file);
 
 uint32  FileIO_GetFlags(FileIODescriptor *file);
 
@@ -334,6 +338,8 @@ Bool    FileIO_GetVolumeSectorSize(const char *name,
 
 Bool    FileIO_SupportsFileSize(const FileIODescriptor *file,
                                 uint64 testSize);
+
+int64   FileIO_GetModTime(const FileIODescriptor *fd);
 
 FileIOResult FileIO_Lock(FileIODescriptor *file,  // IN/OUT
                          int access);             // IN
@@ -368,7 +374,8 @@ int FileIO_PrivilegedPosixOpen(ConstUnicode pathName,
                                int flags);
 #endif
 
-FILE *FileIO_DescriptorToStream(FileIODescriptor *fd);
+FILE *FileIO_DescriptorToStream(FileIODescriptor *fd,
+                                Bool textMode);
 
 ConstUnicode FileIO_Filename(FileIODescriptor *fd);
 

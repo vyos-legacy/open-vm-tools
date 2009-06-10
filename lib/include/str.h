@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * str.h --
  *
@@ -37,7 +51,7 @@
 #elif __APPLE__
 #include <stdlib.h>
 #endif
-#include <stdarg.h>
+#include "compat/compat_stdarg.h" // Provides stdarg.h plus va_copy
 
 #include "vm_basic_types.h"
 
@@ -79,6 +93,7 @@ EXTERN int Str_Snprintf(char *buf, size_t len,
 			const char *fmt, ...) PRINTF_DECL(3, 4);
 EXTERN int Str_Vsnprintf(char *buf, size_t len,
 			 const char *fmt, va_list args);
+EXTERN size_t Str_Strlen(const char *src, size_t maxLen);
 EXTERN char *Str_Strnstr(const char *src, const char *sub, size_t n);
 EXTERN char *Str_Strcpy(char *dst, const char *src, size_t maxLen);
 EXTERN char *Str_Strcat(char *dst, const char *src, size_t maxLen);

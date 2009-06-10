@@ -63,7 +63,7 @@ ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/libtool.m4 \
 	$(top_srcdir)/m4/ltoptions.m4 $(top_srcdir)/m4/ltsugar.m4 \
 	$(top_srcdir)/m4/ltversion.m4 $(top_srcdir)/m4/lt~obsolete.m4 \
-	$(top_srcdir)/configure.ac
+	$(top_srcdir)/m4/vmtools.m4 $(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 mkinstalldirs = $(install_sh) -d
@@ -73,28 +73,35 @@ am__installdirs = "$(DESTDIR)$(bindir)"
 binPROGRAMS_INSTALL = $(INSTALL_PROGRAM)
 PROGRAMS = $(bin_PROGRAMS)
 am__vmware_toolbox_SOURCES_DIST = debugStdio.c toolbox-gtk.c \
-	toolboxAbout.c toolboxDevices.c toolboxOptions.c \
-	toolboxScripts.c toolboxShrink.c toolboxRecord.c
-@HAVE_X11_TRUE@am_vmware_toolbox_OBJECTS = debugStdio.$(OBJEXT) \
-@HAVE_X11_TRUE@	toolbox-gtk.$(OBJEXT) toolboxAbout.$(OBJEXT) \
-@HAVE_X11_TRUE@	toolboxDevices.$(OBJEXT) \
-@HAVE_X11_TRUE@	toolboxOptions.$(OBJEXT) \
-@HAVE_X11_TRUE@	toolboxScripts.$(OBJEXT) \
-@HAVE_X11_TRUE@	toolboxShrink.$(OBJEXT) toolboxRecord.$(OBJEXT)
+	toolboxAbout.c toolboxDevices.c toolboxInt.c toolboxOptions.c \
+	toolboxScripts.c toolboxShrink.c \
+	$(top_srcdir)/libvmtools/vmtoolsConfig.c
+@HAVE_X11_TRUE@am_vmware_toolbox_OBJECTS =  \
+@HAVE_X11_TRUE@	vmware_toolbox-debugStdio.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-toolbox-gtk.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-toolboxAbout.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-toolboxDevices.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-toolboxInt.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-toolboxOptions.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-toolboxScripts.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-toolboxShrink.$(OBJEXT) \
+@HAVE_X11_TRUE@	vmware_toolbox-vmtoolsConfig.$(OBJEXT)
 vmware_toolbox_OBJECTS = $(am_vmware_toolbox_OBJECTS)
 am__DEPENDENCIES_1 =
 @HAVE_X11_TRUE@vmware_toolbox_DEPENDENCIES =  \
-@HAVE_X11_TRUE@	../lib/guestApp/libGuestAppX11.a $(COMMON) \
+@HAVE_X11_TRUE@	../lib/guestApp/libGuestAppX11.la $(COMMON) \
 @HAVE_X11_TRUE@	$(am__DEPENDENCIES_1)
-am_vmware_toolbox_cmd_OBJECTS = debugStdio.$(OBJEXT) \
-	toolbox-cmd.$(OBJEXT) toolboxcmd-devices.$(OBJEXT) \
-	toolboxcmd-scripts.$(OBJEXT) toolboxcmd-shrink.$(OBJEXT) \
-	toolboxcmd-stat.$(OBJEXT) toolboxcmd-time.$(OBJEXT) \
-	toolboxcmd-record.$(OBJEXT)
+am_vmware_toolbox_cmd_OBJECTS =  \
+	vmware_toolbox_cmd-debugStdio.$(OBJEXT) \
+	vmware_toolbox_cmd-toolbox-cmd.$(OBJEXT) \
+	vmware_toolbox_cmd-toolboxcmd-devices.$(OBJEXT) \
+	vmware_toolbox_cmd-toolboxcmd-scripts.$(OBJEXT) \
+	vmware_toolbox_cmd-toolboxcmd-shrink.$(OBJEXT) \
+	vmware_toolbox_cmd-toolboxcmd-stat.$(OBJEXT) \
+	vmware_toolbox_cmd-toolboxcmd-time.$(OBJEXT)
 vmware_toolbox_cmd_OBJECTS = $(am_vmware_toolbox_cmd_OBJECTS)
 vmware_toolbox_cmd_DEPENDENCIES = ../libguestlib/libguestlib.la \
-	../lib/guestInfo/libGuestInfo.a ../lib/guestApp/libGuestApp.a \
-	$(COMMON) $(am__DEPENDENCIES_1)
+	$(am__DEPENDENCIES_1)
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -133,9 +140,9 @@ CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
-DNET_CONFIG = @DNET_CONFIG@
 DNET_CPPFLAGS = @DNET_CPPFLAGS@
 DNET_LIBS = @DNET_LIBS@
+DOT = @DOT@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -144,13 +151,23 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 FGREP = @FGREP@
+FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
+FUSE_LIBS = @FUSE_LIBS@
+GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
+GLIB2_LIBS = @GLIB2_LIBS@
+GMODULE_CPPFLAGS = @GMODULE_CPPFLAGS@
+GMODULE_LIBS = @GMODULE_LIBS@
+GOBJECT_CPPFLAGS = @GOBJECT_CPPFLAGS@
+GOBJECT_LIBS = @GOBJECT_LIBS@
 GREP = @GREP@
+GTHREAD_CPPFLAGS = @GTHREAD_CPPFLAGS@
+GTHREAD_LIBS = @GTHREAD_LIBS@
+GTKMM_CPPFLAGS = @GTKMM_CPPFLAGS@
+GTKMM_LIBS = @GTKMM_LIBS@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
-GUESTD_LDADD = @GUESTD_LDADD@
-HAVE_CXX = @HAVE_CXX@
+HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
-ICU_CONFIG = @ICU_CONFIG@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -162,11 +179,11 @@ KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CONFIG = @LIBPNG_CONFIG@
 LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
 LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
 LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
@@ -182,6 +199,8 @@ MKDIR_P = @MKDIR_P@
 MODULES = @MODULES@
 MODULES_DIR = @MODULES_DIR@
 MODULES_OS = @MODULES_OS@
+MSCGEN = @MSCGEN@
+MSCGEN_DIR = @MSCGEN_DIR@
 NM = @NM@
 NMEDIT = @NMEDIT@
 OBJEXT = @OBJEXT@
@@ -191,21 +210,36 @@ PACKAGE_NAME = @PACKAGE_NAME@
 PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
+PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
+PLUGIN_LDFLAGS = @PLUGIN_LDFLAGS@
+PROCPS_CPPFLAGS = @PROCPS_CPPFLAGS@
 PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
+RPCGENFLAGS = @RPCGENFLAGS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
+SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
+TOOLS_VERSION = @TOOLS_VERSION@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VIX_LIBADD = @VIX_LIBADD@
+VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
+VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
+VMTOOLS_LIBS = @VMTOOLS_LIBS@
+VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
@@ -220,6 +254,7 @@ abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
 ac_ct_CXX = @ac_ct_CXX@
 ac_ct_DUMPBIN = @ac_ct_DUMPBIN@
+ac_vmw_lib_cfg = @ac_vmw_lib_cfg@
 am__include = @am__include@
 am__leading_dot = @am__leading_dot@
 am__quote = @am__quote@
@@ -237,6 +272,9 @@ datarootdir = @datarootdir@
 docdir = @docdir@
 dvidir = @dvidir@
 exec_prefix = @exec_prefix@
+have_cxx = @have_cxx@
+have_doxygen = @have_doxygen@
+have_genmarshal = @have_genmarshal@
 host = @host@
 host_alias = @host_alias@
 host_cpu = @host_cpu@
@@ -268,37 +306,39 @@ top_srcdir = @top_srcdir@
 # In the absence of the linker options --start-group and --end-group (which
 # can't be put in LDADD), we need to bring the following libraries out of
 # the alphabetical order so their symbols are properly resolved.
-COMMON = ../lib/conf/libConf.a ../lib/eventManager/libEventManager.a \
-	../lib/file/libFile.a ../lib/hgfs/libHgfs.a \
-	../lib/procMgr/libProcMgr.a ../lib/rpcIn/libRpcIn.a \
-	../lib/rpcOut/libRpcOut.a ../lib/string/libString.a \
-	../lib/system/libSystem.a ../lib/user/libUser.a \
-	../lib/vmCheck/libVmCheck.a ../lib/vmSignal/libVmSignal.a \
-	../lib/wiper/libWiper.a ../lib/err/libErr.a \
-	../lib/backdoor/libBackdoor.a ../lib/dict/libDict.a \
-	../lib/message/libMessage.a ../lib/unicode/libUnicode.a \
-	../lib/sync/libSync.a ../lib/misc/libMisc.a \
-	../lib/panicDefault/libPanicDefault.a ../lib/panic/libPanic.a \
-	../lib/stubs/libStubs.a
+COMMON = ../lib/conf/libConf.la ../lib/eventManager/libEventManager.la \
+	../lib/file/libFile.la ../lib/hgfs/libHgfs.la \
+	../lib/procMgr/libProcMgr.la ../lib/rpcIn/libRpcIn.la \
+	../lib/rpcOut/libRpcOut.la ../lib/string/libString.la \
+	../lib/system/libSystem.la ../lib/user/libUser.la \
+	../lib/vmCheck/libVmCheck.la ../lib/vmSignal/libVmSignal.la \
+	../lib/wiper/libWiper.la ../lib/err/libErr.la \
+	../lib/backdoor/libBackdoor.la ../lib/dict/libDict.la \
+	../lib/message/libMessage.la ../lib/unicode/libUnicode.la \
+	../lib/sync/libSync.la ../lib/misc/libMisc.la \
+	../lib/panicDefault/libPanicDefault.la \
+	../lib/panic/libPanic.la ../lib/stubs/libStubs.la
 @HAVE_X11_TRUE@AM_CFLAGS = @GTK_CPPFLAGS@
 @HAVE_X11_TRUE@vmware_toolbox_LDADD =  \
-@HAVE_X11_TRUE@	../lib/guestApp/libGuestAppX11.a $(COMMON) \
+@HAVE_X11_TRUE@	../lib/guestApp/libGuestAppX11.la $(COMMON) \
 @HAVE_X11_TRUE@	@COMMON_XLIBS@ @GTK_LIBS@ $(am__append_2)
 @HAVE_X11_TRUE@vmware_toolbox_SOURCES = debugStdio.c toolbox-gtk.c \
-@HAVE_X11_TRUE@	toolboxAbout.c toolboxDevices.c \
+@HAVE_X11_TRUE@	toolboxAbout.c toolboxDevices.c toolboxInt.c \
 @HAVE_X11_TRUE@	toolboxOptions.c toolboxScripts.c \
-@HAVE_X11_TRUE@	toolboxShrink.c toolboxRecord.c
+@HAVE_X11_TRUE@	toolboxShrink.c \
+@HAVE_X11_TRUE@	$(top_srcdir)/libvmtools/vmtoolsConfig.c
+@HAVE_X11_TRUE@vmware_toolbox_CPPFLAGS = -DG_LOG_DOMAIN=\"toolbox\"
 @HAVE_ICU_FALSE@@HAVE_X11_TRUE@vmware_toolbox_LINK = $(LINK)
 @HAVE_ICU_TRUE@@HAVE_X11_TRUE@vmware_toolbox_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 @HAVE_ICU_TRUE@@HAVE_X11_TRUE@                         $(LIBTOOLFLAGS) --mode=link $(CXX) $(AM_CXXFLAGS) \
 @HAVE_ICU_TRUE@@HAVE_X11_TRUE@                         $(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
 
 vmware_toolbox_cmd_LDADD = ../libguestlib/libguestlib.la \
-	../lib/guestInfo/libGuestInfo.a ../lib/guestApp/libGuestApp.a \
-	$(COMMON) $(am__append_3)
+	@VMTOOLS_LIBS@ $(am__append_3)
+vmware_toolbox_cmd_CPPFLAGS = @VMTOOLS_CPPFLAGS@
 vmware_toolbox_cmd_SOURCES = debugStdio.c toolbox-cmd.c \
 	toolboxcmd-devices.c toolboxcmd-scripts.c toolboxcmd-shrink.c \
-	toolboxcmd-stat.c toolboxcmd-time.c toolboxcmd-record.c
+	toolboxcmd-stat.c toolboxcmd-time.c
 @HAVE_ICU_FALSE@vmware_toolbox_cmd_LINK = $(LINK)
 @HAVE_ICU_TRUE@vmware_toolbox_cmd_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 @HAVE_ICU_TRUE@                             $(LIBTOOLFLAGS) --mode=link $(CXX) \
@@ -379,21 +419,22 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/debugStdio.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolbox-cmd.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolbox-gtk.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxAbout.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxDevices.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxOptions.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxRecord.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxScripts.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxShrink.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxcmd-devices.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxcmd-record.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxcmd-scripts.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxcmd-shrink.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxcmd-stat.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/toolboxcmd-time.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-debugStdio.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-toolbox-gtk.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-toolboxAbout.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-toolboxDevices.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-toolboxInt.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-toolboxOptions.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-toolboxScripts.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-toolboxShrink.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox-vmtoolsConfig.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox_cmd-debugStdio.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox_cmd-toolbox-cmd.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-devices.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-scripts.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-shrink.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-stat.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-time.Po@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -415,6 +456,230 @@ distclean-compile:
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$<' object='$@' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(LTCOMPILE) -c -o $@ $<
+
+vmware_toolbox-debugStdio.o: debugStdio.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-debugStdio.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-debugStdio.Tpo -c -o vmware_toolbox-debugStdio.o `test -f 'debugStdio.c' || echo '$(srcdir)/'`debugStdio.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-debugStdio.Tpo $(DEPDIR)/vmware_toolbox-debugStdio.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='debugStdio.c' object='vmware_toolbox-debugStdio.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-debugStdio.o `test -f 'debugStdio.c' || echo '$(srcdir)/'`debugStdio.c
+
+vmware_toolbox-debugStdio.obj: debugStdio.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-debugStdio.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-debugStdio.Tpo -c -o vmware_toolbox-debugStdio.obj `if test -f 'debugStdio.c'; then $(CYGPATH_W) 'debugStdio.c'; else $(CYGPATH_W) '$(srcdir)/debugStdio.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-debugStdio.Tpo $(DEPDIR)/vmware_toolbox-debugStdio.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='debugStdio.c' object='vmware_toolbox-debugStdio.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-debugStdio.obj `if test -f 'debugStdio.c'; then $(CYGPATH_W) 'debugStdio.c'; else $(CYGPATH_W) '$(srcdir)/debugStdio.c'; fi`
+
+vmware_toolbox-toolbox-gtk.o: toolbox-gtk.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolbox-gtk.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolbox-gtk.Tpo -c -o vmware_toolbox-toolbox-gtk.o `test -f 'toolbox-gtk.c' || echo '$(srcdir)/'`toolbox-gtk.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolbox-gtk.Tpo $(DEPDIR)/vmware_toolbox-toolbox-gtk.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolbox-gtk.c' object='vmware_toolbox-toolbox-gtk.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolbox-gtk.o `test -f 'toolbox-gtk.c' || echo '$(srcdir)/'`toolbox-gtk.c
+
+vmware_toolbox-toolbox-gtk.obj: toolbox-gtk.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolbox-gtk.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolbox-gtk.Tpo -c -o vmware_toolbox-toolbox-gtk.obj `if test -f 'toolbox-gtk.c'; then $(CYGPATH_W) 'toolbox-gtk.c'; else $(CYGPATH_W) '$(srcdir)/toolbox-gtk.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolbox-gtk.Tpo $(DEPDIR)/vmware_toolbox-toolbox-gtk.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolbox-gtk.c' object='vmware_toolbox-toolbox-gtk.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolbox-gtk.obj `if test -f 'toolbox-gtk.c'; then $(CYGPATH_W) 'toolbox-gtk.c'; else $(CYGPATH_W) '$(srcdir)/toolbox-gtk.c'; fi`
+
+vmware_toolbox-toolboxAbout.o: toolboxAbout.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxAbout.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxAbout.Tpo -c -o vmware_toolbox-toolboxAbout.o `test -f 'toolboxAbout.c' || echo '$(srcdir)/'`toolboxAbout.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxAbout.Tpo $(DEPDIR)/vmware_toolbox-toolboxAbout.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxAbout.c' object='vmware_toolbox-toolboxAbout.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxAbout.o `test -f 'toolboxAbout.c' || echo '$(srcdir)/'`toolboxAbout.c
+
+vmware_toolbox-toolboxAbout.obj: toolboxAbout.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxAbout.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxAbout.Tpo -c -o vmware_toolbox-toolboxAbout.obj `if test -f 'toolboxAbout.c'; then $(CYGPATH_W) 'toolboxAbout.c'; else $(CYGPATH_W) '$(srcdir)/toolboxAbout.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxAbout.Tpo $(DEPDIR)/vmware_toolbox-toolboxAbout.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxAbout.c' object='vmware_toolbox-toolboxAbout.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxAbout.obj `if test -f 'toolboxAbout.c'; then $(CYGPATH_W) 'toolboxAbout.c'; else $(CYGPATH_W) '$(srcdir)/toolboxAbout.c'; fi`
+
+vmware_toolbox-toolboxDevices.o: toolboxDevices.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxDevices.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxDevices.Tpo -c -o vmware_toolbox-toolboxDevices.o `test -f 'toolboxDevices.c' || echo '$(srcdir)/'`toolboxDevices.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxDevices.Tpo $(DEPDIR)/vmware_toolbox-toolboxDevices.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxDevices.c' object='vmware_toolbox-toolboxDevices.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxDevices.o `test -f 'toolboxDevices.c' || echo '$(srcdir)/'`toolboxDevices.c
+
+vmware_toolbox-toolboxDevices.obj: toolboxDevices.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxDevices.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxDevices.Tpo -c -o vmware_toolbox-toolboxDevices.obj `if test -f 'toolboxDevices.c'; then $(CYGPATH_W) 'toolboxDevices.c'; else $(CYGPATH_W) '$(srcdir)/toolboxDevices.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxDevices.Tpo $(DEPDIR)/vmware_toolbox-toolboxDevices.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxDevices.c' object='vmware_toolbox-toolboxDevices.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxDevices.obj `if test -f 'toolboxDevices.c'; then $(CYGPATH_W) 'toolboxDevices.c'; else $(CYGPATH_W) '$(srcdir)/toolboxDevices.c'; fi`
+
+vmware_toolbox-toolboxInt.o: toolboxInt.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxInt.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxInt.Tpo -c -o vmware_toolbox-toolboxInt.o `test -f 'toolboxInt.c' || echo '$(srcdir)/'`toolboxInt.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxInt.Tpo $(DEPDIR)/vmware_toolbox-toolboxInt.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxInt.c' object='vmware_toolbox-toolboxInt.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxInt.o `test -f 'toolboxInt.c' || echo '$(srcdir)/'`toolboxInt.c
+
+vmware_toolbox-toolboxInt.obj: toolboxInt.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxInt.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxInt.Tpo -c -o vmware_toolbox-toolboxInt.obj `if test -f 'toolboxInt.c'; then $(CYGPATH_W) 'toolboxInt.c'; else $(CYGPATH_W) '$(srcdir)/toolboxInt.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxInt.Tpo $(DEPDIR)/vmware_toolbox-toolboxInt.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxInt.c' object='vmware_toolbox-toolboxInt.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxInt.obj `if test -f 'toolboxInt.c'; then $(CYGPATH_W) 'toolboxInt.c'; else $(CYGPATH_W) '$(srcdir)/toolboxInt.c'; fi`
+
+vmware_toolbox-toolboxOptions.o: toolboxOptions.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxOptions.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxOptions.Tpo -c -o vmware_toolbox-toolboxOptions.o `test -f 'toolboxOptions.c' || echo '$(srcdir)/'`toolboxOptions.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxOptions.Tpo $(DEPDIR)/vmware_toolbox-toolboxOptions.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxOptions.c' object='vmware_toolbox-toolboxOptions.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxOptions.o `test -f 'toolboxOptions.c' || echo '$(srcdir)/'`toolboxOptions.c
+
+vmware_toolbox-toolboxOptions.obj: toolboxOptions.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxOptions.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxOptions.Tpo -c -o vmware_toolbox-toolboxOptions.obj `if test -f 'toolboxOptions.c'; then $(CYGPATH_W) 'toolboxOptions.c'; else $(CYGPATH_W) '$(srcdir)/toolboxOptions.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxOptions.Tpo $(DEPDIR)/vmware_toolbox-toolboxOptions.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxOptions.c' object='vmware_toolbox-toolboxOptions.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxOptions.obj `if test -f 'toolboxOptions.c'; then $(CYGPATH_W) 'toolboxOptions.c'; else $(CYGPATH_W) '$(srcdir)/toolboxOptions.c'; fi`
+
+vmware_toolbox-toolboxScripts.o: toolboxScripts.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxScripts.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxScripts.Tpo -c -o vmware_toolbox-toolboxScripts.o `test -f 'toolboxScripts.c' || echo '$(srcdir)/'`toolboxScripts.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxScripts.Tpo $(DEPDIR)/vmware_toolbox-toolboxScripts.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxScripts.c' object='vmware_toolbox-toolboxScripts.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxScripts.o `test -f 'toolboxScripts.c' || echo '$(srcdir)/'`toolboxScripts.c
+
+vmware_toolbox-toolboxScripts.obj: toolboxScripts.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxScripts.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxScripts.Tpo -c -o vmware_toolbox-toolboxScripts.obj `if test -f 'toolboxScripts.c'; then $(CYGPATH_W) 'toolboxScripts.c'; else $(CYGPATH_W) '$(srcdir)/toolboxScripts.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxScripts.Tpo $(DEPDIR)/vmware_toolbox-toolboxScripts.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxScripts.c' object='vmware_toolbox-toolboxScripts.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxScripts.obj `if test -f 'toolboxScripts.c'; then $(CYGPATH_W) 'toolboxScripts.c'; else $(CYGPATH_W) '$(srcdir)/toolboxScripts.c'; fi`
+
+vmware_toolbox-toolboxShrink.o: toolboxShrink.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxShrink.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxShrink.Tpo -c -o vmware_toolbox-toolboxShrink.o `test -f 'toolboxShrink.c' || echo '$(srcdir)/'`toolboxShrink.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxShrink.Tpo $(DEPDIR)/vmware_toolbox-toolboxShrink.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxShrink.c' object='vmware_toolbox-toolboxShrink.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxShrink.o `test -f 'toolboxShrink.c' || echo '$(srcdir)/'`toolboxShrink.c
+
+vmware_toolbox-toolboxShrink.obj: toolboxShrink.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-toolboxShrink.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-toolboxShrink.Tpo -c -o vmware_toolbox-toolboxShrink.obj `if test -f 'toolboxShrink.c'; then $(CYGPATH_W) 'toolboxShrink.c'; else $(CYGPATH_W) '$(srcdir)/toolboxShrink.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-toolboxShrink.Tpo $(DEPDIR)/vmware_toolbox-toolboxShrink.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxShrink.c' object='vmware_toolbox-toolboxShrink.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-toolboxShrink.obj `if test -f 'toolboxShrink.c'; then $(CYGPATH_W) 'toolboxShrink.c'; else $(CYGPATH_W) '$(srcdir)/toolboxShrink.c'; fi`
+
+vmware_toolbox-vmtoolsConfig.o: $(top_srcdir)/libvmtools/vmtoolsConfig.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-vmtoolsConfig.o -MD -MP -MF $(DEPDIR)/vmware_toolbox-vmtoolsConfig.Tpo -c -o vmware_toolbox-vmtoolsConfig.o `test -f '$(top_srcdir)/libvmtools/vmtoolsConfig.c' || echo '$(srcdir)/'`$(top_srcdir)/libvmtools/vmtoolsConfig.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-vmtoolsConfig.Tpo $(DEPDIR)/vmware_toolbox-vmtoolsConfig.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/libvmtools/vmtoolsConfig.c' object='vmware_toolbox-vmtoolsConfig.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-vmtoolsConfig.o `test -f '$(top_srcdir)/libvmtools/vmtoolsConfig.c' || echo '$(srcdir)/'`$(top_srcdir)/libvmtools/vmtoolsConfig.c
+
+vmware_toolbox-vmtoolsConfig.obj: $(top_srcdir)/libvmtools/vmtoolsConfig.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox-vmtoolsConfig.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox-vmtoolsConfig.Tpo -c -o vmware_toolbox-vmtoolsConfig.obj `if test -f '$(top_srcdir)/libvmtools/vmtoolsConfig.c'; then $(CYGPATH_W) '$(top_srcdir)/libvmtools/vmtoolsConfig.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/libvmtools/vmtoolsConfig.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox-vmtoolsConfig.Tpo $(DEPDIR)/vmware_toolbox-vmtoolsConfig.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/libvmtools/vmtoolsConfig.c' object='vmware_toolbox-vmtoolsConfig.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox-vmtoolsConfig.obj `if test -f '$(top_srcdir)/libvmtools/vmtoolsConfig.c'; then $(CYGPATH_W) '$(top_srcdir)/libvmtools/vmtoolsConfig.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/libvmtools/vmtoolsConfig.c'; fi`
+
+vmware_toolbox_cmd-debugStdio.o: debugStdio.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-debugStdio.o -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-debugStdio.Tpo -c -o vmware_toolbox_cmd-debugStdio.o `test -f 'debugStdio.c' || echo '$(srcdir)/'`debugStdio.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-debugStdio.Tpo $(DEPDIR)/vmware_toolbox_cmd-debugStdio.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='debugStdio.c' object='vmware_toolbox_cmd-debugStdio.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-debugStdio.o `test -f 'debugStdio.c' || echo '$(srcdir)/'`debugStdio.c
+
+vmware_toolbox_cmd-debugStdio.obj: debugStdio.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-debugStdio.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-debugStdio.Tpo -c -o vmware_toolbox_cmd-debugStdio.obj `if test -f 'debugStdio.c'; then $(CYGPATH_W) 'debugStdio.c'; else $(CYGPATH_W) '$(srcdir)/debugStdio.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-debugStdio.Tpo $(DEPDIR)/vmware_toolbox_cmd-debugStdio.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='debugStdio.c' object='vmware_toolbox_cmd-debugStdio.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-debugStdio.obj `if test -f 'debugStdio.c'; then $(CYGPATH_W) 'debugStdio.c'; else $(CYGPATH_W) '$(srcdir)/debugStdio.c'; fi`
+
+vmware_toolbox_cmd-toolbox-cmd.o: toolbox-cmd.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolbox-cmd.o -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolbox-cmd.Tpo -c -o vmware_toolbox_cmd-toolbox-cmd.o `test -f 'toolbox-cmd.c' || echo '$(srcdir)/'`toolbox-cmd.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolbox-cmd.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolbox-cmd.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolbox-cmd.c' object='vmware_toolbox_cmd-toolbox-cmd.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolbox-cmd.o `test -f 'toolbox-cmd.c' || echo '$(srcdir)/'`toolbox-cmd.c
+
+vmware_toolbox_cmd-toolbox-cmd.obj: toolbox-cmd.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolbox-cmd.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolbox-cmd.Tpo -c -o vmware_toolbox_cmd-toolbox-cmd.obj `if test -f 'toolbox-cmd.c'; then $(CYGPATH_W) 'toolbox-cmd.c'; else $(CYGPATH_W) '$(srcdir)/toolbox-cmd.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolbox-cmd.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolbox-cmd.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolbox-cmd.c' object='vmware_toolbox_cmd-toolbox-cmd.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolbox-cmd.obj `if test -f 'toolbox-cmd.c'; then $(CYGPATH_W) 'toolbox-cmd.c'; else $(CYGPATH_W) '$(srcdir)/toolbox-cmd.c'; fi`
+
+vmware_toolbox_cmd-toolboxcmd-devices.o: toolboxcmd-devices.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-devices.o -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-devices.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-devices.o `test -f 'toolboxcmd-devices.c' || echo '$(srcdir)/'`toolboxcmd-devices.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-devices.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-devices.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-devices.c' object='vmware_toolbox_cmd-toolboxcmd-devices.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-devices.o `test -f 'toolboxcmd-devices.c' || echo '$(srcdir)/'`toolboxcmd-devices.c
+
+vmware_toolbox_cmd-toolboxcmd-devices.obj: toolboxcmd-devices.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-devices.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-devices.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-devices.obj `if test -f 'toolboxcmd-devices.c'; then $(CYGPATH_W) 'toolboxcmd-devices.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-devices.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-devices.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-devices.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-devices.c' object='vmware_toolbox_cmd-toolboxcmd-devices.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-devices.obj `if test -f 'toolboxcmd-devices.c'; then $(CYGPATH_W) 'toolboxcmd-devices.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-devices.c'; fi`
+
+vmware_toolbox_cmd-toolboxcmd-scripts.o: toolboxcmd-scripts.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-scripts.o -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-scripts.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-scripts.o `test -f 'toolboxcmd-scripts.c' || echo '$(srcdir)/'`toolboxcmd-scripts.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-scripts.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-scripts.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-scripts.c' object='vmware_toolbox_cmd-toolboxcmd-scripts.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-scripts.o `test -f 'toolboxcmd-scripts.c' || echo '$(srcdir)/'`toolboxcmd-scripts.c
+
+vmware_toolbox_cmd-toolboxcmd-scripts.obj: toolboxcmd-scripts.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-scripts.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-scripts.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-scripts.obj `if test -f 'toolboxcmd-scripts.c'; then $(CYGPATH_W) 'toolboxcmd-scripts.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-scripts.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-scripts.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-scripts.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-scripts.c' object='vmware_toolbox_cmd-toolboxcmd-scripts.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-scripts.obj `if test -f 'toolboxcmd-scripts.c'; then $(CYGPATH_W) 'toolboxcmd-scripts.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-scripts.c'; fi`
+
+vmware_toolbox_cmd-toolboxcmd-shrink.o: toolboxcmd-shrink.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-shrink.o -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-shrink.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-shrink.o `test -f 'toolboxcmd-shrink.c' || echo '$(srcdir)/'`toolboxcmd-shrink.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-shrink.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-shrink.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-shrink.c' object='vmware_toolbox_cmd-toolboxcmd-shrink.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-shrink.o `test -f 'toolboxcmd-shrink.c' || echo '$(srcdir)/'`toolboxcmd-shrink.c
+
+vmware_toolbox_cmd-toolboxcmd-shrink.obj: toolboxcmd-shrink.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-shrink.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-shrink.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-shrink.obj `if test -f 'toolboxcmd-shrink.c'; then $(CYGPATH_W) 'toolboxcmd-shrink.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-shrink.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-shrink.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-shrink.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-shrink.c' object='vmware_toolbox_cmd-toolboxcmd-shrink.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-shrink.obj `if test -f 'toolboxcmd-shrink.c'; then $(CYGPATH_W) 'toolboxcmd-shrink.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-shrink.c'; fi`
+
+vmware_toolbox_cmd-toolboxcmd-stat.o: toolboxcmd-stat.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-stat.o -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-stat.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-stat.o `test -f 'toolboxcmd-stat.c' || echo '$(srcdir)/'`toolboxcmd-stat.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-stat.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-stat.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-stat.c' object='vmware_toolbox_cmd-toolboxcmd-stat.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-stat.o `test -f 'toolboxcmd-stat.c' || echo '$(srcdir)/'`toolboxcmd-stat.c
+
+vmware_toolbox_cmd-toolboxcmd-stat.obj: toolboxcmd-stat.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-stat.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-stat.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-stat.obj `if test -f 'toolboxcmd-stat.c'; then $(CYGPATH_W) 'toolboxcmd-stat.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-stat.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-stat.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-stat.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-stat.c' object='vmware_toolbox_cmd-toolboxcmd-stat.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-stat.obj `if test -f 'toolboxcmd-stat.c'; then $(CYGPATH_W) 'toolboxcmd-stat.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-stat.c'; fi`
+
+vmware_toolbox_cmd-toolboxcmd-time.o: toolboxcmd-time.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-time.o -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-time.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-time.o `test -f 'toolboxcmd-time.c' || echo '$(srcdir)/'`toolboxcmd-time.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-time.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-time.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-time.c' object='vmware_toolbox_cmd-toolboxcmd-time.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-time.o `test -f 'toolboxcmd-time.c' || echo '$(srcdir)/'`toolboxcmd-time.c
+
+vmware_toolbox_cmd-toolboxcmd-time.obj: toolboxcmd-time.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmware_toolbox_cmd-toolboxcmd-time.obj -MD -MP -MF $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-time.Tpo -c -o vmware_toolbox_cmd-toolboxcmd-time.obj `if test -f 'toolboxcmd-time.c'; then $(CYGPATH_W) 'toolboxcmd-time.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-time.c'; fi`
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-time.Tpo $(DEPDIR)/vmware_toolbox_cmd-toolboxcmd-time.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='toolboxcmd-time.c' object='vmware_toolbox_cmd-toolboxcmd-time.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmware_toolbox_cmd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmware_toolbox_cmd-toolboxcmd-time.obj `if test -f 'toolboxcmd-time.c'; then $(CYGPATH_W) 'toolboxcmd-time.c'; else $(CYGPATH_W) '$(srcdir)/toolboxcmd-time.c'; fi`
 
 mostlyclean-libtool:
 	-rm -f *.lo
@@ -612,8 +877,8 @@ uninstall-am: uninstall-binPROGRAMS
 @HAVE_X11_TRUE@	$(INSTALL) -m 644 bigIcon.xpm \
 @HAVE_X11_TRUE@		$(DESTDIR)/usr/share/pixmaps/vmware/vmware-toolbox.xpm
 @HAVE_X11_TRUE@   uninstall-hook:
-@HAVE_X11_TRUE@	-$(RM) -f $(DESTDIR)$(datadir)/share/applications/vmware-toolbox.desktop
-@HAVE_X11_TRUE@	-$(RM) -rf $(DESTDIR)/usr/share/pixmaps/vmware
+@HAVE_X11_TRUE@	rm -f $(DESTDIR)$(datadir)/share/applications/vmware-toolbox.desktop
+@HAVE_X11_TRUE@	rm -rf $(DESTDIR)/usr/share/pixmaps/vmware
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.
 .NOEXPORT:

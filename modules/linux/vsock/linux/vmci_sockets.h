@@ -27,15 +27,19 @@
 
 
 #if defined(_WIN32)
-#  include <winsock2.h>
+#  if !defined(_DDK_DRIVER_)
+#     include <winsock2.h>
+#  endif // _DDK_DRIVER_
 #else // _WIN32
 #if defined(linux) && !defined(VMKERNEL)
-#  if defined(__KERNEL__)
-#    include "driver-config.h"
-#    include "compat_sock.h"
-#  else
+#  if !defined(__KERNEL__)
 #    include <sys/socket.h>
 #  endif // __KERNEL__
+#else // linux && !VMKERNEL
+#  if defined(__APPLE__)
+#    include <sys/socket.h>
+#    include <string.h>
+#  endif // __APPLE__
 #endif // linux && !VMKERNEL
 #endif
 
@@ -47,6 +51,7 @@
 #define SO_VMCI_BUFFER_SIZE                 0
 #define SO_VMCI_BUFFER_MIN_SIZE             1
 #define SO_VMCI_BUFFER_MAX_SIZE             2
+#define SO_VMCI_PEER_HOST_VM_ID             3
 
 /*
  * The VMCI sockets address equivalents of INADDR_ANY.  The first works for
@@ -71,71 +76,75 @@
 
 /*
  * Address structure for VSockets VMCI sockets. The address family should be
- * set to AF_VMCI.
+ * set to AF_VMCI. The structure members should all align on their natural
+ * boundaries without resorting to compiler packing directives.
  */
+
 struct sockaddr_vm {
+#if defined(__APPLE__)
+   unsigned char svm_len;                           // Mac OS has the length first.
+#endif // __APPLE__
    sa_family_t svm_family;                          // AF_VMCI.
    unsigned short svm_reserved1;                    // Reserved.
    unsigned int svm_port;                           // Port.
    unsigned int svm_cid;                            // Context id.
    unsigned char svm_zero[sizeof(struct sockaddr) - // Same size as sockaddr.
-                          sizeof(sa_family_t) -
-                          sizeof(unsigned short) -
-                          sizeof(unsigned int) -
-                          sizeof(unsigned int)];
+#if defined(__APPLE__)
+                             sizeof(unsigned char) -
+#endif // __APPLE__
+                             sizeof(sa_family_t) -
+                             sizeof(unsigned short) -
+                             sizeof(unsigned int) -
+                             sizeof(unsigned int)];
 };
 
 
 #if defined(_WIN32)
-#  if !defined(WINNT_DDK)
-#  include <winioctl.h>
-#  define VMCI_SOCKETS_DEVICE          TEXT("\\\\.\\VMCI")
-#  define VMCI_SOCKETS_GET_AF_VALUE    0x81032068
-#  define VMCI_SOCKETS_GET_LOCAL_CID   0x8103206c
-
-   static __inline int VMCISock_GetAFValue(void)
-   {
-      HANDLE device = CreateFile(VMCI_SOCKETS_DEVICE, GENERIC_READ, 0, NULL,
-                                 OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
-      if (INVALID_HANDLE_VALUE != device) {
-         DWORD ioReturn;
-         int afvalue;
-         if (DeviceIoControl(device, VMCI_SOCKETS_GET_AF_VALUE, &afvalue,
-                             sizeof afvalue, &afvalue, sizeof afvalue,
-                             &ioReturn, NULL)) {
+#  if !defined(_DDK_DRIVER_)
+#     include <winioctl.h>
+#     define VMCI_SOCKETS_DEVICE          L"\\\\.\\VMCI"
+#     define VMCI_SOCKETS_GET_AF_VALUE    0x81032068
+#     define VMCI_SOCKETS_GET_LOCAL_CID   0x8103206c
+      static __inline int VMCISock_GetAFValue(void)
+      {
+         int afvalue = -1;
+         HANDLE device = CreateFileW(VMCI_SOCKETS_DEVICE, GENERIC_READ, 0, NULL,
+                                     OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+         if (INVALID_HANDLE_VALUE != device) {
+            DWORD ioReturn;
+            DeviceIoControl(device, VMCI_SOCKETS_GET_AF_VALUE, &afvalue,
+                            sizeof afvalue, &afvalue, sizeof afvalue,
+                            &ioReturn, NULL);
             CloseHandle(device);
             device = INVALID_HANDLE_VALUE;
-            return afvalue;
          }
-         CloseHandle(device);
-         device = INVALID_HANDLE_VALUE;
+         return afvalue;
       }
-      return -1;
-   }
-
-   static __inline unsigned int VMCISock_GetLocalCID(void)
-   {
-      HANDLE device = CreateFile(VMCI_SOCKETS_DEVICE, GENERIC_READ, 0, NULL,
-                                 OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
-      if (INVALID_HANDLE_VALUE != device) {
-         DWORD ioReturn;
-         unsigned int cid;
-         if (DeviceIoControl(device, VMCI_SOCKETS_GET_LOCAL_CID, &cid,
-                             sizeof cid, &cid, sizeof cid, &ioReturn,
-                             NULL)) {
+   
+      static __inline unsigned int VMCISock_GetLocalCID(void)
+      {
+         unsigned int cid = VMADDR_CID_ANY;
+         HANDLE device = CreateFileW(VMCI_SOCKETS_DEVICE, GENERIC_READ, 0, NULL,
+                                     OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+         if (INVALID_HANDLE_VALUE != device) {
+            DWORD ioReturn;
+            DeviceIoControl(device, VMCI_SOCKETS_GET_LOCAL_CID, &cid,
+                            sizeof cid, &cid, sizeof cid, &ioReturn,
+                            NULL);
             CloseHandle(device);
             device = INVALID_HANDLE_VALUE;
-            return cid;
          }
-         CloseHandle(device);
-         device = INVALID_HANDLE_VALUE;
+         return cid;
       }
-      return VMADDR_CID_ANY;
-   }
-#  endif // WINNT_DDK
+#  endif // _DDK_DRIVER_
 #else // _WIN32
 #if defined(linux) && !defined(VMKERNEL)
-#  ifndef __KERNEL__
+#  ifdef __KERNEL__
+   void VMCISock_KernelRegister(void);
+   void VMCISock_KernelDeregister(void);
+   int VMCISock_GetAFValue(void);
+   int VMCISock_GetLocalCID(void);
+#  else // __KERNEL__
 #  include <sys/types.h>
 #  include <sys/stat.h>
 #  include <fcntl.h>
@@ -145,6 +154,7 @@ struct sockaddr_vm {
 #  include <stdio.h>
 
 #  define VMCI_SOCKETS_DEFAULT_DEVICE      "/dev/vsock"
+#  define VMCI_SOCKETS_CLASSIC_ESX_DEVICE  "/vmfs/devices/char/vsock/vsock"
 #  define IOCTL_VMCI_SOCKETS_GET_AF_VALUE  1976
 #  define IOCTL_VMCI_SOCKETS_GET_LOCAL_CID 1977
 
@@ -187,7 +197,10 @@ struct sockaddr_vm {
 
       fd = open(VMCI_SOCKETS_DEFAULT_DEVICE, O_RDWR);
       if (fd < 0) {
-         return -1;
+         fd = open(VMCI_SOCKETS_CLASSIC_ESX_DEVICE, O_RDWR);
+         if (fd < 0) {
+            return -1;
+         }
       }
 
       if (ioctl(fd, IOCTL_VMCI_SOCKETS_GET_AF_VALUE, &family) < 0) {
@@ -223,7 +236,10 @@ struct sockaddr_vm {
 
       fd = open(VMCI_SOCKETS_DEFAULT_DEVICE, O_RDWR);
       if (fd < 0) {
-         return VMADDR_CID_ANY;
+         fd = open(VMCI_SOCKETS_CLASSIC_ESX_DEVICE, O_RDWR);
+         if (fd < 0) {
+            return VMADDR_CID_ANY;
+         }
       }
 
       if (ioctl(fd, IOCTL_VMCI_SOCKETS_GET_LOCAL_CID, &contextId) < 0) {
@@ -234,6 +250,11 @@ struct sockaddr_vm {
       return contextId;
    }
 #  endif // __KERNEL__
+#else
+#if defined(__APPLE__) && !defined(KERNEL)
+extern int VMCISock_GetAFValue(void);
+extern unsigned int VMCISock_GetLocalCID(void);
+#endif // __APPLE__ && !KERNEL
 #endif // linux && !VMKERNEL
 #endif // _WIN32
 

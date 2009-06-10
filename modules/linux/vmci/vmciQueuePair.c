@@ -29,6 +29,8 @@
 #  include <linux/module.h>
 #elif defined(_WIN32)
 #  include <wdm.h>
+#elif defined(__APPLE__)
+#  include <IOKit/IOLib.h>
 #endif /* __linux__ */
 
 #include "vm_assert.h"
@@ -50,8 +52,8 @@ typedef struct QueuePairEntry {
    uint64     consumeSize;
    uint64     numPPNs;
    PPNSet     ppnSet;
-   VA         produceQVA;
-   VA         consumeQVA;
+   void      *produceQ;
+   void      *consumeQ;
    uint32     refCount;
    ListItem   listItem;
 } QueuePairEntry;
@@ -71,7 +73,7 @@ static QueuePairEntry *QueuePairEntryCreate(VMCIHandle handle,
                                             VMCIId peer, uint32 flags,
                                             uint64 produceSize,
                                             uint64 consumeSize,
-                                            VA produceQVA, VA consumeQVA);
+                                            void *produceQ, void *consumeQ);
 static void QueuePairEntryDestroy(QueuePairEntry *entry);
 static int VMCIQueuePairAlloc_HyperCall(const QueuePairEntry *entry);
 static int VMCIQueuePairAllocHelper(VMCIHandle *handle, VMCIQueue **produceQ,
@@ -404,7 +406,7 @@ VMCIQueuePair_Alloc(VMCIHandle *handle,     // IN/OUT:
 #  define VMCIQP_OFFSET_OF(Struct, field) ((uintptr_t)&(((Struct *)0)->field))
 #ifdef __linux__
    ASSERT_ON_COMPILE(VMCIQP_OFFSET_OF(VMCIQueue, page) == PAGE_SIZE);
-#else
+#elif !defined(SOLARIS)
    ASSERT_ON_COMPILE(VMCIQP_OFFSET_OF(VMCIQueue, buffer) == PAGE_SIZE);
 #endif
 #  undef VMCIQP_OFFSET_OF
@@ -416,6 +418,42 @@ VMCIQueuePair_Alloc(VMCIHandle *handle,     // IN/OUT:
 
    return VMCIQueuePairAllocHelper(handle, produceQ, produceSize, consumeQ,
                                    consumeSize, peer, flags);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMCIQueuePair_AllocPriv --
+ *
+ *      Provided for compatibility with the host API. Always returns an error
+ *      since requesting privileges from the guest is not allowed. Use
+ *      VMCIQueuePair_Alloc instead.
+ *
+ * Results:
+ *      An error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+#ifdef __linux__
+EXPORT_SYMBOL(VMCIQueuePair_AllocPriv);
+#endif
+
+int
+VMCIQueuePair_AllocPriv(VMCIHandle *handle,           // IN/OUT:
+                        VMCIQueue  **produceQ,        // OUT:
+                        uint64     produceSize,       // IN:
+                        VMCIQueue  **consumeQ,        // OUT:
+                        uint64     consumeSize,       // IN:
+                        VMCIId     peer,              // IN:
+                        uint32     flags,             // IN:
+                        VMCIPrivilegeFlags privFlags) // IN:
+{
+   return VMCI_ERROR_NO_ACCESS;
 }
 
 
@@ -475,8 +513,8 @@ QueuePairEntryCreate(VMCIHandle handle,  // IN:
                      uint32 flags,       // IN:
                      uint64 produceSize, // IN:
                      uint64 consumeSize, // IN:
-                     VA produceQVA,      // IN:
-                     VA consumeQVA)      // IN:
+                     void *produceQ,     // IN:
+                     void *consumeQ)     // IN:
 {
    static VMCIId queuePairRID = VMCI_RESERVED_RESOURCE_ID_MAX + 1;
    QueuePairEntry *entry;
@@ -484,7 +522,7 @@ QueuePairEntryCreate(VMCIHandle handle,  // IN:
                           CEILING(consumeSize, PAGE_SIZE) +
                           2; /* One page each for the queue headers. */
 
-   ASSERT((produceSize || consumeSize) && produceQVA && consumeQVA);
+   ASSERT((produceSize || consumeSize) && produceQ && consumeQ);
    
    if (VMCI_HANDLE_INVALID(handle)) {
       VMCIId contextID = VMCI_GetContextID();
@@ -527,8 +565,8 @@ QueuePairEntryCreate(VMCIHandle handle,  // IN:
       entry->consumeSize = consumeSize;
       entry->numPPNs = numPPNs;
       memset(&entry->ppnSet, 0, sizeof entry->ppnSet);
-      entry->produceQVA = produceQVA;
-      entry->consumeQVA = consumeQVA;
+      entry->produceQ = produceQ;
+      entry->consumeQ = consumeQ;
       entry->refCount = 0;
       INIT_LIST_ITEM(&entry->listItem);
    }
@@ -559,8 +597,8 @@ QueuePairEntryDestroy(QueuePairEntry *entry) // IN:
    ASSERT(entry->refCount == 0);
 
    VMCI_FreePPNSet(&entry->ppnSet);
-   VMCI_FreeQueueKVA(entry->produceQVA, entry->produceSize);
-   VMCI_FreeQueueKVA(entry->consumeQVA, entry->consumeSize);
+   VMCI_FreeQueue(entry->produceQ, entry->produceSize);
+   VMCI_FreeQueue(entry->consumeQ, entry->consumeSize);
    VMCI_FreeKernelMem(entry, sizeof *entry);
 }
 
@@ -648,8 +686,8 @@ VMCIQueuePairAllocHelper(VMCIHandle *handle,   // IN/OUT:
 {
    const uint64 numProducePages = CEILING(produceSize, PAGE_SIZE) + 1;
    const uint64 numConsumePages = CEILING(consumeSize, PAGE_SIZE) + 1;
-   VA produceVA = 0;
-   VA consumeVA = 0;
+   void *myProduceQ = NULL;
+   void *myConsumeQ = NULL;
    int result;
    QueuePairEntry *queuePairEntry = NULL;
 
@@ -687,23 +725,23 @@ VMCIQueuePairAllocHelper(VMCIHandle *handle,   // IN/OUT:
          if (result < VMCI_SUCCESS) {
             goto errorKeepEntry;
          }
-         produceVA = queuePairEntry->consumeQVA;
-         consumeVA = queuePairEntry->produceQVA;
+         myProduceQ = queuePairEntry->consumeQ;
+         myConsumeQ = queuePairEntry->produceQ;
          goto out;
       }
       result = VMCI_ERROR_ALREADY_EXISTS;
       goto errorKeepEntry;
    }
 
-   produceVA = VMCI_AllocQueueKVA(produceSize);
-   if (!produceVA) {
+   myProduceQ = VMCI_AllocQueue(produceSize);
+   if (!myProduceQ) {
       VMCI_LOG((LGPFX "Error allocating pages for produce queue.\n"));
       result = VMCI_ERROR_NO_MEM;
       goto error;
    }
 
-   consumeVA = VMCI_AllocQueueKVA(consumeSize);
-   if (!consumeVA) {
+   myConsumeQ = VMCI_AllocQueue(consumeSize);
+   if (!myConsumeQ) {
       VMCI_LOG((LGPFX "Error allocating pages for consume queue.\n"));
       result = VMCI_ERROR_NO_MEM;
       goto error;
@@ -711,14 +749,14 @@ VMCIQueuePairAllocHelper(VMCIHandle *handle,   // IN/OUT:
 
    queuePairEntry = QueuePairEntryCreate(*handle, peer, flags,
                                          produceSize, consumeSize,
-                                         produceVA, consumeVA);
+                                         myProduceQ, myConsumeQ);
    if (!queuePairEntry) {
       VMCI_LOG((LGPFX "Error allocating memory in %s.\n", __FUNCTION__));
       result = VMCI_ERROR_NO_MEM;
       goto error;
    }
 
-   result = VMCI_AllocPPNSet(produceVA, numProducePages, consumeVA,
+   result = VMCI_AllocPPNSet(myProduceQ, numProducePages, myConsumeQ,
                              numConsumePages, &queuePairEntry->ppnSet);
    if (result < VMCI_SUCCESS) {
       VMCI_LOG((LGPFX "VMCI_AllocPPNSet failed.\n"));
@@ -765,8 +803,8 @@ VMCIQueuePairAllocHelper(VMCIHandle *handle,   // IN/OUT:
 out:
    queuePairEntry->refCount++;
    *handle = queuePairEntry->handle;
-   *produceQ = (VMCIQueue *)produceVA;
-   *consumeQ = (VMCIQueue *)consumeVA;
+   *produceQ = (VMCIQueue *)myProduceQ;
+   *consumeQ = (VMCIQueue *)myConsumeQ;
 
    /*
     * We should initialize the queue pair header pages on a local queue pair
@@ -786,14 +824,14 @@ out:
 error:
    QueuePairList_Unlock();
    if (queuePairEntry) {
-      /* The KVAs will be freed inside the destroy routine. */
+      /* The queues will be freed inside the destroy routine. */
       QueuePairEntryDestroy(queuePairEntry);
    } else {
-      if (produceVA) {
-         VMCI_FreeQueueKVA(produceVA, produceSize);
+      if (myProduceQ) {
+         VMCI_FreeQueue(myProduceQ, produceSize);
       }
-      if (consumeVA) {
-         VMCI_FreeQueueKVA(consumeVA, consumeSize);
+      if (myConsumeQ) {
+         VMCI_FreeQueue(myConsumeQ, consumeSize);
       }
    }
    return result;

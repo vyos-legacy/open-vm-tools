@@ -124,7 +124,7 @@ Sleeper(LockValues *myValues, // IN/OUT:
    while (msecSleepTime) {
       uint32 sleepTime = (msecSleepTime > 900) ? 900 : msecSleepTime;
 
-      usleep(1000 * sleepTime);
+      FileSleeper(sleepTime);
 
       msecSleepTime -= sleepTime;
    }
@@ -276,6 +276,7 @@ FileLockMemberValues(ConstUnicode lockDir,     // IN:
    FILELOCK_FILE_HANDLE handle;
    uint32 len;
    char *argv[FL_MAX_ARGS];
+   char *saveptr;
    int err;
    Unicode path;
    FileData fileData;
@@ -351,14 +352,15 @@ FileLockMemberValues(ConstUnicode lockDir,     // IN:
 
    /* Extract and validate the lock file data. */
    for (argc = 0; argc < FL_MAX_ARGS; argc++) {
-      argv[argc] = strtok((argc == 0) ? buffer : NULL, " ");
+      argv[argc] = strtok_r((argc == 0) ? buffer : NULL, " ", &saveptr);
 
       if (argv[argc] == NULL) {
          break;
       }
    }
 
-   if ((argc < 4) || ((argc == FL_MAX_ARGS) && (strtok(NULL, " ") != NULL))) {
+   if ((argc < 4) || ((argc == FL_MAX_ARGS) &&
+                       (strtok_r(NULL, " ", &saveptr) != NULL))) {
       goto corrupt;
    }
 
@@ -881,7 +883,7 @@ Scanner(ConstUnicode lockDir,    // IN:
          ptr = ptr->next;
       }
 
-      usleep(FILELOCK_PROGRESS_SAMPLE * 1000); // relax
+      FileSleeper(FILELOCK_PROGRESS_SAMPLE); // relax
    }
 
    // Clean up anything still on the list; they are no longer important
@@ -1178,12 +1180,10 @@ MakeDirectory(ConstUnicode pathName)  // IN:
 #if !defined(_WIN32)
    mode_t save;
 
-   ASSERT(pathName);
-
    save = umask(0);
-#else
-   ASSERT(pathName);
 #endif
+
+   ASSERT(pathName);
 
    err = FileCreateDirectoryRobust(pathName);
 
@@ -1251,9 +1251,9 @@ CreateEntryDirectory(const char *machineID,    // IN:
 
         if (fileData.fileType == FILE_TYPE_REGULAR) {
            /*
-            * It's a file. Assume this is an (active?) old style lock
-            * and err on the safe side - don't remove it (and
-            * automatically upgrade to a new style lock).
+            * It's a file. Assume this is an (active?) old style lock and
+            * err on the safe side - don't remove it (and automatically
+            * upgrade to a new style lock).
             */
 
             Log(LGPFX" %s: '%s' exists; an old style lock file?\n",

@@ -38,7 +38,6 @@
 #include "compat_spinlock.h"
 
 #include "vm_assert.h"
-#include "hgfsEscape.h"
 #include "cpName.h"
 #include "cpNameLite.h"
 #include "hgfsUtil.h"
@@ -439,8 +438,6 @@ HgfsPackGetattrRequest(HgfsReq *req,            // IN/OUT: Request buffer
          goto out;
       }
 
-      /* Unescape the CP name. */
-      result = HgfsEscape_Undo(fileName, result);
       *fileNameLength = result;
    }
    req->payloadSize = reqSize + result;
@@ -573,6 +570,10 @@ HgfsUnpackCommonAttr(HgfsReq *req,            // IN: Reply packet
          attrInfo->hostFileId = attrV2->hostFileId;
          attrInfo->mask |= HGFS_ATTR_VALID_FILEID;
       }
+      if (attrV2->mask & HGFS_ATTR_VALID_EFFECTIVE_PERMS) {
+         attrInfo->effectivePerms = attrV2->effectivePerms;
+         attrInfo->mask |= HGFS_ATTR_VALID_EFFECTIVE_PERMS;
+      }
    } else if (attrV1 != NULL) {
       /* Implicit mask for a Version 1 attr. */
       attrInfo->mask = HGFS_ATTR_VALID_TYPE |
@@ -580,7 +581,8 @@ HgfsUnpackCommonAttr(HgfsReq *req,            // IN: Reply packet
          HGFS_ATTR_VALID_ACCESS_TIME |
          HGFS_ATTR_VALID_WRITE_TIME |
          HGFS_ATTR_VALID_CHANGE_TIME |
-         HGFS_ATTR_VALID_OWNER_PERMS;
+         HGFS_ATTR_VALID_OWNER_PERMS |
+         HGFS_ATTR_VALID_EFFECTIVE_PERMS;
 
       attrInfo->type = attrV1->type;
       attrInfo->size = attrV1->size;
@@ -588,6 +590,7 @@ HgfsUnpackCommonAttr(HgfsReq *req,            // IN: Reply packet
       attrInfo->writeTime = attrV1->writeTime;
       attrInfo->attrChangeTime = attrV1->attrChangeTime;
       attrInfo->ownerPerms = attrV1->permissions;
+      attrInfo->effectivePerms = attrV1->permissions;
    }
 
    return 0;
@@ -828,7 +831,7 @@ HgfsPrivateGetattr(struct dentry *dentry,  // IN: Dentry containing name
 
   retry:
 
-   opUsed = atomic_read(&hgfsVersionGetattr);
+   opUsed = hgfsVersionGetattr;
    result = HgfsPackGetattrRequest(req, dentry, allowHandleReuse, opUsed, attr);
    if (result != 0) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsPrivateGetattr: no attrs\n"));
@@ -875,12 +878,12 @@ HgfsPrivateGetattr(struct dentry *dentry,  // IN: Dentry containing name
          if (attr->requestType == HGFS_OP_GETATTR_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsPrivateGetattr: Version 3 "
                     "not supported. Falling back to version 2.\n"));
-            atomic_set(&hgfsVersionGetattr, HGFS_OP_GETATTR_V2);
+            hgfsVersionGetattr = HGFS_OP_GETATTR_V2;
             goto retry;
          } else if (attr->requestType == HGFS_OP_GETATTR_V2) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsPrivateGetattr: Version 2 "
                     "not supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionGetattr, HGFS_OP_GETATTR);
+            hgfsVersionGetattr = HGFS_OP_GETATTR;
             goto retry;
          }
 

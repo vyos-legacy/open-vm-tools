@@ -199,6 +199,7 @@ typedef struct VixPropertyValue
    } value;
 
    Bool                       isDirty;
+   Bool                       isSensitive;
    struct VixPropertyValue    *next;
 } VixPropertyValue;
 
@@ -225,6 +226,10 @@ VixError VixPropertyList_Deserialize(VixPropertyListImpl *propListImpl,
                                      const char *buffer,
                                      size_t bufferSize);
  
+VixError VixPropertyList_DeserializeNoClobber(VixPropertyListImpl *propListImpl,
+                                              const char *buffer,
+                                              size_t bufferSize);
+
 VixError VixPropertyList_GetString(struct VixPropertyListImpl *propList,
                                    int propertyID,
                                    int index,
@@ -372,6 +377,15 @@ enum {
 
 
 /*
+ * Options for VixVM_ListFileSystemsInGuest()
+ */
+enum {
+   VIX_FILESYSTEMS_SHOW_ALL     = 0x000,
+   VIX_FILESYSTEMS_HIDE_NETWORK = 0x001,
+};
+
+
+/*
  *-----------------------------------------------------------------------------
  *
  * VixDebug --
@@ -383,11 +397,11 @@ enum {
  *
  *      VIX_DEBUG(("test debug message: %s %d\n", stringArg, intArg));
  *       
- *       Output will got to logfile if VIX_DEBUG_PREFERNCE_NAME is non-zero
+ *       Output will go to logfile if VIX_DEBUG_PREFERENCE_NAME is non-zero
  *
  *      VIX_DEBUG_LEVEL(3, ("test debug message: %s %d\n", stringArg, intArg));
  *
- *       Output will got to logfile if VIX_DEBUG_PREFERNCE_NAME is >=
+ *       Output will go to logfile if VIX_DEBUG_PREFERENCE_NAME is >=
  *       the first argument to the macro.
  * 
  *-----------------------------------------------------------------------------
@@ -396,8 +410,10 @@ enum {
 #ifndef VIX_HIDE_FROM_JAVA
 
 extern int vixDebugGlobalSpewLevel;
-extern char *VixAllocDebugString(char *fmt, ...);
-extern void VixDebugInit(int level, Bool panicOnVixAssert);
+extern int vixApiTraceGlobalSpewLevel;
+extern char *VixAllocDebugString(char *fmt, ...) PRINTF_DECL(1,2);
+extern void VixDebugInit(int debugLevel, int apiTraceLevel,
+                         Bool panicOnVixAssert);
 extern const char *VixDebug_GetFileBaseName(const char *path);
 extern void VixAssert(const char *cond, const char *file, int lineNum);
 
@@ -406,6 +422,7 @@ extern void VixAssert(const char *cond, const char *file, int lineNum);
  */
 #define VIX_DEBUG_PREFERENCE_NAME  "vix.debugLevel"
 #define VIX_ASSERT_PREFERENCE_NAME "vix.doAssert"
+#define VIX_API_TRACE_PREFERENCE_NAME "vix.apiTraceLevel"
 
 /*
  * Assertions.  Normally we'd just use ASSERT(), but we've hit many cases
@@ -424,6 +441,7 @@ extern void VixAssert(const char *cond, const char *file, int lineNum);
 #endif
 
 #define DEFAULT_VIX_LOG_LEVEL    0
+#define DEFAULT_VIX_API_TRACE_LEVEL 0
 
 #define VIX_DEBUG_LEVEL(logLevel, s) if (logLevel <= vixDebugGlobalSpewLevel) \
     {  char *debugString = VixAllocDebugString s; \
@@ -431,7 +449,7 @@ extern void VixAssert(const char *cond, const char *file, int lineNum);
            VixDebug_GetFileBaseName(__FILE__), __LINE__, debugString); \
        free(debugString); }
 
-#define VIX_DEBUG(s) if (0 !=  vixDebugGlobalSpewLevel) \
+#define VIX_DEBUG(s) if (0 != vixDebugGlobalSpewLevel) \
     {  char *debugString = VixAllocDebugString s; \
        Log("Vix: [%lu %s:%d]: %s", (unsigned long)Util_GetCurrentThreadId(),    \
            VixDebug_GetFileBaseName(__FILE__), __LINE__, debugString); \
@@ -440,6 +458,14 @@ extern void VixAssert(const char *cond, const char *file, int lineNum);
 #define VIX_DEBUG_ALWAYS(s) {  char *debugString = VixAllocDebugString s; \
        Log("Vix: [%lu %s:%d]: %s", (unsigned long) Util_GetCurrentThreadId(),         \
            VixDebug_GetFileBaseName(__FILE__), __LINE__, debugString); \
+       free(debugString); }
+
+#define VIX_API_TRACE_ON() (vixApiTraceGlobalSpewLevel > 0)
+
+#define VIX_API_LOG(s) if (VIX_API_TRACE_ON())                       \
+    {  char *debugString = VixAllocDebugString s;                    \
+       Log("VixApiLog: %lu %s %s\n", (unsigned long) Util_GetCurrentThreadId(),\
+           __FUNCTION__, debugString);                               \
        free(debugString); }
 
 #endif   // VIX_HIDE_FROM_JAVA

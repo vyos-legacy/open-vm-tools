@@ -35,7 +35,6 @@
 
 #include "hgfsProto.h"
 #include "escBitvector.h"
-#include "hgfsEscape.h"
 #include "cpName.h"
 #include "hgfsUtil.h"
 #include "request.h"
@@ -321,8 +320,6 @@ HgfsPackQueryVolumeRequest(struct dentry *dentry,   // IN: File pointer for this
       return -EINVAL;
    }
 
-   /* Unescape the CP name. */
-   result = HgfsEscape_Undo(name, result);
    *nameLength = (uint32) result;
    req->payloadSize = requestSize + result;
 
@@ -391,7 +388,7 @@ HgfsStatfs(struct super_block *sb,	// IN : The superblock
    }
 
   retry:
-   opUsed = atomic_read(&hgfsVersionQueryVolumeInfo);
+   opUsed = hgfsVersionQueryVolumeInfo;
    result = HgfsPackQueryVolumeRequest(dentryToUse, opUsed, req);
    if (result != 0) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsStatfs: error packing request\n"));
@@ -440,7 +437,7 @@ HgfsStatfs(struct super_block *sb,	// IN : The superblock
          if (opUsed == HGFS_OP_QUERY_VOLUME_INFO_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsStatfs: Version 3 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionQueryVolumeInfo, HGFS_OP_QUERY_VOLUME_INFO);
+            hgfsVersionQueryVolumeInfo = HGFS_OP_QUERY_VOLUME_INFO;
             goto retry;
          }
          break;

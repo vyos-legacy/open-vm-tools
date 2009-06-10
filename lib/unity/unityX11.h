@@ -205,6 +205,7 @@ struct _UnityPlatform {
       _NET_SUPPORTED,
       _NET_FRAME_EXTENTS,
       WM_CLASS,
+      WM_CLIENT_LEADER,
       WM_DELETE_WINDOW,
       WM_ICON,
       WM_NAME,
@@ -214,7 +215,7 @@ struct _UnityPlatform {
    } atoms;
 
    UnityWindowTracker *tracker;
-   UnityUpdateThreadData updateData;
+   UnityUpdateChannel *updateChannel;
 
    /*
     * This tracks all toplevel windows, whether or not they are showing through to the
@@ -298,6 +299,7 @@ struct UnityPlatformWindow {
    Window rootWindow;
    int screenNumber;
    int desktopNumber;
+   int onUnmapDesktopNumber;    ///< @sa wantSetDesktopNumberOnUnmap
    UnityPlatformWindow *higherWindow;
    UnityPlatformWindow *lowerWindow;
 
@@ -317,6 +319,20 @@ struct UnityPlatformWindow {
    Bool isViewable;
    Bool wasViewable;
    Bool wantInputFocus;
+   /**
+    * Indicates we wish to force a value of _NET_CURRENT_DESKTOP across XUnmapWindow.
+    *
+    * When we unmap a window, its _NET_CURRENT_DESKTOP property is cleared.  There are
+    * some circumstances in which this behavior is undesirable.  (E.g., once we hide
+    * the KDE taskbar, it will only appear on desktop #0 after exiting Unity, as KDE
+    * doesn't automatically remap panel/dock windows as sticky windows.)
+    *
+    * Setting this flag (in combination with setting onUnmapDesktopNumber) causes
+    * us to reset the _NET_CURRENT_DESKTOP property in response to receiving its
+    * PropertyDelete.  If a PropertyNewValue arrives before the -Delete, we'll query
+    * and record the new value into onUnmapDesktopNumber (if the property exists).
+    */
+   Bool wantSetDesktopNumberOnUnmap;
 
    /*
     * Mini state-machine:
@@ -369,13 +385,15 @@ Bool UPWindow_ProtocolSupported(const UnityPlatform *up,
 UnityPlatformWindow *UPWindow_Lookup(UnityPlatform *up, Window window);
 void UPWindow_SetUserTime(UnityPlatform *up,
                           UnityPlatformWindow *upw);
+void UPWindow_SetEWMHDesktop(UnityPlatform *up,
+                             UnityPlatformWindow *upw,
+                             uint32 ewmhDesktopId);
 
 /*
  * Implemented by unityPlatformX11.c
  */
 Bool UnityPlatformWMProtocolSupported(UnityPlatform *up, UnityX11WMProtocol proto);
 Bool UnityPlatformIsRootWindow(UnityPlatform *up, Window window);
-void UnityPlatformSendPendingUpdates(UnityPlatform *up, int flags);
 uint32 UnityX11GetCurrentDesktop(UnityPlatform *up);
 void UnityX11SetCurrentDesktop(UnityPlatform *up, uint32 currentDesktop);
 Time UnityPlatformGetServerTime(UnityPlatform *up);
@@ -388,7 +406,6 @@ Time UnityPlatformGetServerTime(UnityPlatform *up);
 
 int UnityPlatformGetErrorCount(UnityPlatform *up);
 void UnityPlatformResetErrorCount(UnityPlatform *up);
-void UnityPlatformDumpUpdate(UnityPlatform *up);
 Bool UnityPlatformSetTaskbarVisible(UnityPlatform *up, Bool currentSetting);
 void UnityPlatformSendClientMessage(UnityPlatform *up, Window destWindow,
 				    Window w, Atom messageType,

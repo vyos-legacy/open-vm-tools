@@ -49,7 +49,7 @@
 #include "su.h"
 
 #if defined(__APPLE__)
-#include <sys/socket.h>
+#include "sysSocket.h" // Don't move this: it fixes a system header.
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -89,6 +89,7 @@
 #include "stats_file.h"
 
 #include "unicodeOperations.h"
+#include "memaligned.h"
 
 #if defined(__APPLE__)
 #include "hostinfo.h"
@@ -114,6 +115,7 @@ static const int FileIO_OpenActions[] = {
  */
 typedef struct FilePosixOptions {
    Bool initialized;
+   Bool aligned;
    Bool enabled;
    int countThreshold;
    int sizeThreshold;
@@ -204,6 +206,14 @@ FileIO_OptionalSafeInitialize(void)
    if (!filePosixOptions.initialized) {
       filePosixOptions.enabled =
          Config_GetBool(TRUE, "filePosix.coalesce.enable");
+      /*
+       * Aligned malloc starts failing to allocate memory during
+       * heavy I/O on Linux.  We're not sure why -- maybe we
+       * are running out of mmaps?  Turn it off by default
+       * for now.
+       */
+      filePosixOptions.aligned =
+         Config_GetBool(FALSE, "filePosix.coalesce.aligned");
       filePosixOptions.countThreshold =
          Config_GetLong(5, "filePosix.coalesce.count");
       filePosixOptions.sizeThreshold =
@@ -326,8 +336,9 @@ FileIO_CreateFDPosix(int posix,  // IN: UNIX file descriptor
  *      Get sector size of underlying volume.
  *
  * Results:
- *      Always FALSE, there does not seem to be a way to query sectorSize
- *      from filename. XXX.
+ *      Always 512, there does not seem to be a way to query sectorSize
+ *      from filename.  But O_DIRECT boundary alignment constraint is
+ *      always 512, so use that.
  *
  * Side effects:
  *      None
@@ -341,9 +352,9 @@ FileIO_GetVolumeSectorSize(ConstUnicode pathName,  // IN:
 {
    ASSERT(sectorSize);
 
-   *sectorSize = 0;
+   *sectorSize = 512;
 
-   return FALSE;
+   return TRUE;
 }
 
 
@@ -371,6 +382,7 @@ ProxySendResults(int sock_fd,    // IN:
 {
    struct iovec iov;
    struct msghdr msg;
+   char cmsgBuf[CMSG_SPACE(sizeof send_fd)];
 
    iov.iov_base = &send_errno;
    iov.iov_len = sizeof send_errno;
@@ -380,7 +392,6 @@ ProxySendResults(int sock_fd,    // IN:
       msg.msg_controllen = 0;
    } else {
       struct cmsghdr *cmsg;
-      char cmsgBuf[CMSG_SPACE(sizeof send_fd)];
 
       msg.msg_control = cmsgBuf;
       msg.msg_controllen = sizeof cmsgBuf;
@@ -697,7 +708,7 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
               FileIOOpenAction action,   // IN:
               int mode)                  // IN: mode_t for creation
 {
-   Bool su = FALSE;
+   uid_t uid = -1;
    int fd = -1;
    int flags = 0;
    int error;
@@ -789,8 +800,7 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
    file->flags = access;
 
    if (access & FILEIO_OPEN_PRIVILEGED) {
-      su = IsSuperUser();
-      SuperUser(TRUE);
+      uid = Id_BeginSuperUser();
    }
 
    flags |= 
@@ -804,7 +814,7 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
    error = errno;
 
    if (access & FILEIO_OPEN_PRIVILEGED) {
-      SuperUser(su);
+      Id_EndSuperUser(uid);
    }
 
    errno = error;
@@ -1139,6 +1149,9 @@ FileIO_Read(FileIODescriptor *fd,       // IN
             continue;
          }
          fret = FileIOErrno2Result(errno);
+         if (FILEIO_ERROR == fret) {
+            Log("read failed, errno=%d, %s\n", errno, strerror(errno));
+         }
          break;
       }
 
@@ -1194,8 +1207,8 @@ FileIO_Truncate(FileIODescriptor *file, // IN
  *      Close a file
  *
  * Results:
- *      On success: 0
- *      On failure: non-zero
+ *      TRUE: an error occured
+ *      FALSE: no error occured
  *
  * Side effects:
  *      None
@@ -1203,14 +1216,14 @@ FileIO_Truncate(FileIODescriptor *file, // IN
  *----------------------------------------------------------------------
  */
 
-int
+Bool
 FileIO_Close(FileIODescriptor *file) // IN
 {
-   int retval;
+   int err;
 
    ASSERT(file);
 
-   retval = close(file->posix);
+   err = (close(file->posix) == -1) ? errno : 0;
 
    FileIO_StatsExit(file);
 
@@ -1219,7 +1232,11 @@ FileIO_Close(FileIODescriptor *file) // IN
    FileIO_Cleanup(file);
    FileIO_Invalidate(file);
 
-   return retval;
+   if (err) {
+      errno = err;
+   }
+
+   return err != 0;
 }
 
 
@@ -1307,7 +1324,14 @@ FileIOCoalesce(struct iovec *inVec,     // IN:  Vector to coalesce from
    // XXX: Wouldn't it be nice if we could log from here!
    //LOG(5, ("FILE: Coalescing %s of %d elements and %d size\n",
    //        isWrite ? "write" : "read", inCount, inTotalSize));
-   cBuf = Util_SafeMalloc(sizeof(uint8) * inTotalSize);
+   if (filePosixOptions.aligned) {
+      cBuf = Aligned_Malloc(sizeof(uint8) * inTotalSize);
+   } else {
+      cBuf = Util_SafeMalloc(sizeof(uint8) * inTotalSize);
+   }
+   if (!cBuf) {
+      return FALSE;
+   }
 
   if (isWrite) {
       IOV_WriteIovToBuf(inVec, inCount, cBuf, inTotalSize);
@@ -1354,7 +1378,11 @@ FileIODecoalesce(struct iovec *coVec,   // IN: Coalesced (1-entry) vector
       IOV_WriteBufToIov(coVec->iov_base, actualSize, origVec, origVecCount);
    }
 
-   free(coVec->iov_base);
+   if (filePosixOptions.aligned) {
+      Aligned_Free(coVec->iov_base);
+   } else {
+      free(coVec->iov_base);
+   }
 }
 
 
@@ -1810,6 +1838,88 @@ FileIO_GetSize(const FileIODescriptor *fd)  // IN:
 /*
  *----------------------------------------------------------------------
  *
+ * FileIO_GetAllocSize --
+ *
+ *      Get allocated size of file.
+ *
+ * Results:
+ *      Size of file or -1.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+int64
+FileIO_GetAllocSize(const FileIODescriptor *fd)  // IN
+{
+   struct stat s;
+
+   ASSERT(fd);
+
+#if __linux__ && defined(N_PLAT_NLM)
+   /* Netware doesn't have st_blocks.  Just fall back to GetSize. */ 
+   return FileIO_GetSize(fd);
+#else
+   /*
+    * If you don't like the magic number 512, yell at the people
+    * who wrote sys/stat.h and tell them to add a #define for it.
+    */
+   return (fstat(fd->posix, &s) == -1) ? -1 : s.st_blocks * 512;
+#endif
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileIO_SetAllocSize --
+ *
+ *      Set allocated size of file, allocating new blocks if needed.
+ *      It is an error for size to be less than the current size.
+ *
+ * Results:
+ *      TRUE on success.  Sets errno on failure.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+Bool
+FileIO_SetAllocSize(const FileIODescriptor *fd,  // IN
+                    uint64 size)                 // IN
+{
+#ifdef __APPLE__
+   fstore_t prealloc;
+   uint64 curSize;
+
+   curSize = FileIO_GetAllocSize(fd);
+
+   if (curSize > size) {
+      errno = EINVAL;
+      return FALSE;
+   }
+
+   prealloc.fst_flags = 0;
+   prealloc.fst_posmode = F_PEOFPOSMODE;
+   prealloc.fst_offset = 0;
+   prealloc.fst_length = size - curSize;
+   prealloc.fst_bytesalloc = 0;
+
+   return fcntl(fd->posix, F_PREALLOCATE, &prealloc) != -1;
+#else
+   errno = EINVAL;
+   return FALSE;
+#endif
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
  * FileIO_GetSizeByPath --
  *
  *      Get size of a file specified by path. 
@@ -1980,6 +2090,35 @@ FileIO_SupportsFileSize(const FileIODescriptor *fd,  // IN:
 /*
  *----------------------------------------------------------------------
  *
+ * FileIO_GetModTime --
+ *
+ *      Retrieve last modification time.
+ *
+ * Results:
+ *      Return POSIX epoch time or -1 on error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+int64
+FileIO_GetModTime(const FileIODescriptor *fd)
+{
+   struct stat statbuf;
+
+   if (fstat(fd->posix, &statbuf) == 0) {
+      return statbuf.st_mtime;
+   } else {
+      return -1;
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
  * FileIO_PrivilegedPosixOpen --
  *
  *      Opens file with elevated privileges.
@@ -1997,8 +2136,9 @@ int
 FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
                            int flags)              // IN:
 {
-   Bool suNeeded = FALSE;
    int fd;
+   Bool suDone;
+   uid_t uid = -1;
 
    if (pathName == NULL) {
       errno = EFAULT;
@@ -2007,21 +2147,29 @@ FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
 
    /*
     * I've said *opens*.  I want you really think twice before creating files
-    * with elevated privileges, so for them you have to use SuperUser()
+    * with elevated privileges, so for them you have to use Id_BeginSuperUser()
     * yourself.
     */
+
    ASSERT((flags & (O_CREAT | O_TRUNC)) == 0);
-   suNeeded = !IsSuperUser();
-   if (suNeeded) {
-      SuperUser(TRUE);
+
+   if (Id_IsSuperUser()) {
+      suDone = FALSE;
+   } else {
+      uid = Id_BeginSuperUser();
+      suDone = TRUE;
    }
+
    fd = Posix_Open(pathName, flags, 0);
-   if (suNeeded) {
+
+   if (suDone) {
       int error = errno;
 
-      SuperUser(FALSE);
+      Id_EndSuperUser(uid);
       errno = error;
    }
+
+
    return fd;
 }
 
@@ -2050,7 +2198,8 @@ FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
  */
 
 FILE *
-FileIO_DescriptorToStream(FileIODescriptor *fdesc)    // IN
+FileIO_DescriptorToStream(FileIODescriptor *fdesc,  // IN:
+                          Bool textMode)            // IN: unused
 {
    int dupFd;
    const char *mode;
@@ -2066,8 +2215,6 @@ FileIO_DescriptorToStream(FileIODescriptor *fdesc)    // IN
    if (dupFd == -1) {
       return NULL;
    }
-
-
 
    if (tmpFlags == (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_ACCESS_WRITE)) {
       mode = "r+";
@@ -2116,6 +2263,8 @@ FileIO_ResetExcludedFromTimeMachine(char const *pathName) // IN
    char xattr;
    ssize_t gXattrResult = getxattr(pathName, XATTR_BACKUP_REENABLED,
                                    &xattr, sizeof(xattr), 0, 0);
+   int sXattrResult;
+
    if (gXattrResult != -1) {
       // We have already seen this file, don't touch it again.
       goto exit;
@@ -2131,8 +2280,8 @@ FileIO_ResetExcludedFromTimeMachine(char const *pathName) // IN
       goto exit;
    }
    xattr = '1';
-   int sXattrResult = setxattr(pathName, XATTR_BACKUP_REENABLED,
-                               &xattr, sizeof(xattr), 0, 0);
+   sXattrResult = setxattr(pathName, XATTR_BACKUP_REENABLED,
+                           &xattr, sizeof(xattr), 0, 0);
    if (sXattrResult == -1) {
       LOG_ONCE((LGPFX" %s Couldn't set xattr on path [%s]: %s.\n",
                 __func__, pathName, strerror(errno)));

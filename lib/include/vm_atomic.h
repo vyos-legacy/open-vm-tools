@@ -196,9 +196,28 @@ static INLINE void
 AtomicEpilogue(void)
 {
 #ifdef ATOMIC_USE_FENCE
+#ifdef VMM
+      /* The monitor conditionally patches out the lfence when not needed.*/
+      /* Construct a MonitorPatchTextEntry in the .patchtext section. */
+   asm volatile ("1:\n\t"
+                 "lfence\n\t"
+                 "2:\n\t"
+                 ".pushsection .patchtext\n\t"
+#ifdef VMM32
+                 ".long 1b\n\t"
+                 ".long 0\n\t"
+                 ".long 2b\n\t"
+                 ".long 0\n\t"
+#else 
+                 ".quad 1b\n\t"
+                 ".quad 2b\n\t"
+#endif
+                 ".popsection\n\t" ::: "memory");
+#else
    if (UNLIKELY(AtomicUseFence)) {
       asm volatile ("lfence" ::: "memory");
    }
+#endif
 #endif
 }
 
@@ -1417,6 +1436,39 @@ Atomic_ReadDec64(Atomic_uint64 *var) // IN
 #endif
 
 
+#ifdef VMKERNEL
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * CMPXCHG1B --
+ *
+ *      Compare and exchange a single byte.
+ *
+ * Results:
+ *      The value read from ptr.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+static INLINE uint8
+CMPXCHG1B(volatile uint8 *ptr, // IN
+          uint8 oldVal,        // IN
+          uint8 newVal)        // IN
+{
+   uint8 val;
+   __asm__ __volatile__("lock; cmpxchgb %b2, %1"
+                        : "=a" (val),
+                          "+m" (*ptr)
+                        : "r" (newVal),
+                          "0" (oldVal)
+                        : "cc");
+   return val;
+}
+#endif
+
+
 /*
  * Usage of this helper struct is strictly reserved to the following
  * function. --hpreg
@@ -1854,6 +1906,17 @@ Atomic_Write64(Atomic_uint64 *var, // IN
    typedef Atomic_uint ## size Atomic_ ## name;                               \
                                                                               \
                                                                               \
+   static INLINE void                                                         \
+   AtomicAssertOnCompile ## name(void)                                        \
+   {                                                                          \
+      enum { AssertOnCompileMisused =    8 * sizeof (in) == size              \
+                                      && 8 * sizeof (out) == size             \
+                                      && 8 * sizeof (cast) == size            \
+                                         ? 1 : -1 };                          \
+      typedef char AssertOnCompileFailed[AssertOnCompileMisused];             \
+   }                                                                          \
+                                                                              \
+                                                                              \
    static INLINE out                                                          \
    Atomic_Read ## name(Atomic_ ## name const *var)                            \
    {                                                                          \
@@ -2012,11 +2075,10 @@ Atomic_Write64(Atomic_uint64 *var, // IN
  */
 #if defined(__x86_64__)
 MAKE_ATOMIC_TYPE(Ptr, 64, void const *, void *, uintptr_t)
-MAKE_ATOMIC_TYPE(Int, 64, int, int, int)
 #else
 MAKE_ATOMIC_TYPE(Ptr, 32, void const *, void *, uintptr_t)
-MAKE_ATOMIC_TYPE(Int, 32, int, int, int)
 #endif
+MAKE_ATOMIC_TYPE(Int, 32, int, int, int)
 
 
 /*

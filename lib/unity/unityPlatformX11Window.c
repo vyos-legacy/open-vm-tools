@@ -77,7 +77,8 @@ static void UPWindowSetWindows(UnityPlatform *up,
                                UnityPlatformWindow *upw,
                                Window toplevelWindow,
                                Window clientWindow);
-
+static Window UPWindowLookupClientLeader(UnityPlatform *up,
+                                         UnityPlatformWindow *upw);
 
 #ifdef VMX86_DEVEL
 /*
@@ -449,6 +450,15 @@ UPWindowSetWindows(UnityPlatform *up,        // IN
       XSelectInput(up->display, upw->clientWindow, 0);
       HashTable_Delete(up->allWindows, GUINT_TO_POINTER(upw->clientWindow));
    }
+#if defined(VM_HAVE_X11_SHAPE_EXT)
+   if (up->shapeEventBase) {
+      XShapeSelectInput(up->display, upw->toplevelWindow, 0);
+
+      if (upw->clientWindow) {
+         XShapeSelectInput(up->display, upw->clientWindow, 0);
+      }
+   }
+#endif
 
    /*
     * Okay, now we may have two UnityPlatformWindows running around, one each for
@@ -487,6 +497,10 @@ UPWindowSetWindows(UnityPlatform *up,        // IN
 #if defined(VM_HAVE_X11_SHAPE_EXT)
    if (up->shapeEventBase) {
       XShapeSelectInput(up->display, toplevelWindow, ShapeNotifyMask);
+
+      if (upw->clientWindow) {
+         XShapeSelectInput(up->display, upw->clientWindow, ShapeNotifyMask);
+      }
    }
 #endif
 
@@ -1036,6 +1050,24 @@ UPWindow_CheckRelevance(UnityPlatform *up,        // IN
                   return;
                }
             } else if (event->atom == up->atoms._NET_WM_DESKTOP) {
+               if (upw->wantSetDesktopNumberOnUnmap) {
+                  /*
+                   * We're to preserve _NET_WM_DESKTOP across unmapping and remapping a
+                   * window (most likely a taskbar).  If we see PropertyDelete, assume
+                   * it's ours and reset the _NET_WM_DESKTOP property.  If, however, we
+                   * instead see a PropertyNewValue (the only other possibility, hence
+                   * no "else" below), then we assume some other client wished to change
+                   * the property, and we forget about restoring _NET_WM_DESKTOP when
+                   * we remap the window later.
+                   */
+                  if (event->state == PropertyDelete) {
+                     Debug("%s: PropertyDelete: _NET_WM_DESKTOP: %#lx.  Resetting to %d.\n",
+                           __func__, upw->clientWindow, upw->onUnmapDesktopNumber);
+                     UPWindow_SetEWMHDesktop(up, upw, upw->onUnmapDesktopNumber);
+                  }
+                  upw->wantSetDesktopNumberOnUnmap = FALSE;
+                  return;
+               }
                regetDesktop = TRUE;
             } else if (event->atom != up->atoms._NET_WM_WINDOW_TYPE) {
                return;
@@ -1064,6 +1096,10 @@ UPWindow_CheckRelevance(UnityPlatform *up,        // IN
          break;
 
       case MapNotify:
+         if (upw->wantSetDesktopNumberOnUnmap) {
+            Debug("%s: Expected PropertyDelete before MapNotify.\n", __func__);
+            upw->wantSetDesktopNumberOnUnmap = FALSE;
+         }
          regetDesktop = TRUE;
          break;
 
@@ -1120,6 +1156,10 @@ UPWindow_CheckRelevance(UnityPlatform *up,        // IN
       if (regetDesktop) {
          if (!UPWindowGetDesktop(up, upw, &upw->desktopNumber)) {
             upw->desktopNumber = -1;
+         } else {
+            if (upw->wantSetDesktopNumberOnUnmap) {
+               upw->onUnmapDesktopNumber = upw->desktopNumber;
+            }
          }
       }
       if (upw->desktopNumber < up->desktopInfo.numDesktops
@@ -1694,7 +1734,6 @@ UnityPlatformArgvToWindowPaths(UnityPlatform *up,        // IN
    int numQueryArgs;
    int i;
    int err;
-   char *ctmp = NULL;
    char **argv;
    char *windowQueryString = NULL;
    char *execQueryString = NULL;
@@ -1719,6 +1758,7 @@ UnityPlatformArgvToWindowPaths(UnityPlatform *up,        // IN
    }
 
    if (argv[0][0] != '/') {
+      char *ctmp = NULL;
       if ((ctmp = AppUtil_CanonicalizeAppName(argv[0], cwd))) {
          char **newArgv;
          newArgv = alloca(argc * sizeof argv[0]);
@@ -1915,9 +1955,11 @@ UnityX11GetWindowPaths(UnityPlatform *up,        // IN
    int ret;
    Window checkWindow;
    Bool retval = FALSE;
+   Bool triedLeader = FALSE;
 
    checkWindow = upw->clientWindow ? upw->clientWindow : upw->toplevelWindow;
 
+tryLeader:
    UnityPlatformResetErrorCount(up);
    ret = XGetWindowProperty(up->display, checkWindow, up->atoms._NET_WM_PID, 0,
                             1024, False, AnyPropertyType,
@@ -1958,7 +2000,7 @@ UnityX11GetWindowPaths(UnityPlatform *up,        // IN
 
    if (!retval && XGetClassHint(up->display, checkWindow, &classHint)) {
       /*
-       * Last-ditch - try finding the WM_CLASS on $PATH.
+       * Try finding the WM_CLASS on $PATH.
        */
 
       char *fakeArgv[2] = {NULL, NULL};
@@ -1976,6 +2018,18 @@ UnityX11GetWindowPaths(UnityPlatform *up,        // IN
 
       XFree(classHint.res_name);
       XFree(classHint.res_class);
+   }
+
+   if (!retval && !triedLeader) {
+      /*
+       * Last ditch - look for a client leader window and try all of the above
+       * again.
+       */
+      checkWindow = UPWindowLookupClientLeader(up, upw);
+      if (checkWindow != None) {
+         triedLeader = TRUE;
+         goto tryLeader;
+      }
    }
 
    Debug("UnityX11GetWindowPath(%#lx) returning %s\n", upw->toplevelWindow,
@@ -2271,7 +2325,7 @@ UnityPlatformGetIconData(UnityPlatform *up,       // IN
 /*
  *----------------------------------------------------------------------------
  *
- * UnityPlatformRestoreWindow --
+ * UnityPlatformUnminimizeWindow --
  *
  *      Tell the window to restore from the minimized state to its original
  *      size.
@@ -2286,8 +2340,8 @@ UnityPlatformGetIconData(UnityPlatform *up,       // IN
  */
 
 Bool
-UnityPlatformRestoreWindow(UnityPlatform *up,    // IN
-                           UnityWindowId window) // IN
+UnityPlatformUnminimizeWindow(UnityPlatform *up,    // IN
+                              UnityWindowId window) // IN
 {
    UnityPlatformWindow *upw;
 
@@ -2300,7 +2354,7 @@ UnityPlatformRestoreWindow(UnityPlatform *up,    // IN
       return FALSE;
    }
 
-   Debug("UnityPlatformRestoreWindow(%#lx)\n", upw->toplevelWindow);
+   Debug("%s(%#lx)\n", __func__, upw->toplevelWindow);
    if (upw->isMinimized) {
       Atom data[5] = {0, 0, 0, 0, 0};
 
@@ -2515,6 +2569,31 @@ UPWindowUpdateShape(UnityPlatform *up,        // IN
    XFree(rects); rects = NULL;
    rectCount = 0;
 
+   /*
+    * The X Shape Extension operates on unshaped windows by using default bounding
+    * and clipping regions.  I.e., XShapeGetRectangles will return a single rectangle
+    * for an unshaped window.  Without the following test, we'd end up informing the
+    * Unity client that this window can be described by a single rectangle region,
+    * and it'd expect further region updates when the window's geometry changes.
+    *
+    * This wouldn't be a problem, except we don't receive XShapeEvents on these
+    * windows when they're resized.  To work around this, we make sure that the UWT
+    * knows that unshaped windows are exactly that.
+    */
+   {
+      int bShaped;
+      int cShaped;
+      int dummy;
+
+      XShapeQueryExtents(up->display, upw->toplevelWindow,
+                         &bShaped, &dummy, &dummy, &dummy, &dummy,
+                         &cShaped, &dummy, &dummy, &dummy, &dummy);
+      if (!bShaped && !cShaped) {
+         UnityWindowTracker_ChangeWindowRegion(up->tracker, upw->toplevelWindow, 0);
+         return;
+      }
+   }
+
    UnityPlatformResetErrorCount(up);
 
    /*
@@ -2711,7 +2790,7 @@ UPWindow_ProcessEvent(UnityPlatform *up,        // IN
 
    case MapNotify:
       /*
-       * This is here because we want to set input focus as part of RestoreWindow, but
+       * This is here because we want to set input focus as part of UnminimizeWindow, but
        * can't call XSetInputFocus until the window has actually been shown.
        */
       if (upw->wantInputFocus && upw->clientWindow) {
@@ -3813,7 +3892,6 @@ UnityPlatformSetWindowDesktop(UnityPlatform *up,         // IN
                               UnityDesktopId desktopId)  // IN
 {
    UnityPlatformWindow *upw;
-   Atom data[5] = {0, 0, 0, 0, 0};
    uint32 guestDesktopId;
 
    ASSERT(up);
@@ -3837,8 +3915,44 @@ UnityPlatformSetWindowDesktop(UnityPlatform *up,         // IN
    ASSERT(desktopId < up->desktopInfo.numDesktops);
    guestDesktopId = up->desktopInfo.unityDesktopToGuest[desktopId];
 
-   if (!upw->isViewable) {
-     Atom currentDesktop = guestDesktopId; // Cast for 64-bit correctness.
+   UPWindow_SetEWMHDesktop(up, upw, guestDesktopId);
+
+   return TRUE;
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UPWindow_SetEWMHDesktop --
+ *
+ *     Move the window to the specified desktop.  ewmhDesktopId corresponds
+ *     to a desktop index to be used with _NET_WM_DESKTOP.
+ *
+ * Results:
+ *     This will directly change _NET_WM_DESKTOP of an unmapped window,
+ *     and will instead request the window manager to update that property
+ *     for a mapped window.
+ *
+ * Side effects:
+ *     None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+
+void
+UPWindow_SetEWMHDesktop(UnityPlatform *up,               // IN
+                        UnityPlatformWindow *upw,        // IN
+                        uint32 ewmhDesktopId)            // IN
+{
+   Atom data[5] = {0, 0, 0, 0, 0};
+
+   ASSERT(up);
+   ASSERT(upw);
+
+   if (!upw->isViewable || upw->wantSetDesktopNumberOnUnmap) {
+     Atom currentDesktop = ewmhDesktopId; // Cast for 64-bit correctness.
 
      /*
       * Sending the _NET_WM_DESKTOP client message only works if the
@@ -3846,19 +3960,75 @@ UnityPlatformSetWindowDesktop(UnityPlatform *up,         // IN
       * eliminate race conditions, but if the window is not mapped, we
       * also need to set the property on the window so that it shows
       * up on the correct desktop when it is re-mapped.
+      *
+      * wantSetDesktopNumberOnUnmap implies that we unmapped the window
+      * in question.  We evaluate this here, in addition to isViewable,
+      * because it's totally possible that the window server processed
+      * our unmap request, but we just haven't received the notification
+      * yet.  (In other words, if that's the case, isViewable may still
+      * be TRUE.)
       */
 
      XChangeProperty(up->display, (Window)upw->clientWindow, up->atoms._NET_WM_DESKTOP,
 		     XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&currentDesktop, 1);
    }
 
-   data[0] = guestDesktopId;
+   data[0] = ewmhDesktopId;
    data[1] = 2; // Indicates that this was requested by the pager/taskbar/etc.
    UnityPlatformSendClientMessage(up,
 				  upw->rootWindow,
 				  upw->clientWindow,
 				  up->atoms._NET_WM_DESKTOP,
 				  32, 5, data);
+}
 
-   return TRUE;
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UPWindowLookupClientLeader --
+ *
+ *      Given a UnityPlatformWindow, look up the associated "client leader"
+ *      window, identified by the WM_CLIENT_LEADER property, if it exists.
+ *
+ * Results:
+ *      A valid window ID if found, otherwise None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Window
+UPWindowLookupClientLeader(UnityPlatform *up,           // IN
+                           UnityPlatformWindow *upw)    // IN
+{
+   Atom propertyType;
+   int propertyFormat;
+   unsigned long itemsReturned;
+   unsigned long bytesRemaining;
+   unsigned char *valueReturned = NULL;
+
+   Window checkWindow;
+   Window leaderWindow = None;
+
+   ASSERT(up);
+   ASSERT(upw);
+
+   checkWindow = upw->clientWindow ? upw->clientWindow : upw->toplevelWindow;
+
+   UnityPlatformResetErrorCount(up);
+   XGetWindowProperty(up->display, checkWindow, up->atoms.WM_CLIENT_LEADER, 0,
+                      4, False, XA_WINDOW, &propertyType, &propertyFormat,
+                      &itemsReturned, &bytesRemaining, &valueReturned);
+
+   if (UnityPlatformGetErrorCount(up) == 0 && propertyFormat == 32 &&
+       itemsReturned == 1) {
+      leaderWindow = *(XID *)valueReturned;
+   }
+
+   XFree(valueReturned);
+
+   return leaderWindow;
 }

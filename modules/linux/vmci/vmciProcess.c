@@ -41,6 +41,7 @@
 #include "circList.h"
 #include "vmciUtil.h"
 #include "vmciGuestKernelAPI.h"
+#include "vmciCommonInt.h"
 
 static ListItem *processList = NULL;
 static VMCILock processLock;
@@ -134,8 +135,7 @@ VMCIProcess_CheckHostCapabilities(void)
  */
 
 int
-VMCIProcess_Create(VMCIProcess **outProcess,     // IN
-                   int eventHnd)                 // IN
+VMCIProcess_Create(VMCIProcess **outProcess) // IN
 {
    VMCIProcess *process;
    VMCILockFlags flags;
