@@ -1,8 +1,5 @@
 ################################################################################
-### Copyright 2007 VMware, Inc.  All rights reserved.
-###
-### Top-level Makefile for building the VMware OSS Tools.
-###
+### Copyright 2009 VMware, Inc.  All rights reserved.
 ###
 ### This program is free software; you can redistribute it and/or modify
 ### it under the terms of version 2 of the GNU General Public License as
@@ -18,38 +15,26 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-# These flags get passed to aclocal when autoreconf calls it, and tell aclocal
-# that all of our macros are in the 'm4' subdirectory.
-ACLOCAL_AMFLAGS = -I m4
+plugindir = @VMSVC_PLUGIN_INSTALLDIR@
+plugin_LTLIBRARIES = libhgfsServer.la
 
-# These subdirectories require X, and may be disabled using --without-x
-X11_SUBDIRS =
-X11_SUBDIRS += vmware-user
-X11_SUBDIRS += vmware-user-suid-wrapper
+libhgfsServer_la_CPPFLAGS =
+libhgfsServer_la_CPPFLAGS += @PLUGIN_CPPFLAGS@
 
-SUBDIRS =
-SUBDIRS += lib
-SUBDIRS += libvmtools
+libhgfsServer_la_LDFLAGS =
+libhgfsServer_la_LDFLAGS += @PLUGIN_LDFLAGS@
+
+libhgfsServer_la_LIBADD =
+libhgfsServer_la_LIBADD += @VMTOOLS_LIBS@
+libhgfsServer_la_LIBADD += $(top_builddir)/lib/hgfsServer/libHgfsServer.la
+libhgfsServer_la_LIBADD += $(top_builddir)/lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.la
+
+libhgfsServer_la_SOURCES =
+libhgfsServer_la_SOURCES += hgfsPlugin.c
+
 if HAVE_X11
-   SUBDIRS += $(X11_SUBDIRS)
+install-exec-local:
+	mkdir -p $(DESTDIR)$(VMUSR_PLUGIN_INSTALLDIR)
+	cp -L $(builddir)/.libs/libhgfsServer.so $(DESTDIR)$(VMUSR_PLUGIN_INSTALLDIR)
 endif
-SUBDIRS += hgfsclient
-if BUILD_HGFSMOUNTER
-   SUBDIRS += hgfsmounter
-endif
-SUBDIRS += checkvm
-SUBDIRS += libguestlib
-SUBDIRS += rpctool
-SUBDIRS += scripts
-SUBDIRS += services
-SUBDIRS += toolbox
-if HAVE_FUSE
-   SUBDIRS += vmblock-fuse
-endif
-SUBDIRS += xferlogs
-SUBDIRS += tests
-if WITH_KERNEL_MODULES
-   SUBDIRS += modules
-endif
-SUBDIRS += docs
 

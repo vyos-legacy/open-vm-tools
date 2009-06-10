@@ -1,8 +1,5 @@
 ################################################################################
-### Copyright 2007 VMware, Inc.  All rights reserved.
-###
-### Top-level Makefile for building the VMware OSS Tools.
-###
+### Copyright 2009 VMware, Inc.  All rights reserved.
 ###
 ### This program is free software; you can redistribute it and/or modify
 ### it under the terms of version 2 of the GNU General Public License as
@@ -18,38 +15,29 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-# These flags get passed to aclocal when autoreconf calls it, and tell aclocal
-# that all of our macros are in the 'm4' subdirectory.
-ACLOCAL_AMFLAGS = -I m4
-
-# These subdirectories require X, and may be disabled using --without-x
-X11_SUBDIRS =
-X11_SUBDIRS += vmware-user
-X11_SUBDIRS += vmware-user-suid-wrapper
-
 SUBDIRS =
-SUBDIRS += lib
-SUBDIRS += libvmtools
+SUBDIRS += guestInfo
+SUBDIRS += hgfsServer
+SUBDIRS += powerOps
 if HAVE_X11
-   SUBDIRS += $(X11_SUBDIRS)
+   SUBDIRS += resolutionSet
 endif
-SUBDIRS += hgfsclient
-if BUILD_HGFSMOUNTER
-   SUBDIRS += hgfsmounter
+SUBDIRS += timeSync
+SUBDIRS += vix
+if HAVE_X11
+   SUBDIRS += vixUser
 endif
-SUBDIRS += checkvm
-SUBDIRS += libguestlib
-SUBDIRS += rpctool
-SUBDIRS += scripts
-SUBDIRS += services
-SUBDIRS += toolbox
-if HAVE_FUSE
-   SUBDIRS += vmblock-fuse
-endif
-SUBDIRS += xferlogs
-SUBDIRS += tests
-if WITH_KERNEL_MODULES
-   SUBDIRS += modules
-endif
-SUBDIRS += docs
+SUBDIRS += vmbackup
+
+#
+# plugin_LTLIBRARIES causes both .la and .so files to be installed to the
+# plugin directories. Clean up the .la files and keep just the shared
+# libraries around. Sometimes, even though we're passing "-shared" to
+# libtool, .a files are also generated, so clean up those too.
+#
+install-exec-local:
+	rm -f $(DESTDIR)$(VMSVC_PLUGIN_INSTALLDIR)/*.a
+	rm -f $(DESTDIR)$(VMSVC_PLUGIN_INSTALLDIR)/*.la
+	rm -f $(DESTDIR)$(VMUSR_PLUGIN_INSTALLDIR)/*.a
+	rm -f $(DESTDIR)$(VMUSR_PLUGIN_INSTALLDIR)/*.la
 
