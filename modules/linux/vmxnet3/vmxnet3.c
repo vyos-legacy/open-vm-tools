@@ -30,9 +30,9 @@
 #endif
 
 #include "compat_module.h"
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 9)
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 9)
 #include <linux/moduleparam.h>
-#endif
+//#endif
 
 #include "compat_slab.h"
 #include "compat_spinlock.h"
@@ -155,6 +155,7 @@ static struct pci_driver vmxnet3_driver = {
 #endif
 };
 
+static int disable_lro;
 
 /*
  *----------------------------------------------------------------------------
@@ -380,12 +381,11 @@ vmxnet3_poll(struct napi_struct *napi, int budget)
 {
    struct vmxnet3_adapter *adapter = container_of(napi, struct vmxnet3_adapter, napi);
    int rxd_done, txd_done;
-   struct net_device *netdev = adapter->netdev;
 
    vmxnet3_do_poll(adapter, budget, &txd_done, &rxd_done);
 
    if (rxd_done < budget) {
-      compat_netif_rx_complete(netdev, napi);
+      compat_napi_complete(adapter->netdev, napi);
       vmxnet3_enable_intr(adapter, 0);
    }
    return rxd_done;
@@ -409,7 +409,7 @@ static int
 vmxnet3_poll(struct net_device *poll_dev, int *budget)
 {
    int rxd_done, txd_done, quota;
-   struct vmxnet3_adapter *adapter = compat_netdev_priv(poll_dev);
+   struct vmxnet3_adapter *adapter = netdev_priv(poll_dev);
 
    quota = min(*budget, poll_dev->quota);
 
@@ -419,7 +419,7 @@ vmxnet3_poll(struct net_device *poll_dev, int *budget)
    poll_dev->quota -= rxd_done;
 
    if (rxd_done < quota) {
-      netif_rx_complete(poll_dev);
+      compat_napi_complete(poll_dev, unused);
       vmxnet3_enable_intr(adapter, 0);
       return 0;
    }
@@ -451,7 +451,7 @@ vmxnet3_intr(int irq, void *dev_id)
 #endif
 {
    struct net_device *dev = dev_id;
-   struct vmxnet3_adapter *adapter = compat_netdev_priv(dev);
+   struct vmxnet3_adapter *adapter = netdev_priv(dev);
 
    if (UNLIKELY(adapter->intr.type == VMXNET3_IT_INTX)) {
       uint32 icr = VMXNET3_READ_BAR1_REG(adapter, VMXNET3_REG_ICR);
@@ -467,7 +467,7 @@ vmxnet3_intr(int irq, void *dev_id)
       vmxnet3_disable_intr(adapter, 0);
    }
 
-   compat_netif_rx_schedule(dev, &adapter->napi); 
+   compat_napi_schedule(dev, &adapter->napi);
 
 #else
    vmxnet3_tq_tx_complete(&adapter->tx_queue, adapter);
@@ -3101,8 +3101,10 @@ vmxnet3_declare_features(struct vmxnet3_adapter *adapter, Bool dma64)
    printk(" tsoIPv6");
 #endif
 
-   adapter->lro = TRUE;
-   printk(" lro");
+   if (!disable_lro) {
+      adapter->lro = TRUE;
+      printk(" lro");
+   }
 
    if (dma64) {
       netdev->features |= NETIF_F_HIGHDMA;
@@ -3747,6 +3749,9 @@ vmxnet3_set_wol(struct net_device *netdev,
    }
 
    adapter->wol = wol->wolopts;
+
+   compat_device_set_wakeup_enable(&adapter->pdev->dev, adapter->wol);
+
    return 0;
 }
 
@@ -4558,5 +4563,5 @@ MODULE_VERSION(VMXNET3_DRIVER_VERSION_STRING);
  * by default (i.e., neither mkinitrd nor modprobe will accept it).
  */
 MODULE_INFO(supported, "external");
-
+module_param(disable_lro, int, 0);
 
