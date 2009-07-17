@@ -23,8 +23,15 @@ DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 # duplication of work (both internally among packages containing kernel
 # modules and externally with debian).
 DEB_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
+ifeq ($(DEB_ARCH),i386)
 DEB_KSUBARCH=none
 DEB_KFLAVOR=586-vyatta
+else
+ifeq ($(DEB_ARCH),amd64)
+DEB_KSUBARCH=none
+DEB_KFLAVOR=amd64-vyatta
+endif
+endif
 kbdir=debian/build/build-$(DEB_ARCH)-$(DEB_KSUBARCH)-$(DEB_KFLAVOR)
 
 # test if we are doing a dev build, i.e., linux is in pkgs/
