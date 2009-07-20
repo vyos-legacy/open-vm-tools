@@ -1,3 +1,15 @@
+open-vm-tools (2009.01.29+vyatta-16) unstable; urgency=low
+
+  [ An-Cheng Huang ]
+  * match 2.6.30 kernel
+
+  [ Stephen Hemminger ]
+  * Support amd64 build of open-vm-tools
+  * Change proc interface to support later kernel versions
+  * Update vmxnet3 to support later kernels
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Mon, 20 Jul 2009 11:31:05 -0700
+
 open-vm-tools (2009.01.29+vyatta-15) unstable; urgency=low
 
   * UNRELEASED
