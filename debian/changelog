@@ -1,3 +1,9 @@
+open-vm-tools (2009.01.29+vyatta-14+jenner5) unstable; urgency=low
+
+  * update to 2.6.30
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Mon, 20 Jul 2009 16:11:58 -0700
+
 open-vm-tools (2009.01.29+vyatta-14+jenner4) unstable; urgency=low
 
   * Support amd64 build of open-vm-tools
