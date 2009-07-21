@@ -1,3 +1,9 @@
+open-vm-tools (2009.01.29+vyatta-14+jenner6) unstable; urgency=low
+
+  * make open-vm-tools build with both i386 and amd64
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Tue, 21 Jul 2009 15:52:07 -0700
+
 open-vm-tools (2009.01.29+vyatta-14+jenner5) unstable; urgency=low
 
   * update to 2.6.30
