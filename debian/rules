@@ -68,6 +68,9 @@ endif
 export KINCLUDE_DIR=$(KDIR)/include/
 PACKAGE=open-vm-tools-$(KVER)
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
+# the following is needed so debuild will only build the arch-specific package
+# (control contains packages for multiple architectures)
+export DH_OPTIONS=-p$(PACKAGE)
 
 CFLAGS = -Wall -g
 
