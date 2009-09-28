@@ -1,3 +1,9 @@
+open-vm-tools (2009.01.29+vyatta-18) unstable; urgency=low
+
+  * UNRELEASED
+
+ -- Stig Thormodsrud <stig@vyatta.com>  Mon, 28 Sep 2009 15:40:52 -0700
+
 open-vm-tools (2009.01.29+vyatta-17) unstable; urgency=low
 
   * make open-vm-tools build with both i386 and amd64
