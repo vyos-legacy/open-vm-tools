@@ -29,12 +29,9 @@
 #include "compat_slab.h"
 #include "compat_spinlock.h"
 #include "compat_pci.h"
+#include "compat_pci_mapping.h"
 #include "compat_init.h"
 #include "compat_timer.h"
-#include <asm/dma.h>
-#include <asm/page.h>
-#include <asm/uaccess.h>
-
 #include "compat_ethtool.h"
 #include "compat_netdevice.h"
 #include "compat_skbuff.h"
@@ -44,6 +41,10 @@
 #include <linux/delay.h>
 #endif
 #include "compat_interrupt.h"
+
+#include <asm/page.h>
+#include <asm/uaccess.h>
+#include <asm/delay.h>
 
 #include "vm_basic_types.h"
 #include "vmnet_def.h"
@@ -81,8 +82,81 @@ static struct net_device_stats *vmxnet_get_stats(struct net_device *dev);
 static int vmxnet_change_mtu(struct net_device *dev, int new_mtu);
 #endif
 
+static Bool vmxnet_check_version(unsigned int ioaddr);
+static Bool vmxnet_probe_features(struct net_device *dev, Bool morphed,
+                                  Bool probeFromResume);
+static void vmxnet_release_private_data(Vmxnet_Private *lp,
+                                        struct pci_dev *pdev);
 static int vmxnet_probe_device(struct pci_dev *pdev, const struct pci_device_id *id);
 static void vmxnet_remove_device(struct pci_dev *pdev);
+
+#ifdef CONFIG_PM
+
+/*
+ * Prototype of suspend and resume handlers are different depending on the
+ * version of Linux kernel.
+ */
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 11)
+
+#  define VMXNET_SUSPEND_DEVICE(pdev, state)                                  \
+   static int vmxnet_suspend_device(struct pci_dev *pdev, pm_message_t state)
+#  define VMXNET_RESUME_DEVICE(pdev)                                          \
+   static int vmxnet_resume_device(struct pci_dev *pdev)
+#  define VMXNET_SET_POWER_STATE_D0(pdev) (pdev)->current_state = 0
+   /*
+    * The definition of pm_message_t changed on 2.6.14 kernel but apparently
+    * the change has been backported to some kernels,
+    * e.g., TurboLinux 2.6.12-1-x86_64.  So, we extract the int value of
+    * pm_message_t based on if PM_EVENT_ON is defined or not which was
+    * introduced along with the change in definition of pm_messaget_t.
+    */
+#  ifdef PM_EVENT_ON
+#     define PM_MESSAGE_TO_POWER_STATE(state) (state).event
+#  else
+#     define PM_MESSAGE_TO_POWER_STATE(state) (int)(state)
+#  endif
+#  define VMXNET_SET_POWER_STATE(pdev, state)                                 \
+   do {                                                                       \
+      (pdev)->current_state = PM_MESSAGE_TO_POWER_STATE(state);               \
+   } while (0)
+#  define VMXNET_GET_POWER_STATE(pdev) (pdev)->current_state
+#  define VMXNET_REQ_POWER_STATE(state) PM_MESSAGE_TO_POWER_STATE(state)
+#  define VMXNET_PM_RETURN(ret) return ret
+
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 6)
+
+#  define VMXNET_SUSPEND_DEVICE(pdev, state)                                  \
+   static int vmxnet_suspend_device(struct pci_dev *pdev, u32 state)
+#  define VMXNET_RESUME_DEVICE(pdev)                                          \
+   static int vmxnet_resume_device(struct pci_dev *pdev)
+#  define VMXNET_SET_POWER_STATE_D0(pdev) (pdev)->current_state = 0
+#  define VMXNET_SET_POWER_STATE(pdev, state)                                 \
+   do {                                                                       \
+      (pdev)->current_state = state;                                          \
+   } while (0)
+#  define VMXNET_GET_POWER_STATE(pdev) (pdev)->current_state
+#  define VMXNET_REQ_POWER_STATE(state) (state)
+#  define VMXNET_PM_RETURN(ret) return ret
+
+#else
+
+#  define VMXNET_SUSPEND_DEVICE(pdev, state)                                  \
+   static void vmxnet_suspend_device(struct pci_dev *pdev)
+#  define VMXNET_RESUME_DEVICE(pdev)                                          \
+   static void vmxnet_resume_device(struct pci_dev *pdev)
+#  define VMXNET_SET_POWER_STATE_D0(pdev)
+#  define VMXNET_SET_POWER_STATE(pdev, state)
+#  define VMXNET_GET_POWER_STATE(pdev) 0
+#  define VMXNET_REQ_POWER_STATE(state) 0
+#  define VMXNET_PM_RETURN(ret)
+
+#endif
+
+VMXNET_SUSPEND_DEVICE(pdev, state);
+VMXNET_RESUME_DEVICE(pdev);
+
+#endif /* CONFIG_PM */
 
 #ifdef MODULE
 static int debug = -1;
@@ -97,9 +171,23 @@ static int debug = -1;
 #undef VMXNET_DO_ZERO_COPY
 #endif
 
-#if defined(MAX_SKB_FRAGS) && ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,18) ) && ( LINUX_VERSION_CODE != KERNEL_VERSION(2, 6, 0) )
+#if defined(MAX_SKB_FRAGS) && \
+    ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,18) ) && \
+    ( LINUX_VERSION_CODE != KERNEL_VERSION(2, 6, 0) )
 #define VMXNET_DO_ZERO_COPY
 #endif
+
+#define VMXNET_GET_LO_ADDR(dma)   ((uint32)(dma))
+#define VMXNET_GET_HI_ADDR(dma)   ((uint16)(((uint64)(dma)) >> 32))
+#define VMXNET_GET_DMA_ADDR(sge)  ((dma_addr_t)((((uint64)(sge).addrHi) << 32) | \
+                                                (sge).addrLow))
+
+#define VMXNET_FILL_SG(sg, dma, size)\
+do{\
+   (sg).addrLow = VMXNET_GET_LO_ADDR(dma);\
+   (sg).addrHi  = VMXNET_GET_HI_ADDR(dma);\
+   (sg).length  = size;\
+} while (0)
 
 #ifdef VMXNET_DO_ZERO_COPY
 #include <net/checksum.h>
@@ -128,17 +216,6 @@ static int debug = -1;
 
 #define PKT_OF_IPV4(skb) PKT_OF_PROTO(skb, ETH_TYPE_IP)
 
-#define VMXNET_GET_LO_ADDR(dma)   ((uint32)(dma))
-#define VMXNET_GET_HI_ADDR(dma)   ((uint16)(((uint64)(dma)) >> 32))
-#define VMXNET_GET_DMA_ADDR(sge)  ((dma_addr_t)((((uint64)(sge).addrHi) << 32) | (sge).addrLow))
-
-#define VMXNET_FILL_SG(sg, dma, size)\
-do{\
-   (sg).addrLow = VMXNET_GET_LO_ADDR(dma);\
-   (sg).addrHi  = VMXNET_GET_HI_ADDR(dma);\
-   (sg).length  = size;\
-} while (0)
-
 #if defined(NETIF_F_TSO)
 #define VMXNET_DO_TSO
 
@@ -150,6 +227,15 @@ do{\
 #endif
 
 #endif // VMXNET_DO_ZERO_COPY
+
+#ifdef VMXNET_DO_TSO
+static int disable_lro = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 9)
+   module_param(disable_lro, int, 0);
+#else
+   MODULE_PARM(disable_lro, "i");
+#endif
+#endif
 
 #ifdef VMXNET_DEBUG
 #define VMXNET_LOG(msg...) printk(KERN_ERR msg)
@@ -179,13 +265,17 @@ static struct pci_driver vmxnet_driver = {
                                             .id_table = vmxnet_chips,
                                             .probe = vmxnet_probe_device,
                                             .remove = vmxnet_remove_device,
+#ifdef CONFIG_PM
+                                            .suspend = vmxnet_suspend_device,
+                                            .resume = vmxnet_resume_device,
+#endif
                                          };
 
 #ifdef HAVE_CHANGE_MTU
 static int
 vmxnet_change_mtu(struct net_device *dev, int new_mtu)
 {
-   struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
 
    if (new_mtu < VMXNET_MIN_MTU || new_mtu > VMXNET_MAX_MTU) {
       return -EINVAL;
@@ -259,7 +349,7 @@ static void
 vmxnet_get_drvinfo(struct net_device *dev,
                    struct ethtool_drvinfo *drvinfo)
 {
-   struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
 
    strncpy(drvinfo->driver, vmxnet_driver.name, sizeof(drvinfo->driver));
    drvinfo->driver[sizeof(drvinfo->driver) - 1] = '\0';
@@ -297,7 +387,7 @@ static int
 vmxnet_set_tso(struct net_device *dev, u32 data)
 {
    if (data) {
-      struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+      struct Vmxnet_Private *lp = netdev_priv(dev);
 
       if (!lp->tso) {
          return -EINVAL;
@@ -449,7 +539,7 @@ vmxnet_set_tso(struct net_device *dev, void *addr)
    }
 
    if (value.data) {
-      struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+      struct Vmxnet_Private *lp = netdev_priv(dev);
 
       if (!lp->tso) {
          return -EINVAL;
@@ -621,7 +711,7 @@ vmxnet_exit(void)
 static void
 vmxnet_tx_timeout(struct net_device *dev)
 {
-   compat_netif_wake_queue(dev);
+   netif_wake_queue(dev);
 }
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,3,43) */
 
@@ -647,7 +737,7 @@ vmxnet_link_check(unsigned long data)   // IN: netdevice pointer
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,3,43)
    struct net_device *dev = (struct net_device *)data;
-   struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
    uint32 status;
    int ok;
 
@@ -680,6 +770,96 @@ vmxnet_link_check(unsigned long data)   // IN: netdevice pointer
 /*
  *-----------------------------------------------------------------------------
  *
+ * vmxnet_morph_device --
+ *
+ *      Morph a lance device into vmxnet device.
+ *
+ * Results:
+ *      Returns 0 on success, -1 on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static int
+vmxnet_morph_device(unsigned int morphAddr) // IN
+{
+   uint16 magic;
+
+   /* Read morph port to verify that we can morph the adapter. */
+   magic = inw(morphAddr);
+   if (magic != LANCE_CHIP && magic != VMXNET_CHIP) {
+      printk(KERN_ERR "Invalid magic, read: 0x%08X\n", magic);
+      return -1;
+   }
+
+   /* Morph adapter. */
+   outw(VMXNET_CHIP, morphAddr);
+
+   /* Verify that we morphed correctly. */
+
+   magic = inw(morphAddr);
+   if (magic != VMXNET_CHIP) {
+      printk(KERN_ERR "Couldn't morph adapter. Invalid magic, read: 0x%08X\n",
+             magic);
+      goto morph_back;
+   }
+
+   return 0;
+
+morph_back:
+   /* Morph back to LANCE hw. */
+   outw(LANCE_CHIP, morphAddr);
+   return -1;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vmxnet_unmorph_device --
+ *
+ *      Morph a vmxnet adapter back to vlance.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+vmxnet_unmorph_device(unsigned int morphAddr) // IN
+{
+   uint16 magic;
+
+   /* Read morph port to verify that we can morph the adapter. */
+   magic = inw(morphAddr);
+   if (magic != VMXNET_CHIP) {
+      printk(KERN_ERR "Adapter not morphed, magic: 0x%08X\n", magic);
+      return;
+   }
+
+   /* Unmorph adapter. */
+   outw(LANCE_CHIP, morphAddr);
+
+   /* Verify that we morphed correctly. */
+
+   magic = inw(morphAddr);
+   if (magic != LANCE_CHIP) {
+      printk(KERN_ERR "Couldn't unmorph adapter. Invalid magic, read: 0x%08X\n",
+             magic);
+   }
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
  * vmxnet_probe_device --
  *
  *      Most of the initialization at module load time is done here.
@@ -698,18 +878,27 @@ static int
 vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
                     const struct pci_device_id *id)   // IN: matching device ID
 {
+#ifdef HAVE_NET_DEVICE_OPS
+   static const struct net_device_ops vmxnet_netdev_ops = {
+      .ndo_open = &vmxnet_open,
+      .ndo_start_xmit = &vmxnet_start_tx,
+      .ndo_stop = &vmxnet_close,
+      .ndo_get_stats = &vmxnet_get_stats,
+      .ndo_set_multicast_list = &vmxnet_set_multicast_list,
+      .ndo_change_mtu = &vmxnet_change_mtu,
+#   ifdef VMW_HAVE_POLL_CONTROLLER
+      .ndo_poll_controller = vmxnet_netpoll,
+#   endif
+      .ndo_set_mac_address = &vmxnet_set_mac_address,
+      .ndo_tx_timeout = &vmxnet_tx_timeout,
+   };
+#endif /* HAVE_NET_DEVICE_OPS */
    struct Vmxnet_Private *lp;
    struct net_device *dev;
    unsigned int ioaddr, reqIOAddr, reqIOSize;
    unsigned int irq_line;
-   /* VMware's version of the magic number */
-   unsigned int low_vmware_version;
-   unsigned int numRxBuffers, numRxBuffers2, maxNumRxBuffers, defNumRxBuffers;
-   unsigned int numTxBuffers, maxNumTxBuffers, defNumTxBuffers;
    Bool morphed = FALSE;
-   Bool enhanced = FALSE;
    int i;
-   unsigned int driverDataSize;
 
    i = compat_pci_enable_device(pdev);
    if (i) {
@@ -778,39 +967,141 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
 
    /* Morph the underlying hardware if we found a VLance adapter. */
    if (id->driver_data == LANCE_CHIP) {
-      uint16 magic;
-
-      /* Read morph port to verify that we can morph the adapter. */
-
-      magic = inw(ioaddr - MORPH_PORT_SIZE);
-      if (magic != LANCE_CHIP &&
-          magic != VMXNET_CHIP) {
-         printk(KERN_ERR "Invalid magic, read: 0x%08X\n", magic);
+      if (vmxnet_morph_device(ioaddr - MORPH_PORT_SIZE) == 0) {
+         morphed = TRUE;
+      } else {
          goto release_reg;
-      }
-
-      /* Morph adapter. */
-
-      outw(VMXNET_CHIP, ioaddr - MORPH_PORT_SIZE);
-      morphed = TRUE;
-
-      /* Verify that we morphed correctly. */
-
-      magic = inw(ioaddr - MORPH_PORT_SIZE);
-      if (magic != VMXNET_CHIP) {
-         printk(KERN_ERR "Couldn't morph adapter. Invalid magic, read: 0x%08X\n",
-                magic);
-         goto morph_back;
       }
    }
 
    printk(KERN_INFO "Found vmxnet/PCI at %#x, irq %u.\n", ioaddr, irq_line);
 
+   if (!vmxnet_check_version(ioaddr)) {
+      goto morph_back;
+   }
+
+   dev = alloc_etherdev(sizeof *lp);
+   if (!dev) {
+      printk(KERN_ERR "Unable to allocate ethernet device\n");
+      goto morph_back;
+   }
+
+   lp = netdev_priv(dev);
+   lp->pdev = pdev;
+
+   dev->base_addr = ioaddr;
+
+   if (!vmxnet_probe_features(dev, morphed, FALSE)) {
+      goto free_dev;
+   }
+
+   dev->irq = irq_line;
+
+#ifdef HAVE_NET_DEVICE_OPS
+   dev->netdev_ops = &vmxnet_netdev_ops;
+#else
+   dev->open = &vmxnet_open;
+   dev->hard_start_xmit = &vmxnet_start_tx;
+   dev->stop = &vmxnet_close;
+   dev->get_stats = &vmxnet_get_stats;
+   dev->set_multicast_list = &vmxnet_set_multicast_list;
+#ifdef HAVE_CHANGE_MTU
+   dev->change_mtu = &vmxnet_change_mtu;
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,3,43)
+   dev->tx_timeout = &vmxnet_tx_timeout;
+#endif
+#ifdef VMW_HAVE_POLL_CONTROLLER
+   dev->poll_controller = vmxnet_netpoll;
+#endif
+   /* Do this after ether_setup(), which sets the default value. */
+   dev->set_mac_address = &vmxnet_set_mac_address;
+#endif /* HAVE_NET_DEVICE_OPS */
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,3,43)
+   dev->watchdog_timeo = VMXNET_WATCHDOG_TIMEOUT;
+#endif
+
+#ifdef SET_ETHTOOL_OPS
+   SET_ETHTOOL_OPS(dev, &vmxnet_ethtool_ops);
+#else
+   dev->do_ioctl = vmxnet_ioctl;
+#endif
+
+   COMPAT_SET_MODULE_OWNER(dev);
+   COMPAT_SET_NETDEV_DEV(dev, &pdev->dev);
+
+   if (register_netdev(dev)) {
+      printk(KERN_ERR "Unable to register device\n");
+      goto free_dev_dd;
+   }
+   /*
+    * Use deferrable timer - we want 2s interval, but if it will
+    * be 2 seconds or 10 seconds, we do not care.
+    */
+   compat_init_timer_deferrable(&lp->linkCheckTimer);
+   lp->linkCheckTimer.data = (unsigned long)dev;
+   lp->linkCheckTimer.function = vmxnet_link_check;
+   vmxnet_link_check(lp->linkCheckTimer.data);
+
+   /* Do this after register_netdev(), which sets device name */
+   VMXNET_LOG("%s: %s at %#3lx assigned IRQ %d.\n",
+              dev->name, lp->name, dev->base_addr, dev->irq);
+
+   pci_set_drvdata(pdev, dev);
+#ifdef CONFIG_PM
+   /*
+    * Initialize pci_dev's current_state for .suspend to work properly.
+    */
+
+   VMXNET_SET_POWER_STATE_D0(pdev);
+#endif
+   return 0;
+
+free_dev_dd:
+   vmxnet_release_private_data(lp, pdev);
+free_dev:
+   free_netdev(dev);
+morph_back:
+   if (morphed) {
+      vmxnet_unmorph_device(ioaddr - MORPH_PORT_SIZE);
+   }
+release_reg:
+   release_region(reqIOAddr, reqIOSize);
+pci_disable:;
+   compat_pci_disable_device(pdev);
+   return -EBUSY;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vmxnet_check_version --
+ *
+ *      Helper to check version of the device backend to see if it is
+ *      compatible with the driver.  Called from .probe or .resume.
+ *
+ * Results:
+ *      TRUE/FALSE on success/failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+vmxnet_check_version(unsigned int ioaddr) // IN:
+{
+   /* VMware's version of the magic number */
+   unsigned int low_vmware_version;
+
    low_vmware_version = inl(ioaddr + VMXNET_LOW_VERSION);
    if ((low_vmware_version & 0xffff0000) != (VMXNET2_MAGIC & 0xffff0000)) {
       printk(KERN_ERR "Driver version 0x%08X doesn't match version 0x%08X\n",
              VMXNET2_MAGIC, low_vmware_version);
-      goto morph_back;
+      return FALSE;
    } else {
       /*
        * The low version looked OK so get the high version and make sure that
@@ -822,26 +1113,66 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
          printk(KERN_ERR
                 "Driver version 0x%08X doesn't match version 0x%08X, 0x%08X\n",
                 VMXNET2_MAGIC, low_vmware_version, high_vmware_version);
-         goto morph_back;
+         return FALSE;
       }
    }
+   return TRUE;
+}
 
-   dev = compat_alloc_etherdev(sizeof *lp);
-   if (!dev) {
-      printk(KERN_ERR "Unable to allocate ethernet device\n");
-      goto morph_back;
-   }
 
-   lp = compat_netdev_priv(dev);
-   lp->pdev = pdev;
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vmxnet_probe_features --
+ *
+ *      Helper to probe device features and capabilities and initialize various
+ *      driver state.  Called from the .probe and .resume handlers.  During
+ *      .resume phase this function validates that compatible
+ *      feature/capabilities (or other state) is obtained from the device as
+ *      during the .probe phase prior to guest suspend or hibernate.
+ *
+ * Results:
+ *      Boolean indicating success/failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
 
-   dev->base_addr = ioaddr;
+static Bool
+vmxnet_probe_features(struct net_device *dev, // IN:
+                      Bool morphed,           // IN:
+                      Bool probeFromResume)   // IN:
+{
+   struct Vmxnet_Private *lp = netdev_priv(dev);
+   unsigned int numRxBuffers, numRxBuffers2, maxNumRxBuffers, defNumRxBuffers;
+   unsigned int numTxBuffers, maxNumTxBuffers, defNumTxBuffers;
+   Bool enhanced = FALSE;
+   int i;
+   unsigned int ioaddr = dev->base_addr;
+
+   VMXNET_ASSERT(lp);
 
    outl(VMXNET_CMD_GET_FEATURES, dev->base_addr + VMXNET_COMMAND_ADDR);
-   lp->features = inl(dev->base_addr + VMXNET_COMMAND_ADDR);
+   if (probeFromResume) {
+      if ((lp->features & inl(dev->base_addr + VMXNET_COMMAND_ADDR)) !=
+          lp->features) {
+         return FALSE;
+      }
+   } else {
+      lp->features = inl(dev->base_addr + VMXNET_COMMAND_ADDR);
+   }
 
    outl(VMXNET_CMD_GET_CAPABILITIES, dev->base_addr + VMXNET_COMMAND_ADDR);
-   lp->capabilities = inl(dev->base_addr + VMXNET_COMMAND_ADDR);
+   if (probeFromResume) {
+      if ((lp->capabilities & inl(dev->base_addr + VMXNET_COMMAND_ADDR)) !=
+          lp->capabilities) {
+         return FALSE;
+      }
+   } else {
+      lp->capabilities = inl(dev->base_addr + VMXNET_COMMAND_ADDR);
+   }
 
    /* determine the features supported */
    lp->zeroCopyTx = FALSE;
@@ -903,7 +1234,8 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
    }
 
    if ((lp->capabilities & VMNET_CAP_LPD) &&
-       (lp->features & VMXNET_FEATURE_LPD)) {
+       (lp->features & VMXNET_FEATURE_LPD) &&
+       !disable_lro) {
       lp->lpd = TRUE;
       printk(" lpd");
    }
@@ -957,37 +1289,28 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
       numTxBuffers = defNumTxBuffers;
    }
 
-   driverDataSize =
-            sizeof(Vmxnet2_DriverData) +
-            (numRxBuffers + numRxBuffers2) * sizeof(Vmxnet2_RxRingEntry) +
-            numTxBuffers * sizeof(Vmxnet2_TxRingEntry);
-   VMXNET_LOG("vmxnet: numRxBuffers=((%d+%d)*%d) numTxBuffers=(%d*%d) driverDataSize=%d\n",
+   lp->ddSize = sizeof(Vmxnet2_DriverData) +
+                   (numRxBuffers + numRxBuffers2) * sizeof(Vmxnet2_RxRingEntry) +
+                   numTxBuffers * sizeof(Vmxnet2_TxRingEntry);
+   VMXNET_LOG("vmxnet: numRxBuffers=((%d+%d)*%d) numTxBuffers=(%d*%d) ddSize=%d\n",
               numRxBuffers, numRxBuffers2, (uint32)sizeof(Vmxnet2_RxRingEntry),
               numTxBuffers, (uint32)sizeof(Vmxnet2_TxRingEntry),
-              driverDataSize);
-   lp->ddAllocated = kmalloc(driverDataSize + 15, GFP_DMA | GFP_KERNEL);
-
-   if (!lp->ddAllocated) {
+              (int)lp->ddSize);
+   lp->dd = kmalloc(lp->ddSize, GFP_KERNEL | GFP_DMA);
+   if (!lp->dd) {
       printk(KERN_ERR "Unable to allocate memory for driver data\n");
-      goto free_dev;
+      return FALSE;
    }
-   if ((uintptr_t)virt_to_bus(lp->ddAllocated) > SHARED_MEM_MAX) {
-      printk(KERN_ERR
-             "Unable to initialize driver data, address outside of shared area (0x%p)\n",
-             (void*)virt_to_bus(lp->ddAllocated));
-      goto free_dev_dd;
-   }
-
-   /* Align on paragraph boundary */
-   lp->dd = (Vmxnet2_DriverData*)(((unsigned long)lp->ddAllocated + 15) & ~15UL);
-   memset(lp->dd, 0, driverDataSize);
+   lp->ddPA = compat_pci_map_single(lp->pdev, lp->dd, lp->ddSize,
+                                    PCI_DMA_BIDIRECTIONAL);
+   memset(lp->dd, 0, lp->ddSize);
    spin_lock_init(&lp->txLock);
    lp->numRxBuffers = numRxBuffers;
    lp->numRxBuffers2 = numRxBuffers2;
    lp->numTxBuffers = numTxBuffers;
    /* So that the vmkernel can check it is compatible */
    lp->dd->magic = VMXNET2_MAGIC;
-   lp->dd->length = driverDataSize;
+   lp->dd->length = lp->ddSize;
    lp->name = VMXNET_CHIP_NAME;
 
    /*
@@ -1019,16 +1342,13 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
    lp->dd->txBufferPhysLength = 0;
 
    if (lp->partialHeaderCopyEnabled) {
-      unsigned int txBufferSize;
-
-      txBufferSize = numTxBuffers * TX_PKT_HEADER_SIZE;
-      lp->txBufferStartRaw = kmalloc(txBufferSize + PAGE_SIZE,
-                                     GFP_DMA | GFP_KERNEL);
-      if (lp->txBufferStartRaw) {
-         lp->txBufferStart = (char*)((unsigned long)(lp->txBufferStartRaw + PAGE_SIZE - 1) &
-                                     (unsigned long)~(PAGE_SIZE - 1));
-         lp->dd->txBufferPhysStart = virt_to_phys(lp->txBufferStart);
-         lp->dd->txBufferPhysLength = txBufferSize;
+      lp->txBufferSize = numTxBuffers * TX_PKT_HEADER_SIZE;
+      lp->txBufferStart = kmalloc(lp->txBufferSize, GFP_KERNEL | GFP_DMA);
+      if (lp->txBufferStart) {
+         lp->txBufferPA = compat_pci_map_single(lp->pdev, lp->txBufferStart,
+                                                lp->txBufferSize, PCI_DMA_TODEVICE);
+         lp->dd->txBufferPhysStart = lp->txBufferPA;
+         lp->dd->txBufferPhysLength = lp->txBufferSize;
          lp->dd->txPktMaxSize = TX_PKT_HEADER_SIZE;
       } else {
          lp->partialHeaderCopyEnabled = FALSE;
@@ -1037,70 +1357,7 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
    }
 #endif
 
-   dev->irq = irq_line;
-
-   dev->open = &vmxnet_open;
-   dev->hard_start_xmit = &vmxnet_start_tx;
-   dev->stop = &vmxnet_close;
-   dev->get_stats = &vmxnet_get_stats;
-   dev->set_multicast_list = &vmxnet_set_multicast_list;
-#ifdef HAVE_CHANGE_MTU
-   dev->change_mtu = &vmxnet_change_mtu;
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,3,43)
-   dev->tx_timeout = &vmxnet_tx_timeout;
-   dev->watchdog_timeo = VMXNET_WATCHDOG_TIMEOUT;
-#endif
-#ifdef VMW_HAVE_POLL_CONTROLLER
-   dev->poll_controller = vmxnet_netpoll;
-#endif
-
-   /* Do this after ether_setup(), which sets the default value. */
-   dev->set_mac_address = &vmxnet_set_mac_address;
-
-#ifdef SET_ETHTOOL_OPS
-   SET_ETHTOOL_OPS(dev, &vmxnet_ethtool_ops);
-#else
-   dev->do_ioctl = vmxnet_ioctl;
-#endif
-
-   COMPAT_SET_MODULE_OWNER(dev);
-   COMPAT_SET_NETDEV_DEV(dev, &pdev->dev);
-
-   if (register_netdev(dev)) {
-      printk(KERN_ERR "Unable to register device\n");
-      goto free_dev_dd;
-   }
-   /*
-    * Use deferrable timer - we want 2s interval, but if it will
-    * be 2 seconds or 10 seconds, we do not care.
-    */
-   compat_init_timer_deferrable(&lp->linkCheckTimer);
-   lp->linkCheckTimer.data = (unsigned long)dev;
-   lp->linkCheckTimer.function = vmxnet_link_check;
-   vmxnet_link_check(lp->linkCheckTimer.data);
-
-   /* Do this after register_netdev(), which sets device name */
-   VMXNET_LOG("%s: %s at %#3lx assigned IRQ %d.\n",
-              dev->name, lp->name, dev->base_addr, dev->irq);
-
-   pci_set_drvdata(pdev, dev);
-   return 0;
-
-free_dev_dd:;
-   kfree(lp->ddAllocated);
-free_dev:;
-   compat_free_netdev(dev);
-morph_back:;
-   if (morphed) {
-      /* Morph back to LANCE hw. */
-      outw(LANCE_CHIP, ioaddr - MORPH_PORT_SIZE);
-   }
-release_reg:;
-   release_region(reqIOAddr, reqIOSize);
-pci_disable:;
-   compat_pci_disable_device(pdev);
-   return -EBUSY;
+   return TRUE;
 }
 
 
@@ -1123,7 +1380,7 @@ static void
 vmxnet_remove_device(struct pci_dev* pdev)
 {
    struct net_device *dev = pci_get_drvdata(pdev);
-   struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
 
    /*
     * Do this before device is gone so we never call netif_carrier_* after
@@ -1135,27 +1392,7 @@ vmxnet_remove_device(struct pci_dev* pdev)
    /* Unmorph adapter if it was morphed. */
 
    if (lp->morphed) {
-      uint16 magic;
-
-      /* Read morph port to verify that we can morph the adapter. */
-
-      magic = inw(dev->base_addr - MORPH_PORT_SIZE);
-      if (magic != VMXNET_CHIP) {
-         printk(KERN_ERR "Adapter not morphed. read magic: 0x%08X\n", magic);
-      }
-
-      /* Morph adapter back to LANCE. */
-
-      outw(LANCE_CHIP, dev->base_addr - MORPH_PORT_SIZE);
-
-      /* Verify that we unmorphed correctly. */
-
-      magic = inw(dev->base_addr - MORPH_PORT_SIZE);
-      if (magic != LANCE_CHIP) {
-         printk(KERN_ERR "Couldn't unmorph adapter. Invalid magic, read: 0x%08X\n",
-                magic);
-      }
-
+      vmxnet_unmorph_device(dev->base_addr - MORPH_PORT_SIZE);
       release_region(dev->base_addr -
                      (LANCE_CHIP_IO_RESV_SIZE + MORPH_PORT_SIZE),
                      VMXNET_CHIP_IO_RESV_SIZE +
@@ -1164,17 +1401,202 @@ vmxnet_remove_device(struct pci_dev* pdev)
       release_region(dev->base_addr, VMXNET_CHIP_IO_RESV_SIZE);
    }
 
-#ifdef VMXNET_DO_ZERO_COPY
-   if (lp->partialHeaderCopyEnabled){
-      kfree(lp->txBufferStartRaw);
-   }
-#endif
-
-   kfree(lp->ddAllocated);
-   compat_free_netdev(dev);
+   vmxnet_release_private_data(lp, pdev);
+   free_netdev(dev);
    compat_pci_disable_device(pdev);
 }
 
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vmxnet_release_private_data --
+ *
+ *      Helper to release/free some private driver data.  Called from the
+ *      .remove handler and the .suspend handler.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+vmxnet_release_private_data(Vmxnet_Private *lp,   // IN:
+                            struct pci_dev *pdev) // IN:
+{
+#ifdef VMXNET_DO_ZERO_COPY
+   if (lp->partialHeaderCopyEnabled && lp->txBufferStart) {
+      compat_pci_unmap_single(pdev, lp->txBufferPA, lp->txBufferSize,
+                              PCI_DMA_TODEVICE);
+      kfree(lp->txBufferStart);
+      lp->txBufferStart = NULL;
+   }
+#endif
+
+   if (lp->dd) {
+      compat_pci_unmap_single(lp->pdev, lp->ddPA, lp->ddSize,
+                              PCI_DMA_BIDIRECTIONAL);
+      kfree(lp->dd);
+      lp->dd = NULL;
+   }
+}
+
+
+#ifdef CONFIG_PM
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vmxnet_suspend_device --
+ *
+ *      Suspend PM handler.
+ *
+ * Results:
+ *      Returns 0 for success.
+ *
+ * Side effects:
+ *      Morphs device back to lance mode.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMXNET_SUSPEND_DEVICE(/* struct pci_dev * */ pdev,  // IN: pci device
+                      /* pm_message_t     */ state) // IN: state
+{
+   /*
+    * Suspend needs to:
+    * 1. Disable IRQ.
+    * 2. Morph back to vlance.
+    * 3. Disable bus-mastering.
+    * 4. Put device to low power state.
+    * 5. Enable wake up.
+    *
+    * TODO: implement 5.
+    */
+
+   struct net_device *dev = pci_get_drvdata(pdev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
+
+   /*
+    * vmxnet does not have PM capabilities.  So, according to
+    * Documentation/power/pci.txt we set the current power state in the pci_dev
+    * structure ourselves.
+    */
+
+   if (VMXNET_GET_POWER_STATE(pdev) != 0) { /* Already suspended. */
+      printk(KERN_ERR "vmxnet is already suspended\n");
+      goto done;
+   }
+
+   if (lp->devOpen) {
+      /*
+       * Close the device first (and unmap rings, frees skbs, etc)
+       * since morphing will reset the device. However, still
+       * keep the device marked as "opened" so we can reopen it at
+       * resume time.
+       */
+      vmxnet_close(dev);
+      lp->devOpen = TRUE;
+   }
+
+   if (lp->morphed) {               /* Morph back to vlance. */
+      vmxnet_unmorph_device(dev->base_addr - MORPH_PORT_SIZE);
+   }
+
+   compat_pci_disable_device(pdev); /* Disables bus-mastering. */
+   vmxnet_release_private_data(lp, pdev);
+
+done:
+   if (VMXNET_REQ_POWER_STATE(state) > VMXNET_GET_POWER_STATE(pdev)) {
+      /* Deeper sleep. */
+      VMXNET_SET_POWER_STATE(pdev, state);
+   }
+   VMXNET_PM_RETURN(0);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vmxnet_resume_device --
+ *
+ *      Resume PM handler.
+ *      TODO: check capability of the device on resume.
+ *
+ * Results:
+ *      Returns 0 for success, an error otherwise.
+ *
+ * Side effects:
+ *      Morphs device to vxmnet mode.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMXNET_RESUME_DEVICE(/* struct pci_dev* */ pdev) // IN: pci device
+{
+   struct net_device *dev = pci_get_drvdata(pdev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
+   int ret;
+
+   /* Resume does the opposite of suspend, in reverse order. */
+
+   if (VMXNET_GET_POWER_STATE(pdev) == 0) { /* Already resumed. */
+      printk(KERN_ERR "vmxnet is already resumed\n");
+      VMXNET_PM_RETURN(0);
+   }
+
+   ret = compat_pci_enable_device(pdev); /* Does not enable bus-mastering. */
+   if (ret) {
+      printk(KERN_ERR "Cannot resume vmxnet adapter %s: error %d\n",
+             compat_pci_name(pdev), ret);
+      VMXNET_PM_RETURN(ret);
+   }
+   compat_pci_set_master(pdev);
+
+   if (lp->morphed) {
+      if (vmxnet_morph_device(dev->base_addr - MORPH_PORT_SIZE) != 0) {
+         ret = -ENODEV;
+         goto disable_pci;
+      }
+   }
+
+   if (!vmxnet_check_version(dev->base_addr) ||
+       !vmxnet_probe_features(dev, lp->morphed, TRUE)) {
+      ret = -ENODEV;
+      goto disable_pci;
+   }
+
+   if (lp->devOpen) {
+      /*
+       * The adapter was closed at suspend time. So mark it as closed, then
+       * try to reopen it.
+       */
+
+      lp->devOpen = FALSE;
+      ret = vmxnet_open(dev);
+      if (ret) {
+         /*
+          * We do not unmorph the device here since that would be handled in
+          * the .remove handler.
+          */
+
+         printk(KERN_ERR "Could not open vmxnet adapter %s: error %d\n",
+                compat_pci_name(pdev), ret);
+         goto disable_pci;
+      }
+   }
+
+   VMXNET_SET_POWER_STATE_D0(pdev);
+   VMXNET_PM_RETURN(0);
+
+disable_pci:
+   compat_pci_disable_device(pdev); /* Disables bus-mastering. */
+   VMXNET_PM_RETURN(ret);
+}
+#endif
 
 /*
  *-----------------------------------------------------------------------------
@@ -1194,7 +1616,7 @@ vmxnet_remove_device(struct pci_dev* pdev)
 static int
 vmxnet_init_ring(struct net_device *dev)
 {
-   struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
    Vmxnet2_DriverData *dd = lp->dd;
    unsigned int i;
    size_t offset;
@@ -1220,7 +1642,7 @@ vmxnet_init_ring(struct net_device *dev)
               (uint64)offset, dd->length);
 
    for (i = 0; i < lp->numRxBuffers; i++) {
-      lp->rxSkbuff[i] = dev_alloc_skb(PKT_BUF_SZ);
+      lp->rxSkbuff[i] = dev_alloc_skb(PKT_BUF_SZ + COMPAT_NET_IP_ALIGN);
       if (lp->rxSkbuff[i] == NULL) {
          unsigned int j;
 
@@ -1232,7 +1654,10 @@ vmxnet_init_ring(struct net_device *dev)
 	 return -ENOMEM;
       }
 
-      lp->rxRing[i].paddr = virt_to_bus(compat_skb_tail_pointer(lp->rxSkbuff[i]));
+      skb_reserve(lp->rxSkbuff[i], COMPAT_NET_IP_ALIGN);
+
+      lp->rxRing[i].paddr = compat_pci_map_single(lp->pdev, lp->rxSkbuff[i]->data,
+                                                  PKT_BUF_SZ, PCI_DMA_FROMDEVICE);
       lp->rxRing[i].bufferLength = PKT_BUF_SZ;
       lp->rxRing[i].actualLength = 0;
       lp->rxRing[i].ownership = VMXNET2_OWNERSHIP_NIC;
@@ -1319,9 +1744,16 @@ vmxnet_init_ring(struct net_device *dev)
 static int
 vmxnet_open(struct net_device *dev)
 {
-   struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
    unsigned int ioaddr = dev->base_addr;
-   u32 paddr;
+   uint32 ddPA;
+
+   /*
+    * The .suspend handler frees driver data, so we need this check.
+    */
+   if (UNLIKELY(!lp->dd)) {
+      return -ENOMEM;
+   }
 
    if (dev->irq == 0 ||	request_irq(dev->irq, &vmxnet_interrupt,
 			            COMPAT_IRQF_SHARED, lp->name, (void *)dev)) {
@@ -1329,18 +1761,16 @@ vmxnet_open(struct net_device *dev)
    }
 
    if (vmxnet_debug > 1) {
-      printk(KERN_DEBUG "%s: vmxnet_open() irq %d lp %#x.\n",
-	     dev->name, dev->irq,
-	     (u32) virt_to_bus(lp));
+      printk(KERN_DEBUG "%s: vmxnet_open() irq %d lp %p.\n",
+	     dev->name, dev->irq, lp);
    }
 
    if (vmxnet_init_ring(dev)) {
       return -ENOMEM;
    }
 
-   paddr = virt_to_bus(lp->dd);
-
-   outl(paddr, ioaddr + VMXNET_INIT_ADDR);
+   ddPA = VMXNET_GET_LO_ADDR(lp->ddPA); // lp->dd was allocated out of ZONE_DMA32
+   outl(ddPA, ioaddr + VMXNET_INIT_ADDR);
    outl(lp->dd->length, ioaddr + VMXNET_INIT_LENGTH);
 
 #ifdef VMXNET_DO_ZERO_COPY
@@ -1351,7 +1781,7 @@ vmxnet_open(struct net_device *dev)
 #endif
 
    lp->dd->txStopped = FALSE;
-   compat_netif_start_queue(dev);
+   netif_start_queue(dev);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,3,43)
    dev->interrupt = 0;
@@ -1575,11 +2005,14 @@ vmxnet_map_pkt(struct sk_buff *skb,
 static void
 check_tx_queue(struct net_device *dev)
 {
-   Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
    Vmxnet2_DriverData *dd = lp->dd;
    int completed = 0;
 
-   while (1) {
+   /*
+    * The .suspend handler frees driver data, so we need this check.
+    */
+   while (dd) {
       Vmxnet2_TxRingEntry *xre = &lp->txRing[dd->txDriverCur];
       struct sk_buff *skb = lp->txBufInfo[dd->txDriverCur].skb;
 
@@ -1587,12 +2020,16 @@ check_tx_queue(struct net_device *dev)
 	 break;
       }
 #ifdef VMXNET_DO_ZERO_COPY
-      if (lp->zeroCopyTx){
+      if (lp->zeroCopyTx) {
          VMXNET_LOG("unmap txRing[%u]\n", dd->txDriverCur);
          vmxnet_unmap_buf(skb, &lp->txBufInfo[dd->txDriverCur], xre, lp->pdev);
-      }
+      } else
 #endif
-
+      {
+         compat_pci_unmap_single(lp->pdev, xre->sg.sg[0].addrLow,
+                                 xre->sg.sg[0].length,
+                                 PCI_DMA_TODEVICE);
+      }
       if (lp->txBufInfo[dd->txDriverCur].eop) {
          compat_dev_kfree_skb_irq(skb, FREE_WRITE);
       }
@@ -1607,8 +2044,8 @@ check_tx_queue(struct net_device *dev)
       lp->numTxPending -= completed;
 
       // XXX conditionally wake up the queue based on the # of freed entries
-      if (compat_netif_queue_stopped(dev)) {
-	 compat_netif_wake_queue(dev);
+      if (netif_queue_stopped(dev)) {
+         netif_wake_queue(dev);
          dd->txStopped = FALSE;
       }
    }
@@ -1639,13 +2076,20 @@ Vmxnet_TxStatus
 vmxnet_tx(struct sk_buff *skb, struct net_device *dev)
 {
    Vmxnet_TxStatus status = VMXNET_DEFER_TRANSMIT;
-   struct Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
    Vmxnet2_DriverData *dd = lp->dd;
    unsigned long flags;
    Vmxnet2_TxRingEntry *xre;
 #ifdef VMXNET_DO_TSO
    int mss;
 #endif
+
+   /*
+    * The .suspend handler frees driver data, so we need this check.
+    */
+   if (UNLIKELY(!dd)) {
+      return VMXNET_STOP_TRANSMIT;
+   }
 
    xre = &lp->txRing[dd->txDriverNext];
 
@@ -1680,7 +2124,7 @@ vmxnet_tx(struct sk_buff *skb, struct net_device *dev)
       /* check for the availability of tx ring entries */
       if (dd->txRingLength - lp->numTxPending < txEntries) {
          dd->txStopped = TRUE;
-         compat_netif_stop_queue(dev);
+         netif_stop_queue(dev);
          check_tx_queue(dev);
 
          spin_unlock_irqrestore(&lp->txLock, flags);
@@ -1715,7 +2159,8 @@ vmxnet_tx(struct sk_buff *skb, struct net_device *dev)
                return VMXNET_DEFER_TRANSMIT;
             }
          }
-         if (UNLIKELY(*(uint16*)(skb->data + ETH_FRAME_TYPE_LOCATION) == ETH_TYPE_VLAN_TAG)) {
+         if (UNLIKELY(*(uint16*)(skb->data + ETH_FRAME_TYPE_LOCATION) ==
+                      ETH_TYPE_VLAN_TAG)) {
             headerSize += VLAN_TAG_LENGTH;
             if (UNLIKELY(skb_headlen(skb) < headerSize)) {
 
@@ -1779,7 +2224,7 @@ vmxnet_tx(struct sk_buff *skb, struct net_device *dev)
             return VMXNET_DEFER_TRANSMIT;
          }
 
-         xre->sg.sg[0].addrLow = (uint32)dd->txBufferPhysStart + pos;
+         xre->sg.sg[0].addrLow = dd->txBufferPhysStart + pos;
          xre->sg.sg[0].addrHi = 0;
          xre->sg.sg[0].length = headerSize;
          vmxnet_map_pkt(skb, headerSize, lp, 1);
@@ -1803,12 +2248,13 @@ vmxnet_tx(struct sk_buff *skb, struct net_device *dev)
 #endif
    {
       struct Vmxnet2_TxBuf *tb;
+      dma_addr_t dmaAddr;
 
       spin_lock_irqsave(&lp->txLock, flags);
 
       if (lp->txBufInfo[dd->txDriverNext].skb != NULL) {
          dd->txStopped = TRUE;
-         compat_netif_stop_queue(dev);
+         netif_stop_queue(dev);
          check_tx_queue(dev);
 
          spin_unlock_irqrestore(&lp->txLock, flags);
@@ -1817,9 +2263,8 @@ vmxnet_tx(struct sk_buff *skb, struct net_device *dev)
 
       lp->numTxPending ++;
 
-      xre->sg.sg[0].addrLow = virt_to_bus(skb->data);
-      xre->sg.sg[0].addrHi = 0;
-      xre->sg.sg[0].length = skb->len;
+      dmaAddr = compat_pci_map_single(lp->pdev, skb->data, skb->len, PCI_DMA_TODEVICE);
+      VMXNET_FILL_SG(xre->sg.sg[0], dmaAddr, skb->len);
       xre->sg.length = 1;
       xre->flags = 0;
 
@@ -2038,10 +2483,10 @@ vmxnet_rx_frags(Vmxnet_Private *lp, struct sk_buff *skb)
 static int
 vmxnet_rx(struct net_device *dev)
 {
-   Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
    Vmxnet2_DriverData *dd = lp->dd;
 
-   if (!lp->devOpen) {
+   if (!lp->devOpen || !dd) {
       return 0;
    }
 
@@ -2067,7 +2512,7 @@ vmxnet_rx(struct net_device *dev)
       skb = lp->rxSkbuff[dd->rxDriverNext];
 
       /* refill the rx ring */
-      newSkb = dev_alloc_skb(PKT_BUF_SZ);
+      newSkb = dev_alloc_skb(PKT_BUF_SZ + COMPAT_NET_IP_ALIGN);
       if (UNLIKELY(newSkb == NULL)) {
          printk(KERN_DEBUG "%s: Memory squeeze, dropping packet.\n", dev->name);
 #ifdef VMXNET_DO_ZERO_COPY
@@ -2078,12 +2523,16 @@ vmxnet_rx(struct net_device *dev)
          lp->stats.rx_errors++;
          goto next_pkt;
       }
+      skb_reserve(newSkb, COMPAT_NET_IP_ALIGN);
+
+      compat_pci_unmap_single(lp->pdev, rre->paddr, PKT_BUF_SZ, PCI_DMA_FROMDEVICE);
+      skb_put(skb, rre->actualLength);
 
       lp->rxSkbuff[dd->rxDriverNext] = newSkb;
-      rre->paddr = virt_to_bus(newSkb->data);
+      rre->paddr = compat_pci_map_single(lp->pdev, newSkb->data,
+                                         PKT_BUF_SZ, PCI_DMA_FROMDEVICE);
       rre->bufferLength = PKT_BUF_SZ;
 
-      skb_put(skb, rre->actualLength);
 
 #ifdef VMXNET_DO_ZERO_COPY
       if (rre->flags & VMXNET2_RX_WITH_FRAG) {
@@ -2164,11 +2613,13 @@ vmxnet_interrupt(int irq, void *dev_id)
    }
 
 
-   lp = compat_netdev_priv(dev);
+   lp = netdev_priv(dev);
    outl(VMXNET_CMD_INTR_ACK, dev->base_addr + VMXNET_COMMAND_ADDR);
 
    dd = lp->dd;
-   dd->stats.interrupts++;
+   if (LIKELY(dd)) {
+      dd->stats.interrupts++;
+   }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,3,43)
    if (dev->interrupt) {
@@ -2185,8 +2636,8 @@ vmxnet_interrupt(int irq, void *dev_id)
       spin_unlock(&lp->txLock);
    }
 
-   if (compat_netif_queue_stopped(dev) && !lp->dd->txStopped) {
-      compat_netif_wake_queue(dev);
+   if (netif_queue_stopped(dev) && dd && !dd->txStopped) {
+      netif_wake_queue(dev);
    }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,3,43)
@@ -2246,7 +2697,7 @@ static int
 vmxnet_close(struct net_device *dev)
 {
    unsigned int ioaddr = dev->base_addr;
-   Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
    int i;
    unsigned long flags;
 
@@ -2258,7 +2709,7 @@ vmxnet_close(struct net_device *dev)
    dev->start = 0;
 #endif
 
-   compat_netif_stop_queue(dev);
+   netif_stop_queue(dev);
 
    lp->devOpen = FALSE;
 
@@ -2289,7 +2740,7 @@ vmxnet_close(struct net_device *dev)
 
    free_irq(dev->irq, dev);
 
-   for (i = 0; i < lp->dd->txRingLength; i++) {
+   for (i = 0; lp->dd && i < lp->dd->txRingLength; i++) {
       if (lp->txBufInfo[i].skb != NULL && lp->txBufInfo[i].eop) {
 	 compat_dev_kfree_skb(lp->txBufInfo[i].skb, FREE_WRITE);
 	 lp->txBufInfo[i].skb = NULL;
@@ -2298,6 +2749,8 @@ vmxnet_close(struct net_device *dev)
 
    for (i = 0; i < lp->numRxBuffers; i++) {
       if (lp->rxSkbuff[i] != NULL) {
+         compat_pci_unmap_single(lp->pdev, lp->rxRing[i].paddr,
+                                 PKT_BUF_SZ, PCI_DMA_FROMDEVICE);
 	 compat_dev_kfree_skb(lp->rxSkbuff[i], FREE_WRITE);
 	 lp->rxSkbuff[i] = NULL;
       }
@@ -2306,7 +2759,8 @@ vmxnet_close(struct net_device *dev)
    if (lp->jumboFrame || lp->lpd) {
       for (i = 0; i < lp->numRxBuffers2; i++) {
          if (lp->rxPages[i] != NULL) {
-            pci_unmap_page(lp->pdev, lp->rxRing2[i].paddr, PAGE_SIZE, PCI_DMA_FROMDEVICE);
+            pci_unmap_page(lp->pdev, lp->rxRing2[i].paddr, PAGE_SIZE,
+                           PCI_DMA_FROMDEVICE);
             put_page(lp->rxPages[i]);
             lp->rxPages[i] = NULL;
          }
@@ -2336,7 +2790,7 @@ vmxnet_close(struct net_device *dev)
 static int
 vmxnet_load_multicast (struct net_device *dev)
 {
-    Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
     volatile u16 *mcast_table = (u16 *)lp->dd->LADRF;
     struct dev_mc_list *dmi = dev->mc_list;
     char *addrs;
@@ -2397,7 +2851,14 @@ static void
 vmxnet_set_multicast_list(struct net_device *dev)
 {
    unsigned int ioaddr = dev->base_addr;
-   Vmxnet_Private *lp = compat_netdev_priv(dev);
+   struct Vmxnet_Private *lp = netdev_priv(dev);
+
+   /*
+    * The .suspend handler frees driver data, so we need this check.
+    */
+   if (UNLIKELY(!lp->dd)) {
+      return;
+   }
 
    lp->dd->ifflags = ~(VMXNET_IFF_PROMISC
                       |VMXNET_IFF_BROADCAST
@@ -2447,7 +2908,7 @@ vmxnet_set_mac_address(struct net_device *dev, void *p)
    unsigned int ioaddr = dev->base_addr;
    int i;
 
-   if (compat_netif_running(dev))
+   if (netif_running(dev))
       return -EBUSY;
 
    memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
@@ -2477,7 +2938,7 @@ vmxnet_set_mac_address(struct net_device *dev, void *p)
 static struct net_device_stats *
 vmxnet_get_stats(struct net_device *dev)
 {
-   Vmxnet_Private *lp = compat_netdev_priv(dev);
+   Vmxnet_Private *lp = netdev_priv(dev);
 
    return &lp->stats;
 }

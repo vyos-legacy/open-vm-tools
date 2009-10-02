@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * vmxnet3_defs.h --
  *
@@ -46,6 +60,10 @@
 #define VMXNET3_REG_MACH  0x30   /* MAC Address High */
 #define VMXNET3_REG_ICR   0x38   /* Interrupt Cause Register */
 #define VMXNET3_REG_ECR   0x40   /* Event Cause Register */
+
+#define VMXNET3_REG_WSAL  0xF00  /* Wireless Shared Address Lo  */
+#define VMXNET3_REG_WSAH  0xF08  /* Wireless Shared Address Hi  */
+#define VMXNET3_REG_WCMD  0xF18  /* Wireless Command */
 
 /* BAR 0 */
 #define VMXNET3_REG_IMR      0x0   /* Interrupt Mask Register */
@@ -78,6 +96,7 @@ typedef enum {
    VMXNET3_CMD_UPDATE_IML,
    VMXNET3_CMD_UPDATE_PMCFG,
    VMXNET3_CMD_UPDATE_FEATURE,
+   VMXNET3_CMD_LOAD_PLUGIN,
 
    VMXNET3_CMD_FIRST_GET = 0xF00D0000,
    VMXNET3_CMD_GET_QUEUE_STATUS = VMXNET3_CMD_FIRST_GET,
@@ -132,7 +151,7 @@ Vmxnet3_TxDesc;
 
 typedef
 #include "vmware_pack_begin.h"
-struct vmxnet3_TxDataDesc {
+struct Vmxnet3_TxDataDesc {
    uint8 data[VMXNET3_HDR_COPY_SIZE];
 }
 #include "vmware_pack_end.h"
@@ -352,7 +371,7 @@ Vmxnet3_MiscConf;
 
 typedef
 #include "vmware_pack_begin.h"
-struct vmxnet3_TxQueueConf {
+struct Vmxnet3_TxQueueConf {
    uint64    txRingBasePA;
    uint64    dataRingBasePA;
    uint64    compRingBasePA;
@@ -514,7 +533,7 @@ struct Vmxnet3_DSDevRead {
    Vmxnet3_RxFilterConf rxFilterConf;
    Vmxnet3_VariableLenConfDesc  rssConfDesc;
    Vmxnet3_VariableLenConfDesc  pmConfDesc;
-   uint64               reserved[2];
+   Vmxnet3_VariableLenConfDesc  pluginConfDesc;
 }
 #include "vmware_pack_end.h"
 Vmxnet3_DSDevRead;
@@ -588,4 +607,7 @@ do {\
 
 #define VMXNET3_LINK_UP         (10000 << 16 | 1)    // 10 Gbps, up
 #define VMXNET3_LINK_DOWN       0
+
+#define VMXWIFI_DRIVER_SHARED_LEN 8192
+
 #endif /* _VMXNET3_DEFS_H_ */

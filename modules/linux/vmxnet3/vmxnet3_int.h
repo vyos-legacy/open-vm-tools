@@ -24,6 +24,18 @@
 
 #include "vmxnet3_defs.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0) && !defined(VMXNET3_NO_NAPI)
+#   define VMXNET3_NAPI
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) || defined NETIF_F_GRO
+/*
+ * The new NAPI initially appeared only in 2.6.24 but Redhat backported it
+ * to 2.6.18 in RHEL5.4. We assume that iwe need to use the new style
+ * whenever NETIF_F_GRO is present.
+ */
+#   define VMXNET3_NEW_NAPI
+#endif
+#endif
+
 typedef struct vmxnet3_cmd_ring {
    Vmxnet3_GenericDesc *base;
    uint32               size;
@@ -146,6 +158,7 @@ struct vmxnet3_rx_buf_info {
    union {
       struct sk_buff *skb;
       struct page    *page;
+      unsigned long   shm_idx;
    };
    dma_addr_t dma_addr;
 };
@@ -231,6 +244,10 @@ struct vmxnet3_adapter {
    compat_work work;
 
    unsigned long  state;    /* VMXNET3_STATE_BIT_xxx */
+
+   int dev_number;
+   Bool is_shm;
+   struct vmxnet3_shm_pool *shm;
 };
 
 struct vmxnet3_stat_desc {
@@ -264,3 +281,31 @@ struct vmxnet3_stat_desc {
 
 #define VMXNET3_MAX_SKB_BUF_SIZE    (3*1024)
 #endif
+
+#ifdef VMX86_DEBUG
+#   define VMXNET3_ASSERT(cond) BUG_ON(!(cond))
+#else
+#   define VMXNET3_ASSERT(cond) do {} while (0)
+#endif
+
+#ifdef VMXNET3_DO_LOG
+#   define VMXNET3_LOG(msg...) printk(KERN_ERR msg)
+#else
+#   define VMXNET3_LOG(msg...)
+#endif
+
+// used by vmxnet3_shm_tx_pkt
+int
+vmxnet3_tq_xmit(struct sk_buff *skb,
+                struct vmxnet3_tx_queue *tq,
+                struct vmxnet3_adapter *adapter,
+                struct net_device *netdev);
+
+int
+vmxnet3_quiesce_dev(struct vmxnet3_adapter *adapter);
+
+int
+vmxnet3_activate_dev(struct vmxnet3_adapter *adapter);
+
+void
+vmxnet3_force_close(struct vmxnet3_adapter *adapter);
