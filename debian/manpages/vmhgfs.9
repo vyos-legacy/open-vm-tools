@@ -1,0 +1,58 @@
+.TH VMHGFS 9 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmhgfs \- vmware kernel module
+
+.SH SYNOPSIS
+modprobe vmhgfs
+
+.SH DESCRIPTION
+This is kernel filesystem module. None of the Tools components depend on vmhgfs, nor does it have any dependencies of its own, so it can be loaded at any time in the boot process.
+.PP
+When mounting, one must use an NFS\-like "<host>:<export>" syntax. The <host> field must be ".host", while the <export> field can be "/", a path to a specific Shared Folder, or a path to a subdirectory within that Shared Folder. Note that mounting may fail if Shared Folders are disabled in the host; don't be alarmed. The vmhgfs filesystem supports a plethora of mount options, run \fIvmware\-hgfsmounter\fR(8) \-h to see them. We typically exclude vmhgfs from the locate database as crawling the Shared Folders is time consuming. To do this, add "vmhgfs" to PRUNEFS within updatedb's configuration file, typically found in /etc/updatedb.conf.
+.PP
+We also typically mount vmhgfs via:
+.PP
+	mount \-t vmhgfs .host:/ /mnt/hgfs
+.PP
+Or by adding this line to /etc/fstab:
+.PP
+	host:/   /mnt/hgfs   vmhgfs  defaults  0 0
+.PP
+The net effect is that all Shared Folders appear and disappear at /mnt/hgfs as they're added or removed.
+
+.SH OPTIONS
+vmhgfs has no options.
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsync\fR(9)
+.br
+\fIvmxnet\fR(9)
+
+.SH HOMEPAGE
+More information about vmhgfs and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

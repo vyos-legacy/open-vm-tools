@@ -1,0 +1,53 @@
+.TH VMXNET 9 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmxnet \- vmware kernel module
+
+.SH SYNOPSIS
+modprobe vmxnet
+
+.SH DESCRIPTION
+This is a Linux kernel device driver module that drives VMware's fast networking device. As it is backed by real (virtual) hardware, it should be automatically loaded by hotplug or udev as needed. For best performance, it is recommended to enable TSO on all interfaces driven by vmxnet using ethtool.
+.PP
+The shell code to do this might look like this:
+.PP
+if which ethtool >/dev/null 2>&1; then
+   for ethif in `ifconfig \-a | grep ^eth | cut \-d' ' \-f1`; do
+      ethtool \-K $ethif tso on >/dev/null 2>&1
+   done
+fi
+.PP
+The VMware backend may present the fast networking device as an AMD vlance device instead of the actual vmxnet device.
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsync\fR(9)
+
+.SH HOMEPAGE
+More information about vmxnet and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

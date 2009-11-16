@@ -1,0 +1,211 @@
+#!/usr/bin/make -f
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+include /usr/share/quilt/quilt.make
+
+# These are used for cross-compiling and for saving the configure script
+# from having to guess our platform (since we know it already)
+DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
+DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
+
+DEB_BUILD_ARCH      ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH)
+
+ifeq ($(DEB_BUILD_ARCH),amd64)
+	CONFIGURE_FLAGS = --without-procps
+endif
+
+#CFLAGS = -Wall -g
+
+ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
+	CFLAGS += -O0
+else
+	CFLAGS += -O2
+endif
+
+# some default definitions, important!
+#
+# Name of the source package
+psource:=open-vm-source
+
+# The short upstream name, used for the module source directory
+sname:=open-vm
+
+### KERNEL SETUP
+### Setup the stuff needed for making kernel module packages
+### taken from /usr/share/kernel-package/sample.module.rules
+
+# prefix of the target package name
+PACKAGE=open-vm-modules
+# modifieable for experiments or debugging m-a
+MA_DIR ?= /usr/share/modass
+# load generic variable handling
+-include $(MA_DIR)/include/generic.make
+# load default rules, including kdist, kdist_image, ...
+-include $(MA_DIR)/include/common-rules.make
+
+# module assistant calculates all needed things for us and sets
+# following variables:
+# KSRC (kernel source directory), KVERS (kernel version string), KDREV
+# (revision of the Debian kernel-image package), CC (the correct
+# compiler), VERSION (the final package version string), PKGNAME (full
+# package name with KVERS included), DEB_DESTDIR (path to store DEBs)
+
+# The kdist_configure target is called by make-kpkg modules_config and
+# by kdist* rules by dependency. It should configure the module so it is
+# ready for compilation (mostly useful for calling configure).
+# prep-deb-files from module-assistant creates the neccessary debian/ files
+kdist_configure: prep-deb-files
+
+# the kdist_clean target is called by make-kpkg modules_clean and from
+# kdist* rules. It is responsible for cleaning up any changes that have
+# been made by the other kdist_commands (except for the .deb files created)
+kdist_clean: clean
+	$(MAKE) $(MFLAGS) KERNELDIR=$(KSRC) clean
+#
+### end  KERNEL SETUP
+
+# the binary-modules rule is invoked by module-assistant while processing the
+# kdist* targets. It is called by module-assistant or make-kpkg and *not*
+# during a normal build
+binary-modules: prep-deb-files
+	dh_testroot
+	dh_prep
+
+	# Building the modules
+	$(MAKE)
+
+	# Installing the modules
+	set -e; for MODULE in pvscsi vmblock vmci vmhgfs vmmemctl vmsync vmxnet vmxnet3 vsock; \
+	do \
+		install -D -m 0644 modules/linux/$$MODULE.o debian/$(PACKAGE)-$(KVERS)/lib/modules/$(KVERS)/misc/$$MODULE.ko; \
+	done
+
+	dh_installdocs
+	dh_installchangelogs
+	dh_compress
+	dh_fixperms
+	dh_installmodules
+	dh_installdeb
+	dh_gencontrol -- -v$(VERSION)
+	dh_md5sums
+	dh_builddeb --destdir=$(DEB_DESTDIR)
+	dh_prep
+
+config.status: configure patch
+	dh_testdir
+
+ifneq "$(wildcard /usr/share/misc/config.sub)" ""
+	cp -f /usr/share/misc/config.sub config/config.sub
+endif
+ifneq "$(wildcard /usr/share/misc/config.guess)" ""
+	cp -f /usr/share/misc/config.guess config/config.guess
+endif
+
+	# Configuring package
+	CFLAGS="$(CFLAGS)" ./configure --host=$(DEB_HOST_GNU_TYPE) --build=$(DEB_BUILD_GNU_TYPE) --prefix=/usr --sysconfdir=/etc --mandir=\$${prefix}/share/man --without-kernel-modules --without-dnet $(CONFIGURE_FLAGS)
+
+build: build-stamp
+build-stamp: config.status
+	dh_testdir
+
+	# Building package
+	$(MAKE)
+
+	touch build-stamp
+
+clean: unpatch
+	dh_testdir
+	dh_testroot
+	rm -f build-stamp
+	rm -f config/config.guess config/config.sub
+
+	# Cleaning package
+	[ ! -f Makefile ] || $(MAKE) distclean
+
+	dh_clean
+
+install: build
+	dh_testdir
+	dh_testroot
+	dh_prep
+	dh_installdirs
+
+	# Installing package
+	$(MAKE) DESTDIR=$(CURDIR)/debian/open-vm-tools install
+
+	install -D -m 0755 vmware-user-suid-wrapper/vmware-user-suid-wrapper debian/open-vm-toolbox/usr/sbin/vmware-user-suid-wrapper
+
+	install -D -m 0644 toolbox/smallIcon.xpm debian/open-vm-toolbox/usr/share/pixmaps/vmware-toolbox.xpm
+
+	set -e; if [ -e debian/open-vm-tools/etc/pam.d/vmtoolsd-x64 ]; \
+	then \
+		sed -i -e "s|lib64|lib|g" debian/open-vm-tools/etc/pam.d/vmtoolsd-x64; \
+		mv debian/open-vm-tools/etc/pam.d/vmtoolsd-x64 debian/open-vm-tools/etc/pam.d/vmtoolsd; \
+	fi
+
+	chmod 0644 debian/open-vm-tools/etc/pam.d/vmtoolsd
+
+	install -D -m 0755 debian/local/vmxnet.hook debian/open-vm-tools/usr/share/initramfs-tools/hooks/vmxnet
+
+	# Moving open-vm-tools files
+	mkdir -p debian/open-vm-tools/sbin
+	mv debian/open-vm-tools/usr/sbin/mount.vmhgfs debian/open-vm-tools/sbin/mount.vmhgfs
+
+	# Moving open-vm-toolbox files
+	mkdir -p debian/open-vm-toolbox/usr/bin
+	mv debian/open-vm-tools/usr/bin/vmware-user debian/open-vm-toolbox/usr/bin
+	mv debian/open-vm-tools/usr/bin/vmware-toolbox debian/open-vm-toolbox/usr/bin
+
+	mkdir -p debian/open-vm-toolbox/usr/share
+	mv debian/open-vm-tools/usr/share/applications debian/open-vm-toolbox/usr/share
+
+	# Installing configuration files
+	install -D -m 0644 debian/local/xautostart.conf debian/open-vm-toolbox/etc/vmware-tools/xautostart.conf
+	install -D -m 0644 debian/local/tools.conf debian/open-vm-tools/etc/vmware-tools/tools.conf
+
+	# Create the directories to install the source into
+	dh_installdirs -p$(psource)  usr/src/modules/$(sname)/debian
+
+	# Copy only the driver source to the proper location
+	cp -a modules debian/$(psource)/usr/src/modules/$(sname)
+	mkdir -p debian/$(psource)/usr/src/modules/$(sname)/lib
+	cp -a lib/backdoor lib/hgfs lib/hgfsBd lib/include lib/message lib/misc lib/rpcOut debian/$(psource)/usr/src/modules/$(sname)/lib
+	cd debian/$(psource)/usr/src/modules/$(sname); \
+	find . -name ".dep*" -or -name ".lib*" -or -name "*.o" -or -name "*.la" -or -name "*.lo" | xargs rm -rf
+	cp debian/Makefile debian/$(psource)/usr/src/modules/$(sname)/Makefile
+	# Copy the needed debian/ pieces to the proper location
+	cp debian/*modules.in* \
+		debian/$(psource)/usr/src/modules/$(sname)/debian
+	cp debian/control debian/rules debian/changelog debian/copyright \
+		debian/compat debian/$(psource)/usr/src/modules/$(sname)/debian/
+	cd debian/$(psource)/usr/src && tar c modules | bzip2 -9 > $(sname).tar.bz2 && rm -rf modules
+
+	dh_install
+
+binary-indep: build install
+
+binary-arch: build install
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs
+	dh_installdocs
+	dh_install
+	dh_installman
+	dh_installinit --update-rcd-params='start 38 S . stop 38 0 6 .'
+	dh_installmodules
+	dh_lintian
+	dh_link
+	dh_strip --dbg-package=open-vm-tools-dbg
+	dh_compress
+	dh_fixperms -Xsbin/mount.vmhgfs
+	dh_makeshlibs
+	dh_installdeb
+	dh_shlibdeps
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
+
+binary: binary-indep binary-arch
+.PHONY: build clean binary-indep binary-arch binary install binary-modules kdist kdist_configure kdist_image kdist_clean
