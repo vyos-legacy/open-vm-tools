@@ -79,6 +79,7 @@ configure	+= --host=$(DEB_HOST_GNU_TYPE)
 configure	+= --build=$(DEB_BUILD_GNU_TYPE)
 configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
+configure	+= --without-root-privileges
 configure	+= --without-x
 configure	+= --without-dnet
 configure	+= --without-icu
