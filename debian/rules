@@ -108,7 +108,6 @@ build-stamp:  config.status
 	touch $@
 
 clean: clean-patched
-	$(MAKE) -C lib/guestRpc clean
 
 
 # Clean everything up, including everything auto-generated
@@ -117,6 +116,9 @@ clean-patched:
 	dh_testdir
 	dh_testroot
 	#make clean
+	$(MAKE) -C lib/guestRpc clean
+	$(MAKE) -C tests clean
+	$(MAKE) -C modules clean
 	dh_clean 
 
 install: build
