@@ -4,8 +4,7 @@ Priority: extra
 Maintainer: Debian VMware Maintainers <vmware@lists.debian-maintainers.org>
 Uploaders: Daniel Baumann <daniel@debian.org>
 Build-Depends:
- debhelper (>= 7), autotools-dev, quilt, libdumbnet-dev, 
- libproc-dev [i386]
+ debhelper (>= 7), autotools-dev
 Standards-Version: 3.8.3
 Homepage: http://open-vm-tools.sourceforge.net/
 Vcs-Browser: http://git.debian-maintainers.org/?p=vmware/open-vm-tools.git
