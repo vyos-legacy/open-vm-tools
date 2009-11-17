@@ -108,6 +108,8 @@ build-stamp:  config.status
 	touch $@
 
 clean: clean-patched
+	$(MAKE) -C lib/guestRpc clean
+
 
 # Clean everything up, including everything auto-generated
 # at build time that needs not to be kept around in the Debian diff
