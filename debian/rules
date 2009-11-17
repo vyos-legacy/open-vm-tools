@@ -81,6 +81,9 @@ configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
 configure	+= --without-root-privileges
 configure	+= --without-x
+configure	+= --without-procps
+configure	+= --without-gtkmm
+configure	+= --without-gtk2
 configure	+= --without-dnet
 configure	+= --without-icu
 configure	+= CFLAGS="$(CFLAGS)"
