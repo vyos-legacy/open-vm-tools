@@ -32,24 +32,9 @@
 #define INCLUDE_ALLOW_VMNIXMOD
 #include "includeCheck.h"
 
-#include <linux/autoconf.h>
 #include "compat_version.h"
 
-/*
- * We rely on Kernel Module support.  Check here.
- */
-#ifndef CONFIG_MODULES
-#   error "No Module support in this kernel.  Please configure with CONFIG_MODULES"
-#endif
-
-/*
- * 2.2 kernels still use __SMP__ (derived from CONFIG_SMP
- * in the main Makefile), so we do it here.
- */
-
-#ifdef CONFIG_SMP
-#   define __SMP__ 1
-#endif
+/* This is no longer really auto generated and only works on 2.6 */
 
 #if defined(CONFIG_MODVERSIONS) && defined(KERNEL_2_1)
 #   if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,60)

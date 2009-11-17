@@ -46,7 +46,8 @@ endif
 VM_UNAME = $(KVERS)
 
 # Header directory for the running kernel
-HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
+#HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
+HEADER_DIR = $(KINCLUDE_DIR)
 
 BUILD_DIR = $(HEADER_DIR)/..
 
@@ -124,7 +125,7 @@ postbuild:: ;
 
 $(DRIVER_KO): prebuild
 	make -C $(BUILD_DIR) SUBDIRS=$$PWD SRCROOT=$$PWD/$(SRCROOT) \
-	  MODULEBUILDDIR=$(MODULEBUILDDIR) modules
+	  MODULEBUILDDIR=$(MODULEBUILDDIR) V=1 modules
 	make -C $$PWD SRCROOT=$$PWD/$(SRCROOT) \
 	  MODULEBUILDDIR=$(MODULEBUILDDIR) postbuild
 endif
