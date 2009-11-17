@@ -29,6 +29,7 @@ export vsockdir := $(MODULES_DIR)/net/vsock
 #if WITH_ROOT_PRIVILEGES
 #export DEPMOD := depmod -a
 #endif WITH_ROOT_PRIVILEGES
+export DEPMOD := true
 
 include_HEADERS = $(top_srcdir)/lib/include/vmci_sockets.h
 endif LINUX
