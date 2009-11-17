@@ -19,6 +19,7 @@
 # Derived files
 *_xdr.c
 
+modules.order
 checkvm/vmware-checkvm
 guestd/vmware-guestd
 hgfsclient/vmware-hgfsclient
