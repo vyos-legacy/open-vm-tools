@@ -43,7 +43,7 @@ INCLUDE      += -I$(SRCROOT)/shared
 endif
 
 
-VM_UNAME = $(shell uname -r)
+VM_UNAME = $(KVERS)
 
 # Header directory for the running kernel
 HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include

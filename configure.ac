@@ -635,7 +635,7 @@ if test "$with_procps" = "yes"; then
    if test -z "$CUSTOM_PROCPS_LIBS"; then
       CUSTOM_PROCPS_LIBS="-L/lib"
    fi
-   AC_VMW_CHECK_LIB([proc-3.2.7],
+   AC_VMW_CHECK_LIB([proc],
                     [PROCPS],
                     [],
                     [],
