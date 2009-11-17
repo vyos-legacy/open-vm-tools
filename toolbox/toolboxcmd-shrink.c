@@ -31,13 +31,14 @@
 #endif
 
 #include "toolboxCmdInt.h"
+#include "rpcout.h"
 
 #ifndef _WIN32
 static void ShrinkWiperDestroy(int signal);
 #endif
 
-static WiperPartition_List * ShrinkGetMountPoints(void);
-static WiperPartition * ShrinkGetPartition(char *mountPoint, int quiet_flag);
+static Bool ShrinkGetMountPoints(WiperPartition_List *);
+static WiperPartition * ShrinkGetPartition(char *mountPoint);
 static Wiper_State *wiper = NULL;
 
 
@@ -58,19 +59,24 @@ static Wiper_State *wiper = NULL;
  */
 
 int
-Shrink_List(void) // IN: Verbosity flag.
+Shrink_List(void)
 {
-   int i;
-   WiperPartition_List *plist = ShrinkGetMountPoints();
-   if (plist == NULL) {
+   WiperPartition_List plist;
+   DblLnkLst_Links *curr;
+
+   if (!ShrinkGetMountPoints(&plist)) {
       return EX_TEMPFAIL;
    }
-   for (i = 0; i < plist->size; i++) {
-      if (strlen(plist->partitions[i].comment) == 0) {
-         printf("%s\n", plist->partitions[i].mountPoint);
+
+   DblLnkLst_ForEach(curr, &plist.link) {
+      WiperPartition *p = DblLnkLst_Container(curr, WiperPartition, link);
+      if (p->type != PARTITION_UNSUPPORTED) {
+         printf("%s\n", p->mountPoint);
       }
    }
-   WiperPartition_Close(plist);
+
+   WiperPartition_Close(&plist);
+
    return EXIT_SUCCESS;
 }
 
@@ -92,25 +98,32 @@ Shrink_List(void) // IN: Verbosity flag.
  */
 
 static WiperPartition*
-ShrinkGetPartition(char *mountPoint, // IN: mount point
-                   int quiet_flag)   // IN: Verbosity flag
+ShrinkGetPartition(char *mountPoint)
 {
-   int i;
-   WiperPartition *part;
-   WiperPartition_List *plist = ShrinkGetMountPoints();
-   if (!plist) {
+   WiperPartition_List plist;
+   WiperPartition *p, *part = NULL;
+   DblLnkLst_Links *curr;
+
+   if (!ShrinkGetMountPoints(&plist)) {
       return NULL;
    }
-   part = (WiperPartition *) malloc(sizeof *part);
-   for (i = 0; i < plist->size; i++) {
-      if (strcmp(plist->partitions[i].mountPoint, mountPoint) == 0) {
-         memcpy(part, &plist->partitions[i], sizeof *part);
-         WiperPartition_Close(plist);
-         return part;
+
+   DblLnkLst_ForEach(curr, &plist.link) {
+      p = DblLnkLst_Container(curr, WiperPartition, link);
+      if (toolbox_strcmp(p->mountPoint, mountPoint) == 0) {
+         part = p;
+         /*
+          * Detach the element we are interested in so it is not
+          * destroyed when we call WiperPartition_Close.
+          */
+         DblLnkLst_Unlink1(&part->link);
+         break;
       }
    }
-   WiperPartition_Close(plist);
-   return NULL;
+
+   WiperPartition_Close(&plist);
+
+   return part;
 }
 
 
@@ -130,20 +143,19 @@ ShrinkGetPartition(char *mountPoint, // IN: mount point
  *-----------------------------------------------------------------------------
  */
 
-static WiperPartition_List*
-ShrinkGetMountPoints(void) // IN: Verbosity flag
+static Bool
+ShrinkGetMountPoints(WiperPartition_List *pl) // OUT: Known mount points
 {
-   if (GuestApp_IsDiskShrinkCapable()) {
-      if (GuestApp_IsDiskShrinkEnabled()) {
-         Wiper_Init(NULL);
-         return WiperPartition_Open();
-      } else {
-         fprintf(stderr,SHRINK_DISABLED_ERR);
-      }
-   } else {
+   if (!GuestApp_IsDiskShrinkCapable()) {
       fprintf(stderr, SHRINK_FEATURE_ERR);
+   } else if (!GuestApp_IsDiskShrinkEnabled()) {
+      fprintf(stderr, SHRINK_DISABLED_ERR);
+   } else if (!WiperPartition_Open(pl)) {
+      fprintf(stderr, "Unable to collect partition data.\n");
+   } else {
+      return TRUE;
    }
-   return NULL;
+   return FALSE;
 }
 
 
@@ -175,14 +187,24 @@ Shrink_DoShrink(char *mountPoint, // IN: mount point
    int progress = 0;
    unsigned char *err;
    WiperPartition *part;
+   int rc;
+
 #ifndef _WIN32
    signal(SIGINT, ShrinkWiperDestroy);
 #endif
-   part = ShrinkGetPartition(mountPoint, quiet_flag);
+
+   part = ShrinkGetPartition(mountPoint);
    if (part == NULL) {
-      fprintf(stderr, "Unable to find partition\n");
+      fprintf(stderr, "Unable to find partition %s\n", mountPoint);
       return EX_OSFILE;
    }
+
+   if (part->type == PARTITION_UNSUPPORTED) {
+      fprintf(stderr, "Partition %s is not shrinkable\n", part->mountPoint);
+      rc = EX_UNAVAILABLE;
+      goto out;
+   }
+
    /*
     * Verify that shrinking is still possible before going through with the
     * wiping. This obviously isn't atomic, but it should take care of
@@ -190,50 +212,57 @@ Shrink_DoShrink(char *mountPoint, // IN: mount point
     */
    if (!GuestApp_IsDiskShrinkEnabled()) {
       fprintf(stderr, SHRINK_CONFLICT_ERR);
-      free(part);
-      return EX_TEMPFAIL;
+      rc = EX_TEMPFAIL;
+      goto out;
    }
 
-   wiper = Wiper_Start (part, MAX_WIPER_FILE_SIZE);
+   wiper = Wiper_Start(part, MAX_WIPER_FILE_SIZE);
+
    while (progress < 100 && wiper != NULL) {
       err = Wiper_Next(&wiper, &progress);
       if (strlen(err) > 0) {
          if (strcmp(err, "error.create") == 0) {
             fprintf(stderr, "Error, Unable to create wiper file\n");
-            free(part);
-            return EX_TEMPFAIL;
-         }
-         else {
+         } else {
             fprintf(stderr, "Error, %s", err);
-            free(part);
-            return EX_TEMPFAIL;
          }
-         free(wiper);
-         wiper = NULL;
+
+         rc = EX_TEMPFAIL;
       }
+
       if (!quiet_flag) {
-	 printf("\rProgress: %d [", progress);
-	 for (i = 0; i <= progress / 10; i++) {
-	    printf("=");
-	 }
-	 printf(">");
-	 for (; i <= 100 / 10; i++) {
-	    printf(" ");
-	 }
-	 printf("]");
+         printf("\rProgress: %d [", progress);
+         for (i = 0; i <= progress / 10; i++) {
+            putchar('=');
+         }
+         printf(">%*c", 10 - i + 1, ']');
+         fflush(stdout);
       }
    }
+
    if (progress >= 100) {
-      if (!quiet_flag) {
-         printf("\nDisk shrinking complete\n");
+      char *result;
+      size_t resultLen;
+
+      if (RpcOut_sendOne(&result, &resultLen, "disk.shrink")) {
+         if (!quiet_flag) {
+            printf("\nDisk shrinking complete\n");
+         }
+         rc = EXIT_SUCCESS;
+         goto out;
       }
-      wiper = NULL;
-      free(part);
-      return EXIT_SUCCESS;
-   } else {
-      fprintf(stderr, "Shrinking not completed\n");
-      return EX_TEMPFAIL;
+
+      fprintf(stderr, "%s\n", result);
    }
+
+   fprintf(stderr, "Shrinking not completed\n");
+   rc = EX_TEMPFAIL;
+
+out:
+   WiperSinglePartition_Close(part);
+   free(wiper);
+   wiper = NULL;
+   return rc;
 }
 
 

@@ -1,0 +1,63 @@
+.TH VMWARE\-USER 1 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmware\-user \- GUI tool
+
+.SH SYNOPSIS
+\fBvmware\-user\fR
+
+.SH DESCRIPTION
+vmware\-user is a relatively small Gtk application that should run for the duration of an interactive X11 session. It has no dependencies on X11 service daemons (e.g., messaging buses), and so it may be launched at any time during or after session startup.
+.PP
+It's a hidden window application and handles tools features which we want active all the time, but don't want to impose a visable window on the user.
+.PP
+Without a running vmware\-user process, interactive X11 sessions will lack GUI features such as drag\-and\-drop (DnD), file and text copy/paste, dynamic display resizing, and Unity.
+.PP
+vmware\-user depends on a mounted \fIvmblock\fR(9) filesystem for proper host to guest DnD operations.
+.PP
+Drag\-and\-drop operations depend on a setuid wrapper, \fIvmware\-user\-suid\-wrapper\fR(8).
+.PP
+A recent change to the Open VM Tools adjusted the nature of the relationship between the VMware Tools service (\fIvmware\-guestd\fR(8)) and the VMware user process (vmware\-user). The two programs have been completely decoupled, and as such \fIvmware\-guestd\fR(8) no longer attempts to automatically start and stop vmware\-user processes on users' behalf.
+.PP
+Modern display managers implementing the XDG autostart spec support launching applications at session startup via placing a `vmware\-user.desktop' file in a well\-known location (/etc/xdg/autostart).
+
+.SH OPTIONS
+vmware\-user has no options.
+
+.SH FILES
+\fI/etc/vmware\-tools/xautostart.conf\fR
+.br
+\fI/etc/xdg/autostart/vmware\-user.desktop\fR
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsync\fR(9)
+.br
+\fIvmxnet\fR(9)
+
+.SH HOMEPAGE
+More information about vmware\-user and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

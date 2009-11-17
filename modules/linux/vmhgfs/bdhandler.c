@@ -25,287 +25,190 @@
 /* Must come before any kernel header file. */
 #include "driver-config.h"
 
-#include <asm/atomic.h>
 #include <linux/errno.h>
-#include "compat_completion.h"
-#include "compat_kernel.h"
-#include "compat_kthread.h"
-#include "compat_list.h"
-#include "compat_sched.h"
-#include "compat_semaphore.h"
-#include "compat_slab.h"
-#include "compat_spinlock.h"
-#include "compat_version.h"
 
-/* Must be included after semaphore.h. */
-#include <linux/timer.h>
-/* Must be included after sched.h. */
-#include <linux/smp_lock.h>
-
+#include "bdhandler.h"
 #include "hgfsBd.h"
 #include "hgfsDevLinux.h"
 #include "hgfsProto.h"
-#include "bdhandler.h"
 #include "module.h"
 #include "request.h"
-#include "vm_assert.h"
 #include "rpcout.h"
+#include "transport.h"
+#include "vm_assert.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 4, 9)
-int errno;  /* compat_exit() needs global errno variable. */
-#endif
-
-static inline void HgfsWakeWaitingClient(HgfsReq *req);
-static inline void HgfsCompleteReq(HgfsReq *req,
-                                   char const *reply,
-                                   size_t replySize);
-static void HgfsSendUnsentReqs(void);
 
 /*
- * Private function implementations.
- */
-
-/*
- *----------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
  *
- * HgfsWakeWaitingClient --
+ * HgfsBdChannelOpen --
  *
- *    Wakes up the client process waiting for the reply to this
- *    request.
+ *      Open the backdoor in an idempotent way.
  *
  * Results:
- *    None
+ *      TRUE on success, FALSE on failure.
  *
  * Side effects:
- *    None
+ *      None
  *
- *----------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
  */
 
-static inline void
-HgfsWakeWaitingClient(HgfsReq *req)  // IN: Request
+static Bool
+HgfsBdChannelOpen(HgfsTransportChannel *channel) // IN: Channel
 {
-   ASSERT(req);
-   wake_up(&req->queue);
-}
+   Bool ret = FALSE;
 
+   ASSERT(channel->status == HGFS_CHANNEL_NOTCONNECTED);
 
-/*
- *----------------------------------------------------------------------
- *
- * HgfsCompleteReq --
- *
- *    Copies the reply packet into the request structure and wakes up
- *    the associated client.
- *
- * Results:
- *    None
- *
- * Side effects:
- *    None
- *
- *----------------------------------------------------------------------
- */
+   if (HgfsBd_OpenBackdoor((RpcOut **)&channel->priv)) {
+      LOG(8, ("VMware hgfs: %s: backdoor opened.\n", __func__));
+      ret = TRUE;
+      ASSERT(channel->priv != NULL);
+   }
 
-static inline void
-HgfsCompleteReq(HgfsReq *req,       // IN: Request
-                char const *reply,  // IN: Reply packet
-                size_t replySize)   // IN: Size of reply packet
-{
-   ASSERT(replySize <= HGFS_PACKET_MAX);
-
-   memcpy(HGFS_REQ_PAYLOAD(req), reply, replySize);
-   req->payloadSize = replySize;
-   req->state = HGFS_REQ_STATE_COMPLETED;
-   list_del_init(&req->list);
-   HgfsWakeWaitingClient(req);
+   return ret;
 }
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsSendUnsentReqs --
+ * HgfsBdChannelClose --
  *
- *      Process the unsent list and send requests to the backdoor.
+ *      Close the backdoor in an idempotent way.
  *
  * Results:
- *      None.
+ *      None
  *
  * Side effects:
- *      None.
+ *      None
  *
  *-----------------------------------------------------------------------------
  */
 
 static void
-HgfsSendUnsentReqs(void)
+HgfsBdChannelClose(HgfsTransportChannel *channel) // IN: Channel
 {
-   char const *replyPacket;
-   struct list_head *cur, *tmp;
+   ASSERT(channel->priv != NULL);
+
+   HgfsBd_CloseBackdoor((RpcOut **)&channel->priv);
+   ASSERT(channel->priv == NULL);
+
+   LOG(8, ("VMware hgfs: %s: backdoor closed.\n", __func__));
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsBdChannelAllocate --
+ *
+ *      Allocate request uin the way that is suitable for sending through
+ *      backdoor.
+ *
+ * Results:
+ *      NULL on failure; otherwise address of the new request.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static HgfsReq *
+HgfsBdChannelAllocate(size_t payloadSize) // IN: size of requests payload
+{
    HgfsReq *req;
+
+   req = kmalloc(sizeof(*req) + HGFS_SYNC_REQREP_CLIENT_CMD_LEN + payloadSize,
+                 GFP_KERNEL);
+   if (likely(req)) {
+      /* Setup the packet prefix. */
+      memcpy(req->buffer, HGFS_SYNC_REQREP_CLIENT_CMD,
+             HGFS_SYNC_REQREP_CLIENT_CMD_LEN);
+
+      req->payload = req->buffer + HGFS_SYNC_REQREP_CLIENT_CMD_LEN;
+   }
+
+   return req;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HgfsBdChannelSend --
+ *
+ *     Send a request via backdoor.
+ *
+ * Results:
+ *     0 on success, negative error on failure.
+ *
+ * Side effects:
+ *     None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static int
+HgfsBdChannelSend(HgfsTransportChannel *channel, // IN: Channel
+                  HgfsReq *req)                  // IN: request to send
+{
+   char const *replyPacket = NULL;
    size_t payloadSize;
+   int ret;
 
-   spin_lock(&hgfsBigLock);
-   list_for_each_safe(cur, tmp, &hgfsReqsUnsent) {
-      req = list_entry(cur, HgfsReq, list);
+   ASSERT(req);
+   ASSERT(req->state == HGFS_REQ_STATE_UNSENT);
+   ASSERT(req->payloadSize <= HGFS_PACKET_MAX);
 
-      /*
-       * A big "wtf" from the driver is in order. Perhaps by "wtf" I really
-       * mean BUG_ON().
-       */
-      ASSERT(req->state == HGFS_REQ_STATE_UNSENT);
-      if (req->state != HGFS_REQ_STATE_UNSENT) {
-         LOG(2, (KERN_DEBUG "VMware hgfs: HgfsSendUnsentReqs: Found request "
-                 "on unsent list in the wrong state, ignoring\n"));
-         continue;
-      }
-
-      ASSERT(req->payloadSize <= HGFS_PACKET_MAX);
-      payloadSize = req->payloadSize;
-      LOG(8, (KERN_DEBUG "VMware hgfs: HgfsSendUnsentReqs: Sending packet "
-              "over backdoor\n"));
-
-      /*
-       * We should attempt to reopen the backdoor channel with every request,
-       * because the HGFS server in the host can be enabled or disabled at any
-       * time.
-       */
-      if (!HgfsBd_OpenBackdoor(&hgfsRpcOut)) {
-         req->state = HGFS_REQ_STATE_ERROR;
-         list_del_init(&req->list);
-         printk(KERN_WARNING "VMware hgfs: HGFS is disabled in the host\n");
-         HgfsWakeWaitingClient(req);
-      } else if (HgfsBd_Dispatch(hgfsRpcOut, HGFS_REQ_PAYLOAD(req),
-                                 &payloadSize, &replyPacket) == 0) {
-
-         /* Request sent successfully. Copy the reply and wake the client. */
-         HgfsCompleteReq(req, replyPacket, payloadSize);
-         LOG(8, (KERN_DEBUG "VMware hgfs: HgfsSendUnsentReqs: Backdoor "
-                 "reply received\n"));
-      } else {
-
-         /* Pass the error into the request. */
-         req->state = HGFS_REQ_STATE_ERROR;
-         list_del_init(&req->list);
-         LOG(8, (KERN_DEBUG "VMware hgfs: HgfsSendUnsentReqs: Backdoor "
-                 "error\n"));
-         HgfsWakeWaitingClient(req);
-
-         /*
-          * If the channel was previously open, make sure it's dead and gone
-          * now. We do this because subsequent requests deserve a chance to
-          * reopen it.
-          */
-         HgfsBd_CloseBackdoor(&hgfsRpcOut);
-      }
+   LOG(8, ("VMware hgfs: %s: backdoor sending.\n", __func__));
+   payloadSize = req->payloadSize;
+   ret = HgfsBd_Dispatch(channel->priv, HGFS_REQ_PAYLOAD(req), &payloadSize,
+                         &replyPacket);
+   if (ret == 0) {
+      LOG(8, ("VMware hgfs: %s: Backdoor reply received.\n", __func__));
+      /* Request sent successfully. Copy the reply and wake the client. */
+      ASSERT(replyPacket);
+      ASSERT(payloadSize <= req->bufferSize);
+      memcpy(HGFS_REQ_PAYLOAD(req), replyPacket, payloadSize);
+      req->payloadSize = payloadSize;
+      HgfsCompleteReq(req);
    }
-   spin_unlock(&hgfsBigLock);
-}
 
-
-/*
- * Public function implementations.
- */
-
-/*
- *-----------------------------------------------------------------------------
- *
- * HgfsResetOps --
- *
- *      Reset ops with more than one opcode back to the desired opcode.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-HgfsResetOps(void)
-{
-   atomic_set(&hgfsVersionOpen, HGFS_OP_OPEN_V3);
-   atomic_set(&hgfsVersionRead, HGFS_OP_READ_V3);
-   atomic_set(&hgfsVersionWrite, HGFS_OP_WRITE_V3);
-   atomic_set(&hgfsVersionClose, HGFS_OP_CLOSE_V3);
-   atomic_set(&hgfsVersionSearchOpen, HGFS_OP_SEARCH_OPEN_V3);
-   atomic_set(&hgfsVersionSearchRead, HGFS_OP_SEARCH_READ_V3);
-   atomic_set(&hgfsVersionSearchClose, HGFS_OP_SEARCH_CLOSE_V3);
-   atomic_set(&hgfsVersionGetattr, HGFS_OP_GETATTR_V3);
-   atomic_set(&hgfsVersionSetattr, HGFS_OP_SETATTR_V3);
-   atomic_set(&hgfsVersionCreateDir, HGFS_OP_CREATE_DIR_V3);
-   atomic_set(&hgfsVersionDeleteFile, HGFS_OP_DELETE_FILE_V3);
-   atomic_set(&hgfsVersionDeleteDir, HGFS_OP_DELETE_DIR_V3);
-   atomic_set(&hgfsVersionRename, HGFS_OP_RENAME_V3);
-   atomic_set(&hgfsVersionQueryVolumeInfo, HGFS_OP_QUERY_VOLUME_INFO_V3);
-   atomic_set(&hgfsVersionCreateSymlink, HGFS_OP_CREATE_SYMLINK_V3);
+   return ret;
 }
 
 
 /*
  *----------------------------------------------------------------------
  *
- * HgfsBdHandler --
+ * HgfsGetBdChannel --
  *
- *    Function run in background thread to pick up HGFS requests from
- *    the filesystem half of the driver, send them over the backdoor,
- *    get replies, and send them back to the filesystem.
- *
- *    Note that this function is called out of the kthread subsystem or, in
- *    older kernels, a similar abstraction built in compat_kthread.h.
+ *     Initialize backdoor channel.
  *
  * Results:
- *    Always returns zero.
+ *     Always return pointer to back door channel.
  *
  * Side effects:
- *    Processes entries from hgfsReqQ.
+ *     None
  *
  *----------------------------------------------------------------------
  */
 
-int
-HgfsBdHandler(void *data) // Ignored
+HgfsTransportChannel*
+HgfsGetBdChannel(void)
 {
-   LOG(6, (KERN_DEBUG "VMware hgfs: HgfsBdHandler: Thread starting\n"));
-   compat_set_freezable();
+   static HgfsTransportChannel channel;
 
-   for (;;) {
+   channel.name = "backdoor";
+   channel.ops.open = HgfsBdChannelOpen;
+   channel.ops.close = HgfsBdChannelClose;
+   channel.ops.allocate = HgfsBdChannelAllocate;
+   channel.ops.send = HgfsBdChannelSend;
+   channel.priv = NULL;
+   channel.status = HGFS_CHANNEL_NOTCONNECTED;
 
-      /* Sleep, waiting for a request or exit. */
-      wait_event_interruptible(hgfsReqThreadWait,
-                               test_bit(HGFS_REQ_THREAD_SEND,
-                                        &hgfsReqThreadFlags) ||
-                               compat_kthread_should_stop());
-
-      /*
-       * First, check for suspend. I'm not convinced that this actually
-       * has to come first, but whatever.
-       */
-      if (compat_try_to_freeze()) {
-	 LOG(6, (KERN_DEBUG
-		 "VMware hgfs: HgfsBdHandler: Closing backdoor after resume\n"));
-	 HgfsBd_CloseBackdoor(&hgfsRpcOut);
-      }
-
-      /* Send outgoing requests. */
-      if (test_and_clear_bit(HGFS_REQ_THREAD_SEND, &hgfsReqThreadFlags)) {
-         LOG(8, (KERN_DEBUG "VMware hgfs: HgfsBdHandler: Sending requests\n"));
-         HgfsSendUnsentReqs();
-      }
-
-      /* Kill yourself. */
-      if (compat_kthread_should_stop()) {
-         LOG(6, (KERN_DEBUG "VMware hgfs: HgfsBdHandler: Told to exit\n"));
-         break;
-      }
-   }
-
-   LOG(6, (KERN_DEBUG "VMware hgfs: HgfsBdHandler: Closing backdoor\n"));
-   HgfsBd_CloseBackdoor(&hgfsRpcOut);
-
-   LOG(6, (KERN_DEBUG "VMware hgfs: HgfsBdHandler: Thread exiting\n"));
-   return 0;
+   return &channel;
 }

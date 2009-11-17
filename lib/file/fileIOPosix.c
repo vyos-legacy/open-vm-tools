@@ -49,7 +49,7 @@
 #include "su.h"
 
 #if defined(__APPLE__)
-#include <sys/socket.h>
+#include "sysSocket.h" // Don't move this: it fixes a system header.
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -89,10 +89,32 @@
 #include "stats_file.h"
 
 #include "unicodeOperations.h"
+#include "memaligned.h"
+
+#if defined(__APPLE__) || defined(__linux__)
+#include "hostinfo.h"
+#endif
 
 #if defined(__APPLE__)
-#include "hostinfo.h"
+#include <sys/sysctl.h>
 #define XATTR_BACKUP_REENABLED "com.vmware.backupReenabled"
+#endif
+
+/*
+ * fallocate() is only supported since the glibc-2.8 and
+ * linux kernel-2.6.23. Presently the glibc in our toolchain is 2.3.
+ */
+#ifdef __linux__
+   #ifndef SYS_fallocate
+      #ifdef __i386__
+         #define SYS_fallocate 324
+      #elif __x86_64__
+         #define SYS_fallocate 285
+      #endif
+   #endif
+   #ifndef FALLOC_FL_KEEP_SIZE
+      #define FALLOC_FL_KEEP_SIZE 1
+   #endif
 #endif
 
 static const unsigned int FileIO_SeekOrigins[] = {
@@ -114,9 +136,11 @@ static const int FileIO_OpenActions[] = {
  */
 typedef struct FilePosixOptions {
    Bool initialized;
+   Bool aligned;
    Bool enabled;
    int countThreshold;
    int sizeThreshold;
+   int aioNumThreads;
 } FilePosixOptions;
 
 #if defined(__APPLE__)
@@ -204,10 +228,20 @@ FileIO_OptionalSafeInitialize(void)
    if (!filePosixOptions.initialized) {
       filePosixOptions.enabled =
          Config_GetBool(TRUE, "filePosix.coalesce.enable");
+      /*
+       * Aligned malloc starts failing to allocate memory during
+       * heavy I/O on Linux.  We're not sure why -- maybe we
+       * are running out of mmaps?  Turn it off by default
+       * for now.
+       */
+      filePosixOptions.aligned =
+         Config_GetBool(FALSE, "filePosix.coalesce.aligned");
       filePosixOptions.countThreshold =
          Config_GetLong(5, "filePosix.coalesce.count");
       filePosixOptions.sizeThreshold =
          Config_GetLong(16*1024, "filePosix.coalesce.size");
+      filePosixOptions.aioNumThreads =
+         Config_GetLong(0, "aiomgr.numThreads");
       filePosixOptions.initialized = TRUE;
    }
 }
@@ -326,8 +360,9 @@ FileIO_CreateFDPosix(int posix,  // IN: UNIX file descriptor
  *      Get sector size of underlying volume.
  *
  * Results:
- *      Always FALSE, there does not seem to be a way to query sectorSize
- *      from filename. XXX.
+ *      Always 512, there does not seem to be a way to query sectorSize
+ *      from filename.  But O_DIRECT boundary alignment constraint is
+ *      always 512, so use that.
  *
  * Side effects:
  *      None
@@ -341,9 +376,9 @@ FileIO_GetVolumeSectorSize(ConstUnicode pathName,  // IN:
 {
    ASSERT(sectorSize);
 
-   *sectorSize = 0;
+   *sectorSize = 512;
 
-   return FALSE;
+   return TRUE;
 }
 
 
@@ -1196,8 +1231,8 @@ FileIO_Truncate(FileIODescriptor *file, // IN
  *      Close a file
  *
  * Results:
- *      On success: 0
- *      On failure: non-zero
+ *      TRUE: an error occured
+ *      FALSE: no error occured
  *
  * Side effects:
  *      None
@@ -1205,14 +1240,14 @@ FileIO_Truncate(FileIODescriptor *file, // IN
  *----------------------------------------------------------------------
  */
 
-int
+Bool
 FileIO_Close(FileIODescriptor *file) // IN
 {
-   int retval;
+   int err;
 
    ASSERT(file);
 
-   retval = close(file->posix);
+   err = (close(file->posix) == -1) ? errno : 0;
 
    FileIO_StatsExit(file);
 
@@ -1221,7 +1256,11 @@ FileIO_Close(FileIODescriptor *file) // IN
    FileIO_Cleanup(file);
    FileIO_Invalidate(file);
 
-   return retval;
+   if (err) {
+      errno = err;
+   }
+
+   return err != 0;
 }
 
 
@@ -1281,6 +1320,7 @@ FileIOCoalesce(struct iovec *inVec,     // IN:  Vector to coalesce from
                size_t inTotalSize,      // IN:  totalSize (bytes) in inVec
                Bool isWrite,            // IN:  coalesce for writing (or reading)
                Bool forceCoalesce,      // IN:  if TRUE always coalesce
+               int flags,               // IN: fileIO open flags
                struct iovec *outVec)    // OUT: Coalesced (1-entry) iovec
 {
    uint8 *cBuf;
@@ -1309,7 +1349,14 @@ FileIOCoalesce(struct iovec *inVec,     // IN:  Vector to coalesce from
    // XXX: Wouldn't it be nice if we could log from here!
    //LOG(5, ("FILE: Coalescing %s of %d elements and %d size\n",
    //        isWrite ? "write" : "read", inCount, inTotalSize));
-   cBuf = Util_SafeMalloc(sizeof(uint8) * inTotalSize);
+   if (filePosixOptions.aligned || flags & FILEIO_OPEN_UNBUFFERED) {
+      cBuf = Aligned_Malloc(sizeof(uint8) * inTotalSize);
+   } else {
+      cBuf = Util_SafeMalloc(sizeof(uint8) * inTotalSize);
+   }
+   if (!cBuf) {
+      return FALSE;
+   }
 
   if (isWrite) {
       IOV_WriteIovToBuf(inVec, inCount, cBuf, inTotalSize);
@@ -1344,7 +1391,8 @@ FileIODecoalesce(struct iovec *coVec,   // IN: Coalesced (1-entry) vector
                  struct iovec *origVec, // IN: Original vector
                  int origVecCount,      // IN: count for origVec
                  size_t actualSize,     // IN: # bytes to transfer back to origVec
-                 Bool isWrite)          // IN: decoalesce for writing (or reading)
+                 Bool isWrite,          // IN: decoalesce for writing (or reading)
+                 int flags)             // IN: fileIO open flags
 {
    ASSERT(coVec);
    ASSERT(origVec);
@@ -1356,7 +1404,11 @@ FileIODecoalesce(struct iovec *coVec,   // IN: Coalesced (1-entry) vector
       IOV_WriteBufToIov(coVec->iov_base, actualSize, origVec, origVecCount);
    }
 
-   free(coVec->iov_base);
+   if (filePosixOptions.aligned || flags & FILEIO_OPEN_UNBUFFERED) {
+      Aligned_Free(coVec->iov_base);
+   } else {
+      free(coVec->iov_base);
+   }
 }
 
 
@@ -1400,7 +1452,8 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
 
    ASSERT(fd);
 
-   didCoalesce = FileIOCoalesce(v, numEntries, totalSize, FALSE, FALSE, &coV);
+   didCoalesce = FileIOCoalesce(v, numEntries, totalSize, FALSE,
+                                FALSE, fd->flags, &coV);
 
    STAT_INST_INC(fd->stats, NumReadvs);
    STAT_INST_INC_BY(fd->stats, BytesReadv, totalSize);
@@ -1465,7 +1518,7 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
    }
 
    if (didCoalesce) {
-      FileIODecoalesce(&coV, v, numEntries, bytesRead, FALSE);
+      FileIODecoalesce(&coV, v, numEntries, bytesRead, FALSE, fd->flags);
    }
 
    if (actual) {
@@ -1515,7 +1568,8 @@ FileIO_Writev(FileIODescriptor *fd,     // IN
 
    ASSERT(fd);
 
-   didCoalesce = FileIOCoalesce(v, numEntries, totalSize, TRUE, FALSE, &coV);
+   didCoalesce = FileIOCoalesce(v, numEntries, totalSize, TRUE,
+                                FALSE, fd->flags, &coV);
 
    STAT_INST_INC(fd->stats, NumWritevs);
    STAT_INST_INC_BY(fd->stats, BytesWritev, totalSize);
@@ -1563,7 +1617,7 @@ FileIO_Writev(FileIODescriptor *fd,     // IN
    }
 
    if (didCoalesce) {
-      FileIODecoalesce(&coV, v, numEntries, bytesWritten, TRUE);
+      FileIODecoalesce(&coV, v, numEntries, bytesWritten, TRUE, fd->flags);
    }
 
    if (actual) {
@@ -1615,8 +1669,7 @@ FileIO_Preadv(FileIODescriptor *fd,    // IN: File descriptor
    ASSERT_NOT_IMPLEMENTED(totalSize < 0x80000000);
 
    didCoalesce = FileIOCoalesce(entries, numEntries, totalSize, FALSE,
-                                TRUE /* force coalescing */,
-                                &coV);
+                                TRUE /* force coalescing */, fd->flags, &coV);
 
    count = didCoalesce ? 1 : numEntries;
    vPtr = didCoalesce ? &coV : entries;
@@ -1641,9 +1694,8 @@ FileIO_Preadv(FileIODescriptor *fd,    // IN: File descriptor
          ssize_t retval = pread(fd->posix, buf, leftToRead, fileOffset);
 
          if (retval == -1) {
-            if (errno == EINTR || errno == EAGAIN) {
-               LOG_ONCE((LGPFX" %s got %s.  Retrying\n",
-                         __FUNCTION__, errno == EINTR ? "EINTR" : "EAGAIN"));
+            if (errno == EINTR) {
+               LOG_ONCE((LGPFX" %s got EINTR.  Retrying\n", __FUNCTION__));
                NOT_TESTED_ONCE();
                continue;
             }
@@ -1669,7 +1721,7 @@ FileIO_Preadv(FileIODescriptor *fd,    // IN: File descriptor
 
 exit:
    if (didCoalesce) {
-      FileIODecoalesce(&coV, entries, numEntries, sum, FALSE);
+      FileIODecoalesce(&coV, entries, numEntries, sum, FALSE, fd->flags);
    }
 
    return fret;
@@ -1716,8 +1768,7 @@ FileIO_Pwritev(FileIODescriptor *fd,   // IN: File descriptor
    ASSERT_NOT_IMPLEMENTED(totalSize < 0x80000000);
 
    didCoalesce = FileIOCoalesce(entries, numEntries, totalSize, TRUE,
-                                TRUE /* force coalescing */,
-                                &coV);
+                                TRUE /* force coalescing */, fd->flags, &coV);
 
    count = didCoalesce ? 1 : numEntries;
    vPtr = didCoalesce ? &coV : entries;
@@ -1742,9 +1793,8 @@ FileIO_Pwritev(FileIODescriptor *fd,   // IN: File descriptor
          ssize_t retval = pwrite(fd->posix, buf, leftToWrite, fileOffset);
 
          if (retval == -1) {
-            if (errno == EINTR || errno == EAGAIN) {
-               LOG_ONCE((LGPFX" %s got %s.  Retrying\n",
-                         __FUNCTION__, errno == EINTR ? "EINTR" : "EAGAIN"));
+            if (errno == EINTR) {
+               LOG_ONCE((LGPFX" %s got EINTR.  Retrying\n", __FUNCTION__));
                NOT_TESTED_ONCE();
                continue;
             }
@@ -1774,7 +1824,7 @@ FileIO_Pwritev(FileIODescriptor *fd,   // IN: File descriptor
    fret = FILEIO_SUCCESS;
 exit:
    if (didCoalesce) {
-      FileIODecoalesce(&coV, entries, numEntries, sum, TRUE);
+      FileIODecoalesce(&coV, entries, numEntries, sum, TRUE, fd->flags);
    }
 
    return fret;
@@ -1833,7 +1883,7 @@ FileIO_GetAllocSize(const FileIODescriptor *fd)  // IN
    ASSERT(fd);
 
 #if __linux__ && defined(N_PLAT_NLM)
-   /* Netware doesn't have st_blocks.  Just fall back to GetSize. */ 
+   /* Netware doesn't have st_blocks.  Just fall back to GetSize. */
    return FileIO_GetSize(fd);
 #else
    /*
@@ -1857,7 +1907,7 @@ FileIO_GetAllocSize(const FileIODescriptor *fd)  // IN
  *      TRUE on success.  Sets errno on failure.
  *
  * Side effects:
- *      None
+ *      None.
  *
  *----------------------------------------------------------------------
  */
@@ -1866,26 +1916,45 @@ Bool
 FileIO_SetAllocSize(const FileIODescriptor *fd,  // IN
                     uint64 size)                 // IN
 {
+
+#if defined(__APPLE__) || defined(__linux__)
+   uint64 curSize;
+   uint64 preallocLen;
 #ifdef __APPLE__
    fstore_t prealloc;
-   uint64 curSize;
+#endif
 
    curSize = FileIO_GetAllocSize(fd);
-
    if (curSize > size) {
       errno = EINVAL;
       return FALSE;
    }
+   preallocLen = size - curSize;
 
+#ifdef __APPLE__
    prealloc.fst_flags = 0;
    prealloc.fst_posmode = F_PEOFPOSMODE;
    prealloc.fst_offset = 0;
-   prealloc.fst_length = size - curSize;
+   prealloc.fst_length = preallocLen;
    prealloc.fst_bytesalloc = 0;
 
    return fcntl(fd->posix, F_PREALLOCATE, &prealloc) != -1;
+#elif __linux__
+   {
+      int ret;
+
+      ret = syscall(SYS_fallocate, fd->posix, FALLOC_FL_KEEP_SIZE,
+                    curSize, preallocLen);
+      if (ret == 0) {
+         return TRUE;
+      }
+      errno = ret;
+      return FALSE;
+   }
+#endif
+
 #else
-   errno = EINVAL;
+   errno = ENOSYS;
    return FALSE;
 #endif
 }
@@ -2361,6 +2430,174 @@ exit:
    return result;
 }
 
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HostSupportsPrealloc --
+ *
+ *      Returns TRUE if the host OS is new enough to support F_PREALLOCATE
+ *      without data loss bugs.  On OSX, this has been verified fixed
+ *      on 10.6 build with kern.osreleasae 10.0.0d6.
+ *
+ * Results:
+ *      TRUE if the current host OS is new enough.
+ *      FALSE if it is not or we can't tell because of an error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+static Bool
+HostSupportsPrealloc(void)
+{
+   char curRel[32];
+   char type;
+   unsigned static const int req[] = { 10, 0, 0, 6 };
+   unsigned int cur[4], i;
+   int num;
+   size_t len = sizeof(curRel);
+   Bool ret = FALSE;
+
+   if (sysctlbyname("kern.osrelease", (void *) &curRel, &len, NULL, 0) == -1) {
+      goto exit;
+   }
+
+   curRel[31] = '\0';
+   Log("Current OS Release is %s\n", curRel);
+
+   /*
+    * Apple's osversion is in the format X.Y.Z which maps to the public
+    * OSX version 10.X-4.Y, and Z is incremented for each publicly
+    * released build.  The Z part is of the form A<type>B, where a and
+    * B are version numbers and <type> is either d (devel), a (alpha),
+    * b (beta), rc, or fc.  If the <type>B is missing, then its a GA build.
+    *
+    * Since we're checking for 10.0.0d6, we can just say anything without
+    * a type or with a type other than d is higher.  For d, we compare
+    * the last number.
+    */
+
+   num = sscanf(curRel, "%u.%u.%u%c%u", &cur[0], &cur[1], &cur[2], &type,
+                &cur[3]);
+   if (num < 3) {
+      goto exit;
+   }
+
+   for (i = 0; i < 3; i++) {
+      if (req[i] > cur[i]) {
+         goto exit;
+      } else if (req[i] < cur[i]) {
+         ret = TRUE;
+         goto exit; 
+      }
+   }
+   if (num == 5 && type == 'd') {
+      ret = req[3] <= cur[3];
+      goto exit;
+   }
+   /*
+    * If we get a type with no letter (num == 4), thats odd.
+    * Consider it mal-formatted and fail.
+    */
+   ret = num != 4;
+
+exit:
+   if (!ret && filePosixOptions.initialized && 
+       filePosixOptions.aioNumThreads == 1) {
+      ret =TRUE;
+   } 
+   return  ret;
+}
+
+#else
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HostSupportsPrealloc --
+ *
+ *      fallocate() is supported for ext4 and xfs since 2.6.23 kernels
+ *
+ * Results:
+ *      TRUE if the current host is linux and kernel is >= 2.6.23.
+ *      FALSE if it is not .
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+static Bool
+HostSupportsPrealloc(void)
+{
+#if  (defined(__linux__ ) && !defined(VMX86_SERVER))
+    if (Hostinfo_OSVersion(0) >=2 && Hostinfo_OSVersion(1) >=6 &&
+        Hostinfo_OSVersion(2) >=23) {
+       return TRUE;
+    }
+#endif
+    return FALSE;
+}
+
 #endif
 
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * FileIO_SupportsPrealloc --
+ *
+ *      Checks if the HostOS/filesystem supports preallocation.
+ *
+ * Results:
+ *      TRUE if supported by the Host OS/filesystem.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+FileIO_SupportsPrealloc(const char *pathName,   // IN
+                        Bool fsCheck)           // IN
+{
+   Bool ret = TRUE;
+
+   if (!HostSupportsPrealloc()) {
+      return FALSE;
+   }
+
+   if (!fsCheck) {
+         return ret;
+   }
+
+#if (defined( __linux__) && !defined(VMX86_SERVER))
+   {
+      struct statfs statBuf;
+      Unicode fullPath;
+
+      ret = FALSE;
+      if (!pathName) {
+         return ret;
+      }
+
+      fullPath = File_FullPath(pathName);
+      if (!fullPath) {
+         return ret;
+      }
+
+      if (Posix_Statfs(fullPath, &statBuf) == 0 &&
+         statBuf.f_type == EXT4_SUPER_MAGIC) {
+         ret = TRUE;
+      }
+      Unicode_Free(fullPath);
+   }
+#endif
+   return ret;
+}
 

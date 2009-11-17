@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * cpLiteName.h --
  *
@@ -26,10 +40,10 @@
 #ifndef __CP_NAME_LITE_H__
 #define __CP_NAME_LITE_H__
 
-#if defined(__KERNEL__) && defined(__linux__)
+#if defined __KERNEL__ && defined __linux__
 #  include "driver-config.h"
 #  include <linux/string.h>
-#elif defined(_KERNEL) && defined(__FreeBSD__)
+#elif defined _KERNEL && defined __FreeBSD__
 #  include <sys/libkern.h>
 #  define strchr(s,c)       index(s,c)
 #else

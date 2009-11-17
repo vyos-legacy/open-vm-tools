@@ -32,10 +32,10 @@
 #include <linux/module.h>
 #include <linux/pagemap.h>
 #include "compat_completion.h"
+#include "compat_cred.h"
 #include "compat_dcache.h"
 #include "compat_fs.h"
 #include "compat_kernel.h"
-#include "compat_kthread.h"
 #include "compat_sched.h"
 #include "compat_semaphore.h"
 #include "compat_slab.h"
@@ -47,8 +47,8 @@
 /* Must be included after sched.h. */
 #include <linux/smp_lock.h>
 
-#include "bdhandler.h"
 #include "filesystem.h"
+#include "transport.h"
 #include "hgfsDevLinux.h"
 #include "hgfsProto.h"
 #include "hgfsUtil.h"
@@ -60,44 +60,28 @@
 #include "rpcout.h"
 #include "hgfs.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 25)
-#define KERNEL_25_FS 0
-#else
-#define KERNEL_25_FS 1
-#endif
-
-#define HGFS_BD_THREAD_NAME "VMware hgfs backdoor handler"
-
 /* Synchronization primitives. */
 spinlock_t hgfsBigLock = SPIN_LOCK_UNLOCKED;
-long hgfsReqThreadFlags;
-wait_queue_head_t hgfsReqThreadWait;
-struct task_struct *hgfsReqThread;
-COMPAT_KTHREAD_DECLARE_STOP_INFO();
 
 /* Other variables. */
-compat_kmem_cache *hgfsReqCache = NULL;
 compat_kmem_cache *hgfsInodeCache = NULL;
-RpcOut *hgfsRpcOut = NULL;
-unsigned int hgfsIdCounter = 0;
-struct list_head hgfsReqsUnsent;
 
 /* Global protocol version switch. */
-atomic_t hgfsVersionOpen;
-atomic_t hgfsVersionRead;
-atomic_t hgfsVersionWrite;
-atomic_t hgfsVersionClose;
-atomic_t hgfsVersionSearchOpen;
-atomic_t hgfsVersionSearchRead;
-atomic_t hgfsVersionSearchClose;
-atomic_t hgfsVersionGetattr;
-atomic_t hgfsVersionSetattr;
-atomic_t hgfsVersionCreateDir;
-atomic_t hgfsVersionDeleteFile;
-atomic_t hgfsVersionDeleteDir;
-atomic_t hgfsVersionRename;
-atomic_t hgfsVersionQueryVolumeInfo;
-atomic_t hgfsVersionCreateSymlink;
+HgfsOp hgfsVersionOpen;
+HgfsOp hgfsVersionRead;
+HgfsOp hgfsVersionWrite;
+HgfsOp hgfsVersionClose;
+HgfsOp hgfsVersionSearchOpen;
+HgfsOp hgfsVersionSearchRead;
+HgfsOp hgfsVersionSearchClose;
+HgfsOp hgfsVersionGetattr;
+HgfsOp hgfsVersionSetattr;
+HgfsOp hgfsVersionCreateDir;
+HgfsOp hgfsVersionDeleteFile;
+HgfsOp hgfsVersionDeleteDir;
+HgfsOp hgfsVersionRename;
+HgfsOp hgfsVersionQueryVolumeInfo;
+HgfsOp hgfsVersionCreateSymlink;
 
 /* Private functions. */
 static inline unsigned long HgfsComputeBlockBits(unsigned long blockSize);
@@ -106,32 +90,22 @@ static HgfsSuperInfo *HgfsInitSuperInfo(HgfsMountInfo *mountInfo);
 static int HgfsReadSuper(struct super_block *sb,
                          void *rawData,
                          int flags);
+static void HgfsResetOps(void);
 
 
 /* HGFS filesystem high-level operations. */
-#if KERNEL_25_FS /* { */
-#   if defined(VMW_GETSB_2618)
+#if defined VMW_GETSB_2618
 static int HgfsGetSb(struct file_system_type *fs_type,
                      int flags,
                      const char *dev_name,
                      void *rawData,
                      struct vfsmount *mnt);
-#   elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 70)
+#else
 static struct super_block *HgfsGetSb(struct file_system_type *fs_type,
                                      int flags,
                                      const char *dev_name,
                                      void *rawData);
-#   else
-static struct super_block *HgfsGetSb(struct file_system_type *fs_type,
-                                     int flags,
-                                     char *dev_name,
-                                     void *rawData);
-#   endif
-#else /* } { */
-static struct super_block *HgfsReadSuper24(struct super_block *sb,
-                                           void *rawData,
-                                           int flags);
-#endif /* } */
+#endif
 
 /* HGFS filesystem type structure. */
 static struct file_system_type hgfsType = {
@@ -139,12 +113,8 @@ static struct file_system_type hgfsType = {
    .name         = HGFS_NAME,
 
    .fs_flags     = FS_BINARY_MOUNTDATA,
-#if KERNEL_25_FS
    .get_sb       = HgfsGetSb,
    .kill_sb      = kill_anon_super,
-#else
-   .read_super   = HgfsReadSuper24,
-#endif
 };
 
 
@@ -203,7 +173,6 @@ HgfsComputeBlockBits(unsigned long blockSize)
 static void
 HgfsInodeCacheCtor(COMPAT_KMEM_CACHE_CTOR_ARGS(slabElem)) // IN: slab item to initialize
 {
-#ifdef VMW_EMBED_INODE
    HgfsInodeInfo *iinfo = (HgfsInodeInfo *)slabElem;
 
    /*
@@ -212,7 +181,6 @@ HgfsInodeCacheCtor(COMPAT_KMEM_CACHE_CTOR_ARGS(slabElem)) // IN: slab item to in
     * much of the VFS inode members.
     */
    inode_init_once(&iinfo->inode);
-#endif
 }
 
 
@@ -256,13 +224,13 @@ HgfsInitSuperInfo(HgfsMountInfo *mountInfo) // IN: Passed down from the user
    if (si->uidSet) {
       si->uid = mountInfo->uid;
    } else {
-      si->uid = compat_current_uid();
+      si->uid = current_uid();
    }
    si->gidSet = mountInfo->gidSet;
    if (si->gidSet) {
       si->gid = mountInfo->gid;
    } else {
-      si->gid = compat_current_gid();
+      si->gid = current_gid();
    }
    si->fmask = mountInfo->fmask;
    si->dmask = mountInfo->dmask;
@@ -417,9 +385,7 @@ HgfsReadSuper(struct super_block *sb, // OUT: Superblock object
     * it. Note that we'll initialize it anyway, because the default value is
     * MAX_NON_LFS, which caps our filesize at 2^32 bytes.
     */
-#ifdef VMW_SB_HAS_MAXBYTES
    sb->s_maxbytes = MAX_LFS_FILESIZE;
-#endif
 
    /*
     * These two operations will make sure that our block size and the bits
@@ -469,8 +435,7 @@ HgfsReadSuper(struct super_block *sb, // OUT: Superblock object
  * HGFS filesystem high-level operations.
  */
 
-#if KERNEL_25_FS
-#if defined(VMW_GETSB_2618)
+#if defined VMW_GETSB_2618
 /*
  *-----------------------------------------------------------------------------
  *
@@ -517,51 +482,53 @@ HgfsGetSb(struct file_system_type *fs_type,
  *-----------------------------------------------------------------------------
  */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 70)
 static struct super_block *
 HgfsGetSb(struct file_system_type *fs_type,
 	  int flags,
 	  const char *dev_name,
 	  void *rawData)
-#else
-static struct super_block *
-HgfsGetSb(struct file_system_type *fs_type,
-	  int flags,
-	  char *dev_name,
-	  void *rawData)
-#endif
 {
    return get_sb_nodev(fs_type, flags, rawData, HgfsReadSuper);
 }
 #endif
-#else
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsReadSuper24 --
+ * HgfsResetOps --
  *
- *    Compatibility wrapper for 2.4.x kernels read_super.
- *    Converts success to sb, and failure to NULL.
+ *      Reset ops with more than one opcode back to the desired opcode.
  *
  * Results:
- *    The initialized superblock on success
- *    NULL on failure
+ *      None.
  *
  * Side effects:
- *    None
+ *      None.
  *
  *-----------------------------------------------------------------------------
  */
 
-static struct super_block *
-HgfsReadSuper24(struct super_block *sb,
-		void *rawData,
-		int flags) {
-   return HgfsReadSuper(sb, rawData, flags) ? NULL : sb;
+static void
+HgfsResetOps(void)
+{
+   hgfsVersionOpen            = HGFS_OP_OPEN_V3;
+   hgfsVersionRead            = HGFS_OP_READ_V3;
+   hgfsVersionWrite           = HGFS_OP_WRITE_V3;
+   hgfsVersionClose           = HGFS_OP_CLOSE_V3;
+   hgfsVersionSearchOpen      = HGFS_OP_SEARCH_OPEN_V3;
+   hgfsVersionSearchRead      = HGFS_OP_SEARCH_READ_V3;
+   hgfsVersionSearchClose     = HGFS_OP_SEARCH_CLOSE_V3;
+   hgfsVersionGetattr         = HGFS_OP_GETATTR_V3;
+   hgfsVersionSetattr         = HGFS_OP_SETATTR_V3;
+   hgfsVersionCreateDir       = HGFS_OP_CREATE_DIR_V3;
+   hgfsVersionDeleteFile      = HGFS_OP_DELETE_FILE_V3;
+   hgfsVersionDeleteDir       = HGFS_OP_DELETE_DIR_V3;
+   hgfsVersionRename          = HGFS_OP_RENAME_V3;
+   hgfsVersionQueryVolumeInfo = HGFS_OP_QUERY_VOLUME_INFO_V3;
+   hgfsVersionCreateSymlink   = HGFS_OP_CREATE_SYMLINK_V3;
 }
-#endif
+
 
 /*
  * Public function implementations.
@@ -586,25 +553,8 @@ HgfsReadSuper24(struct super_block *sb,
 Bool
 HgfsInitFileSystem(void)
 {
-   Bool success = FALSE;
-
    /* Initialize primitives. */
-   INIT_LIST_HEAD(&hgfsReqsUnsent);
-   init_waitqueue_head(&hgfsReqThreadWait);
-   hgfsReqThread = NULL;
-   hgfsReqThreadFlags = 0;
    HgfsResetOps();
-
-   /* Setup the request slab allocator. */
-   hgfsReqCache = compat_kmem_cache_create("hgfsReqCache",
-                                           sizeof (HgfsReq),
-                                           0,
-                                           SLAB_HWCACHE_ALIGN,
-                                           NULL);
-   if (hgfsReqCache == NULL) {
-      printk(KERN_WARNING "VMware hgfs: failed to create request allocator\n");
-      goto exit;
-   }
 
    /* Setup the inode slab allocator. */
    hgfsInodeCache = compat_kmem_cache_create("hgfsInodeCache",
@@ -614,15 +564,11 @@ HgfsInitFileSystem(void)
                                              HgfsInodeCacheCtor);
    if (hgfsInodeCache == NULL) {
       printk(KERN_WARNING "VMware hgfs: failed to create inode allocator\n");
-      goto exit;
+      return FALSE;
    }
 
-   /* Create backdoor handler. */
-   hgfsReqThread = compat_kthread_run(HgfsBdHandler, NULL, HGFS_NAME);
-   if (IS_ERR(hgfsReqThread)) {
-      printk(KERN_WARNING "VMware hgfs: failed to create kernel thread\n");
-      goto exit;
-   }
+   /* Initialize the transport. */
+   HgfsTransportInit();
 
    /*
     * Register the filesystem. This should be the last thing we do
@@ -630,29 +576,12 @@ HgfsInitFileSystem(void)
     */
    if (register_filesystem(&hgfsType)) {
       printk(KERN_WARNING "VMware hgfs: failed to register filesystem\n");
-      goto exit;
+      kmem_cache_destroy(hgfsInodeCache);
+      return FALSE;
    }
    LOG(4, (KERN_DEBUG "VMware hgfs: Module Loaded\n"));
-#ifdef HGFS_ENABLE_WRITEBACK
-   LOG(4, (KERN_DEBUG "VMware hgfs: writeback cache enabled\n"));
-#endif
-   success = TRUE;
 
-  exit:
-
-   /* Cleanup if an error occurred. */
-   if (success == FALSE) {
-      if (!IS_ERR(hgfsReqThread)) {
-         compat_kthread_stop(hgfsReqThread);
-      }
-      if (hgfsInodeCache != NULL) {
-         kmem_cache_destroy(hgfsInodeCache);
-      }
-      if (hgfsReqCache != NULL) {
-         kmem_cache_destroy(hgfsReqCache);
-      }
-   }
-   return success;
+   return TRUE;
 }
 
 
@@ -677,14 +606,6 @@ HgfsCleanupFileSystem(void)
 {
    Bool success = TRUE;
 
-/* FIXME: Check actual kernel version when RR's modules went in */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 45)
-   if (MOD_IN_USE) {
-      printk(KERN_WARNING "VMware hgfs: filesystem in use, removal failed\n");
-      success = FALSE;
-   }
-#endif
-
   /*
    * Unregister the filesystem. This should be the first thing we do in
    * the module cleanup code.
@@ -694,12 +615,11 @@ HgfsCleanupFileSystem(void)
       success = FALSE;
    }
 
-   /* Kill the backdoor handler thread. */
-   compat_kthread_stop(hgfsReqThread);
+   /* Transport cleanup. */
+   HgfsTransportExit();
 
    /* Destroy the inode and request slabs. */
    kmem_cache_destroy(hgfsInodeCache);
-   kmem_cache_destroy(hgfsReqCache);
 
    LOG(4, (KERN_DEBUG "VMware hgfs: Module Unloaded\n"));
    return success;

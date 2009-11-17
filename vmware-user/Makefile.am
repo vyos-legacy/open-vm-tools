@@ -19,13 +19,19 @@ bin_PROGRAMS = vmware-user
 
 AM_CFLAGS =
 AM_CFLAGS += @GTK_CPPFLAGS@
+if HAVE_GTKMM
+   AM_CFLAGS += @GTKMM_CPPFLAGS@
+endif
 AM_CFLAGS += @VMWARE_USER_CPPFLAGS@
 AM_CFLAGS += -I$(top_builddir)/include
+AM_CFLAGS += -I$(top_srcdir)/lib/dndGuest
 AM_CFLAGS += -DRESOLUTION_X11
+AM_CFLAGS += -I$(top_srcdir)/services/plugins/vix
+
+AM_CXXFLAGS = $(AM_CFLAGS)
 
 vmware_user_LDADD =
 vmware_user_LDADD += ../lib/conf/libConf.la
-vmware_user_LDADD += ../lib/dnd/libDnd.la
 vmware_user_LDADD += ../lib/eventManager/libEventManager.la
 vmware_user_LDADD += ../lib/file/libFile.la
 if ENABLE_UNITY
@@ -39,14 +45,12 @@ vmware_user_LDADD += ../lib/hgfsServer/libHgfsServer.la
 vmware_user_LDADD += ../lib/hgfsServerManagerGuest/libHgfsServerManagerGuest.la
 vmware_user_LDADD += ../lib/hgfsServerPolicyGuest/libHgfsServerPolicyGuest.la
 vmware_user_LDADD += ../lib/impersonate/libImpersonate.la
-vmware_user_LDADD += ../lib/netUtil/libNetUtil.la
 vmware_user_LDADD += ../lib/printer/libPrinter.la
 vmware_user_LDADD += ../lib/resolution/libResolution.la
 vmware_user_LDADD += ../lib/rpcIn/libRpcIn.la
 vmware_user_LDADD += ../lib/rpcOut/libRpcOut.la
 vmware_user_LDADD += ../lib/rpcVmx/libRpcVmx.la
 vmware_user_LDADD += ../lib/SLPv2Parser/libSLPv2Parser.la
-vmware_user_LDADD += ../lib/socketMgr/libSocketMgr.la
 vmware_user_LDADD += ../lib/string/libString.la
 vmware_user_LDADD += ../lib/sync/libSync.la
 vmware_user_LDADD += ../lib/syncDriver/libSyncDriver.la
@@ -57,26 +61,32 @@ if ENABLE_UNITY
 else
    vmware_user_LDADD += ../lib/unityStub/libUnityStub.la
 endif
-vmware_user_LDADD += ../lib/guestRpc/libGuestRpc.la
 vmware_user_LDADD += ../lib/user/libUser.la
 vmware_user_LDADD += ../lib/vixTools/libVixTools.la
+vmware_user_LDADD += ../lib/hgfsHelper/libHgfsHelper.la
 vmware_user_LDADD += ../lib/vmCheck/libVmCheck.la
 vmware_user_LDADD += ../lib/vmSignal/libVmSignal.la
 vmware_user_LDADD += ../lib/wiper/libWiper.la
 # In the absence of the linker options --start-group and --end-group (which
 # can't be put in LDADD), we need to bring the following libraries out of
 # the alphabetical order so their symbols are properly resolved.
+vmware_user_LDADD += ../lib/netUtil/libNetUtil.la
+vmware_user_LDADD += ../lib/guestRpc/libGuestRpc.la
 vmware_user_LDADD += ../lib/err/libErr.la
 vmware_user_LDADD += ../lib/foundryMsg/libFoundryMsg.la
 vmware_user_LDADD += ../lib/backdoor/libBackdoor.la
 vmware_user_LDADD += ../lib/dict/libDict.la
+if HAVE_GTKMM
+vmware_user_LDADD += ../lib/dndGuest/libDndGuest.la
+endif
+vmware_user_LDADD += ../lib/dnd/libDnd.la
 vmware_user_LDADD += ../lib/dynxdr/libDynxdr.la
 vmware_user_LDADD += ../lib/hgfs/libHgfs.la
 vmware_user_LDADD += ../lib/message/libMessage.la
 vmware_user_LDADD += ../lib/unicode/libUnicode.la
+vmware_user_LDADD += ../lib/auth/libAuth.la
 vmware_user_LDADD += ../lib/misc/libMisc.la
 vmware_user_LDADD += ../lib/procMgr/libProcMgr.la
-vmware_user_LDADD += ../lib/auth/libAuth.la
 vmware_user_LDADD += ../lib/panicDefault/libPanicDefault.la
 vmware_user_LDADD += ../lib/panic/libPanic.la
 vmware_user_LDADD += ../lib/stubs/libStubs.la
@@ -87,9 +97,18 @@ if ENABLE_UNITY
    vmware_user_LDADD += ../lib/region/libRegion.la
 endif
 vmware_user_LDADD += -lcrypt
+vmware_user_LDADD += -lstdc++
+if USE_SLASH_PROC
+   vmware_user_LDADD += -lgcc_s
+   vmware_user_LDADD += ../lib/slashProc/libSlashProc.la
+endif
 vmware_user_LDADD += @GTK_LIBS@
+if HAVE_GTKMM
+   vmware_user_LDADD += @GTKMM_LIBS@
+endif
 vmware_user_LDADD += @VMWARE_USER_LDADD@
 vmware_user_LDADD += @COMMON_XLIBS@
+vmware_user_LDADD += @ICU_LIBS@
 if ENABLE_UNITY
    vmware_user_LDADD += @URIPARSER_LIBS@
    vmware_user_LDADD += @LIBPNG_LIBS@
@@ -98,27 +117,27 @@ endif
 
 vmware_user_SOURCES =
 vmware_user_SOURCES += copyPaste.c
+if HAVE_GTKMM
+   vmware_user_SOURCES += copyPasteUI.cpp
+endif
+vmware_user_SOURCES += copyPasteDnDWrapper.cpp
 vmware_user_SOURCES += debugStdio.c
 vmware_user_SOURCES += dnd.c
-vmware_user_SOURCES += foreignVMToolsDaemon.c
-vmware_user_SOURCES += foreignVMToolsNetworking.c
-vmware_user_SOURCES += foundryToolsDaemon.c
+if HAVE_GTKMM
+vmware_user_SOURCES += dndUI.cpp
+vmware_user_SOURCES += dragDetWnd.cpp
+endif
+vmware_user_SOURCES += $(top_srcdir)/services/plugins/vix/foundryToolsDaemon.c
 vmware_user_SOURCES += notify.c
 vmware_user_SOURCES += pointer.c
-vmware_user_SOURCES += vmware-user.c
-
-if HAVE_ICU
-   vmware_user_LDADD += @ICU_LIBS@
-   vmware_user_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
-                      $(LIBTOOLFLAGS) --mode=link $(CXX) $(AM_CXXFLAGS) \
-                      $(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-else
-   vmware_user_LINK = $(LINK)
+if HAVE_GTKMM
+   vmware_user_SOURCES += stringxx/string.cc
 endif
+vmware_user_SOURCES += vmware-user.cpp
 
 install-exec-hook:
 	$(INSTALL) -d $(DESTDIR)$(datadir)/applications/
-	$(INSTALL) -m 644 ../scripts/common/vmware-user.desktop \
+	$(INSTALL) -m 644 $(top_srcdir)/scripts/common/vmware-user.desktop \
 		$(DESTDIR)$(datadir)/applications/
 uninstall-hook:
-	-$(RM) -f $(DESTDIR)$(datadir)/applications/vmware-user.desktop
+	rm -f $(DESTDIR)$(datadir)/applications/vmware-user.desktop

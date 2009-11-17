@@ -46,10 +46,17 @@ int VMCIDatagramCreateHndInt(VMCIId resourceID,
                              VMCIDatagramRecvCB recvCB,
                              void *clientData,
                              VMCIHandle *outHandle);
+int VMCIDatagramCreateHndPriv(VMCIId resourceID,
+                              uint32 flags,
+                              VMCIPrivilegeFlags privFlags,
+                              VMCIDatagramRecvCB recvCB,
+                              void *clientData,
+                              VMCIHandle *outHandle); /* Compat */
 int VMCIDatagramDestroyHndInt(VMCIHandle handle);
 
 int VMCIDatagramProcess_Create(VMCIDatagramProcess **outDgmProc,
-                               VMCIDatagramCreateInfo *createInfo);
+                               VMCIDatagramCreateInfo *createInfo,
+                               uintptr_t eventHnd);
 void VMCIDatagramProcess_Destroy(VMCIDatagramProcess *dgmProc);
 int VMCIDatagramProcess_ReadCall(VMCIDatagramProcess *dgmProc,
 				 size_t maxSize, VMCIDatagram **dg);

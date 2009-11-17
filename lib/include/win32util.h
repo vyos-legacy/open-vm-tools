@@ -210,5 +210,9 @@ PSECURITY_DESCRIPTOR W32Util_ConstructSecureObjectSD(HANDLE hToken,
 Bool W32Util_ReplaceObjectSD(HANDLE hObject,
                              const PSECURITY_DESCRIPTOR pSD);
 
+HMODULE W32Util_GetModuleByAddress(const void *addr);
+
+Bool W32Util_VerifyXPModeHostLicense(void);
+
 #endif // _WIN32
 #endif // WIN32UTIL_H_

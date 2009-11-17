@@ -69,6 +69,7 @@
 #include "str.h"
 #include "fileIO.h"
 #include "codeset.h"
+#include "unicode.h"
 
 
 /*
@@ -97,7 +98,8 @@ struct ProcMgr_AsyncProc {
    int exitCode;
 };
 
-static pid_t ProcMgrStartProcess(char const *cmd);
+static pid_t ProcMgrStartProcess(char const *cmd,
+                                 char * const  *envp);
 
 static Bool ProcMgrWaitForProcCompletion(pid_t pid,
                                          Bool *validExitCode,
@@ -573,13 +575,13 @@ ProcMgr_FreeProcList(ProcMgr_ProcList *procList)
 
 Bool
 ProcMgr_ExecSync(char const *cmd,                  // IN: UTF-8 command line
-                 ProcMgr_ProcArgs *userArgs)       // IN: Unused
+                 ProcMgr_ProcArgs *userArgs)       // IN: optional
 {
    pid_t pid;
 
    Debug("Executing sync command: %s\n", cmd);
 
-   pid = ProcMgrStartProcess(cmd);
+   pid = ProcMgrStartProcess(cmd, userArgs ? userArgs->envp : NULL);
 
    if (pid == -1) {
       return FALSE;
@@ -606,20 +608,31 @@ ProcMgr_ExecSync(char const *cmd,                  // IN: UTF-8 command line
  *----------------------------------------------------------------------
  */
 
-static pid_t 
-ProcMgrStartProcess(char const *cmd)            // IN: UTF-8 encoded cmd
+static pid_t
+ProcMgrStartProcess(char const *cmd,            // IN: UTF-8 encoded cmd
+                    char * const *envp)         // IN: UTF-8 encoded env vars
 {
    pid_t pid;
    char *cmdCurrent = NULL;
+   char **envpCurrent = NULL;
 
    if (cmd == NULL) {
       ASSERT(FALSE);
       return -1;
    }
 
+   /*
+    * Convert the strings before the call to fork(), since the conversion
+    * routines may rely on locks that do not survive fork().
+    */
+
    if (!CodeSet_Utf8ToCurrent(cmd, strlen(cmd), &cmdCurrent, NULL)) {
       Warning("Could not convert from UTF-8 to current\n");
       return -1;
+   }
+
+   if (NULL != envp) {
+      envpCurrent = Unicode_GetAllocList(envp, -1, STRING_ENCODING_DEFAULT);
    }
 
    pid = fork();
@@ -627,16 +640,22 @@ ProcMgrStartProcess(char const *cmd)            // IN: UTF-8 encoded cmd
    if (pid == -1) {
       Warning("Unable to fork: %s.\n\n", strerror(errno));
    } else if (pid == 0) {
+      static const char shellPath[] = "/bin/sh";
+      char *args[] = { "sh", "-c", cmdCurrent, NULL };
 
       /*
        * Child
        */
 
-      execl("/bin/sh", "sh", "-c", cmdCurrent, (char *)NULL);
+      if (NULL != envpCurrent) {
+         execve(shellPath, args, envpCurrent);
+      } else  {
+         execv(shellPath, args);
+      }
 
       /* Failure */
       Panic("Unable to execute the \"%s\" shell command: %s.\n\n",
-            cmdCurrent, strerror(errno));
+            cmd, strerror(errno));
    }
 
    /*
@@ -644,6 +663,7 @@ ProcMgrStartProcess(char const *cmd)            // IN: UTF-8 encoded cmd
     */
 
    free(cmdCurrent);
+   Unicode_FreeList(envpCurrent, -1);
    return pid;
 }
 
@@ -732,7 +752,7 @@ ProcMgrWaitForProcCompletion(pid_t pid,                 // IN
 
 ProcMgr_AsyncProc *
 ProcMgr_ExecAsync(char const *cmd,                 // IN: UTF-8 command line
-                  ProcMgr_ProcArgs *userArgs)      // IN: Unused
+                  ProcMgr_ProcArgs *userArgs)      // IN: optional
 {
    ProcMgr_AsyncProc *asyncProc = NULL;
    pid_t pid;
@@ -799,7 +819,7 @@ ProcMgr_ExecAsync(char const *cmd,                 // IN: UTF-8 command line
        * Only run the program if we have not already experienced a failure.
        */
       if (status) {
-         childPid = ProcMgrStartProcess(cmd);
+         childPid = ProcMgrStartProcess(cmd, userArgs ? userArgs->envp : NULL);
          status = childPid != -1;
       }
 
@@ -945,7 +965,7 @@ ProcMgr_ExecAsync(char const *cmd,                 // IN: UTF-8 command line
 static Bool
 ProcMgr_IsProcessRunning(pid_t pid)
 {
-   return ((kill(pid, 0) == -1) && (errno == ESRCH));
+   return ((kill(pid, 0) == 0) || (errno == EPERM));
 }
 
 
@@ -1074,64 +1094,6 @@ ProcMgr_Kill(ProcMgr_AsyncProc *asyncProc) // IN
 /*
  *----------------------------------------------------------------------
  *
- * ProcMgr_GetAsyncStatus --
- *
- *      Get the return status of an async process.
- *      Must only be called once for any async process.
- *
- * Results:
- *      TRUE if the status was retrieved.
- *      FALSE if it couldn't be retrieved.
- *
- * Side effects:
- *	Does a waitpid() on the child to prevent zombification. 
- *
- *----------------------------------------------------------------------
- */
-
-Bool
-ProcMgr_GetAsyncStatus(ProcMgr_AsyncProc *asyncProc, // IN
-                       Bool *status)                 // OUT
-{
-   Bool retVal = FALSE;
-  
-   ASSERT(status);
-   ASSERT(asyncProc);
-   ASSERT(asyncProc->waiterPid != -1);
-
-   if (FileIO_Read(&(asyncProc->fd), status, sizeof *status, NULL) !=
-       FILEIO_SUCCESS) {
-	 Warning("Error reading async process status.\n");
-      goto end;
-   }
-
-   if (FileIO_Read(&(asyncProc->fd), &(asyncProc->exitCode), 
-                   sizeof asyncProc->exitCode, NULL) !=
-       FILEIO_SUCCESS) {
-	 Warning("Error reading async process status.\n");
-      goto end;
-   }
-
-   asyncProc->validExitCode = TRUE;
-
-   Debug("Child w/ fd %x exited with status=%d\n", 
-         asyncProc->fd.posix, *status);
-
-   retVal = TRUE;
-
- end:
-   /* Read the pid so the processes don't become zombied */
-   Debug("Waiting on pid %"FMTPID" to de-zombify it\n", asyncProc->waiterPid);
-   waitpid(asyncProc->waiterPid, NULL, 0);
-   asyncProc->waiterPid = -1;
-
-   return retVal;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
  * ProcMgr_IsAsyncProcRunning --
  *
  *      Checks whether an async process is still running.
@@ -1236,13 +1198,14 @@ ProcMgr_GetPid(ProcMgr_AsyncProc *asyncProc)
  *
  * ProcMgr_GetExitCode --
  *
- *      Get the exit code status of an async process.
+ *      Get the exit code status of an async process. Waits on the child
+ *      process so that its resources are cleaned up.
  *
  * Results:
  *      0 if successful, -1 if not.
  *
  * Side effects:
- *	See ProcMgr_GetAsyncStatus().
+ *	     None.
  *
  *----------------------------------------------------------------------
  */
@@ -1254,22 +1217,39 @@ ProcMgr_GetExitCode(ProcMgr_AsyncProc *asyncProc,  // IN
    ASSERT(asyncProc);
    ASSERT(exitCode);
 
-   if (!asyncProc->validExitCode) {
-      Bool dummy;
+   *exitCode = -1;
 
-      if (!ProcMgr_GetAsyncStatus(asyncProc, &dummy)) {
-         *exitCode = -1;
-         return(-1);
+   if (asyncProc->waiterPid != -1) {
+      Bool status;
+
+      if (FileIO_Read(&(asyncProc->fd), &status, sizeof status, NULL) !=
+          FILEIO_SUCCESS) {
+         Warning("Error reading async process status.\n");
+         goto exit;
       }
 
-      if (!(asyncProc->validExitCode)) {
-         *exitCode = -1;
-         return(-1);
+      if (FileIO_Read(&(asyncProc->fd), &(asyncProc->exitCode),
+                      sizeof asyncProc->exitCode, NULL) !=
+          FILEIO_SUCCESS) {
+         Warning("Error reading async process status.\n");
+         goto exit;
       }
+
+      asyncProc->validExitCode = TRUE;
+
+      Debug("Child w/ fd %x exited with code=%d\n",
+            asyncProc->fd.posix, asyncProc->exitCode);
    }
 
    *exitCode = asyncProc->exitCode;
-   return(0);
+
+exit:
+   if (asyncProc->waiterPid != -1) {
+      Debug("Waiting on pid %"FMTPID" to de-zombify it\n", asyncProc->waiterPid);
+      waitpid(asyncProc->waiterPid, NULL, 0);
+      asyncProc->waiterPid = -1;
+   }
+   return (asyncProc->exitCode == -1) ? -1 : 0;
 }
 
 

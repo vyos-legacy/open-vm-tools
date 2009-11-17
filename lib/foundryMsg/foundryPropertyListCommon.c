@@ -50,6 +50,11 @@
 // To be safe, we always use 8 bytes.
 #define  PROPERTY_SIZE_POINTER   8
 
+static VixError VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,
+                                               const char *buffer,
+                                               size_t bufferSize,
+                                               Bool clobber);
+
 /*
  *-----------------------------------------------------------------------------
  *
@@ -107,8 +112,15 @@ VixPropertyList_RemoveAllWithoutHandles(VixPropertyListImpl *propList)   // IN
       propList->properties = property->next;
 
       if (VIX_PROPERTYTYPE_STRING == property->type) {
+         if (property->isSensitive) {
+            Util_ZeroString(property->value.strValue);
+         }
          free(property->value.strValue);
       } else if (VIX_PROPERTYTYPE_BLOB == property->type) {
+         if (property->isSensitive) {
+            Util_Zero(property->value.blobValue.blobContents,
+                      property->value.blobValue.blobSize);
+         }
          free(property->value.blobValue.blobContents);
       }
       
@@ -332,8 +344,12 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
 abort:
    if (VIX_OK != err) {
       free(serializeBuffer);
-      *resultBuffer = NULL;
-      *resultSize = 0;
+      if (NULL != resultBuffer) {
+         *resultBuffer = NULL;
+      }
+      if (NULL != resultSize) {
+         *resultSize = 0;
+      }
    }
 
    return err;
@@ -344,6 +360,64 @@ abort:
  *-----------------------------------------------------------------------------
  *
  * VixPropertyList_Deserialize --
+ *
+ *       Deserialize a property list from a buffer. Repeated properties
+ *       are clobbered.
+ *
+ * Results:
+ *      VixError.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
+                            const char *buffer,                // IN
+                            size_t bufferSize)                 // IN
+{
+   return VixPropertyListDeserializeImpl(propList,
+                                         buffer,
+                                         bufferSize,
+                                         TRUE); // clobber
+} // VixPropertyList_Deserialize
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixPropertyList_DeserializeNoClobber --
+ *
+ *       Deserialize a property list from a buffer. Repeated properties
+ *       are preserved.
+ *
+ * Results:
+ *      VixError.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+VixPropertyList_DeserializeNoClobber(VixPropertyListImpl *propList,     // IN
+                                     const char *buffer,                // IN
+                                     size_t bufferSize)                 // IN
+{
+   return VixPropertyListDeserializeImpl(propList,
+                                         buffer,
+                                         bufferSize,
+                                         FALSE); // clobber
+} // VixPropertyList_DeserializeNoClobber
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixPropertyListDeserializeImpl --
  *
  *       Deserialize a property list from a buffer. 
  *
@@ -361,9 +435,10 @@ abort:
  */
 
 VixError
-VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
-                            const char *buffer,                // IN
-                            size_t bufferSize)                 // IN
+VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
+                               const char *buffer,                // IN
+                               size_t bufferSize,                 // IN
+                               Bool clobber)                      // IN
 {
    VixError err = VIX_OK;
    VixPropertyValue *property = NULL;
@@ -403,7 +478,7 @@ VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
       pos += propertyTypeSize;
       lengthPtr = (int*) &(buffer[pos]);
       pos += propertyValueLengthSize;
-   
+
       /*
        * Do not allow lengths of 0 or fewer bytes. Those do not make sense,
        * unless you can pass a NULL blob, which Serialize() does not allow.
@@ -413,21 +488,28 @@ VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
          err = VIX_E_INVALID_SERIALIZED_DATA;
          goto abort;
       }
-      
+
       /*
        * Create the property if missing
        */
-      err = VixPropertyList_FindProperty(propList,
-                                         *propertyIDPtr,
-                                         *propertyTypePtr,
-                                         0, // index
-                                         TRUE, //createIfMissing
-                                         &property);
-      
+      if (clobber) {
+         err = VixPropertyList_FindProperty(propList,
+                                            *propertyIDPtr,
+                                            *propertyTypePtr,
+                                            0, // index
+                                            TRUE, //createIfMissing
+                                            &property);
+      } else {
+         err = VixPropertyListAppendProperty(propList,
+                                             *propertyIDPtr,
+                                             *propertyTypePtr,
+                                             &property);
+      }
+
       if (VIX_OK != err) {
          goto abort;
       }
-      
+
       /*
        * Initialize the property to the received value
        */
@@ -466,7 +548,7 @@ VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
             boolPtr = (Bool*) &(buffer[pos]);
             property->value.boolValue = *boolPtr;
             break;
-         
+
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_INT64:
             if (PROPERTY_SIZE_INT64 != *lengthPtr) {
@@ -510,13 +592,13 @@ VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
          ////////////////////////////////////////////////////////
          default:
             err = VIX_E_UNRECOGNIZED_PROPERTY;
-            goto abort;     
+            goto abort;
       }
 
       pos += *lengthPtr;
    }
 
-abort:   
+abort:  
    if ((VIX_OK != err) && (NULL != propList)) {
       VixPropertyList_RemoveAllWithoutHandles(propList);
    }
@@ -638,6 +720,7 @@ VixPropertyListAppendProperty(VixPropertyListImpl *propList,   // IN
    property->type = type;
    property->propertyID = propertyID;
    property->isDirty = TRUE;
+   property->isSensitive = FALSE;
 
    /*
     * We only have to initialize the values that we release, so
@@ -1420,5 +1503,62 @@ VixPropertyList_PropertyExists(VixPropertyListImpl *propList,     // IN
 
    return(foundIt);
 } // VixPropertyList_PropertyExists
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixPropertyList_NumItems --
+ *
+ *       Returns a count of the properties in the list.
+ *
+ * Results:
+ *       int - Number of properties in property list.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+VixPropertyList_NumItems(VixPropertyListImpl *propList)     // IN
+{
+   VixPropertyValue *prop;
+   int count = 0;
+
+   if (propList == NULL) {
+      return 0;
+   }
+
+   for (prop = propList->properties; prop != NULL; prop = prop->next) {
+      ++count;
+   }
+
+   return count;
+} // VixPropertyList_NumItems
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixPropertyList_Empty --
+ *
+ *       Returns whether the property list has no properties.
+ *
+ * Results:
+ *       Bool - True iff property list has no properties.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+VixPropertyList_Empty(VixPropertyListImpl *propList)     // IN
+{
+   return (propList == NULL || propList->properties == NULL);
+} // VixPropertyList_Empty
 
 

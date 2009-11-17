@@ -29,27 +29,18 @@
 #   define __PROCMGR_H__
 
 #include "vm_basic_types.h"
-#if !defined(N_PLAT_NLM)
 #include "auth.h"
+#if !defined(_WIN32)
+#  include <sys/types.h>
 #endif
-#if defined(N_PLAT_NLM)
-#include <nwconio.h>
-#elif !defined(_WIN32)
-#include <sys/types.h>
-#endif
-
-#if !defined(N_PLAT_NLM)
 #include <time.h>
-#endif
 
 /*
  * Keeps track of the platform-specific handle(s) to an asynchronous process.
  */
 typedef struct ProcMgr_AsyncProc ProcMgr_AsyncProc;
 
-#if defined(N_PLAT_NLM)
-   typedef LONG ProcMgr_Pid;
-#elif defined(_WIN32)
+#if defined(_WIN32)
    typedef DWORD ProcMgr_Pid;
 #else /* POSIX */
    typedef pid_t ProcMgr_Pid;
@@ -64,42 +55,40 @@ typedef struct ProcMgr_ProcList {
 #if defined(_WIN32)
    Bool        *procDebugged;
 #endif
-#if !defined(N_PLAT_NLM)
    time_t      *startTime;
-#endif
 } ProcMgr_ProcList;
 
 
-#if defined(_WIN32)
-/*
- * If a caller needs to use a non-default set of arguments for
- * CreateProcess[AsUser] in ProcMgr_Exec[A]sync, this structure should be used. 
- *
- * - If 'userArgs' is NULL, defaults are used:
- *   - bInheritHandles defaults to TRUE
- *   - lpStartupInfo is instantiated and initialized with:
- *     - cb initialized to size of the object
- *     - dwFlags initialized to STARTF_USESHOWWINDOW
- *     - wShowWindow initialized to SW_MINIMIZE.
- *   - defaults for all other parameters are NULL/FALSE
- *
- * - If 'userArgs' is not NULL, the values in the 'userArgs' object are used
- *   according to the following rules:
- *   - If lpStartupInfo is NULL, it is instantiated and initialized with:
- *     - cb initialized to size of the object
- *     - dwFlags initialized to STARTF_USESHOWWINDOW
- *     - wShowWindow initialized to SW_MINIMIZE.
- *     - The caller would need to do some of this initialization if they set
- *       lpStartupInfo.
- *   - If hToken is set:
- *     - if lpStartupInfo->lpDesktop is not NULL, then it is used directly. Otherwise,
- *       lpStartupInfo->lpDesktop is initialized appropriately.
- *
- *     XXX: Make it more convenient for callers(like ToolsDaemonTcloRunProgramImpl) 
- *     to set just wShowWindow without needing to instantiate and initialize a 
- *     STARTUPINFO object. 
- */
 typedef struct ProcMgr_ProcArgs {
+#if defined(_WIN32)
+   /*
+    * If a caller needs to use a non-default set of arguments for
+    * CreateProcess[AsUser] in ProcMgr_Exec[A]sync, this structure should be used. 
+    *
+    * - If 'userArgs' is NULL, defaults are used:
+    *   - bInheritHandles defaults to TRUE
+    *   - lpStartupInfo is instantiated and initialized with:
+    *     - cb initialized to size of the object
+    *     - dwFlags initialized to STARTF_USESHOWWINDOW
+    *     - wShowWindow initialized to SW_MINIMIZE.
+    *   - defaults for all other parameters are NULL/FALSE
+    *
+    * - If 'userArgs' is not NULL, the values in the 'userArgs' object are used
+    *   according to the following rules:
+    *   - If lpStartupInfo is NULL, it is instantiated and initialized with:
+    *     - cb initialized to size of the object
+    *     - dwFlags initialized to STARTF_USESHOWWINDOW
+    *     - wShowWindow initialized to SW_MINIMIZE.
+    *     - The caller would need to do some of this initialization if they set
+    *       lpStartupInfo.
+    *   - If hToken is set:
+    *     - if lpStartupInfo->lpDesktop is not NULL, then it is used directly. Otherwise,
+    *       lpStartupInfo->lpDesktop is initialized appropriately.
+    *
+    *     XXX: Make it more convenient for callers(like ToolsDaemonTcloRunProgramImpl) 
+    *     to set just wShowWindow without needing to instantiate and initialize a 
+    *     STARTUPINFO object. 
+    */
    HANDLE hToken;
 
    LPCWSTR lpApplicationName;
@@ -110,11 +99,16 @@ typedef struct ProcMgr_ProcArgs {
    LPVOID lpEnvironment;
    LPCWSTR lpCurrentDirectory;
    LPSTARTUPINFO lpStartupInfo;
-} ProcMgr_ProcArgs;
 #else
-/* Placeholder type for non win32 platforms. Not used. */
-typedef void * ProcMgr_ProcArgs;
+   /*
+    * The environment variables to run the program with. If NULL, use the current
+    * environment.
+    */
+   char **envp;
 #endif
+} ProcMgr_ProcArgs;
+
+
 
 
 typedef void ProcMgr_Callback(Bool status, void *clientData);
@@ -135,13 +129,12 @@ Bool ProcMgr_ExecSync(char const *cmd,       // UTF-8
 ProcMgr_AsyncProc *ProcMgr_ExecAsync(char const *cmd,     // UTF-8
                                      ProcMgr_ProcArgs *userArgs);
 void ProcMgr_Kill(ProcMgr_AsyncProc *asyncProc);
-Bool ProcMgr_GetAsyncStatus(ProcMgr_AsyncProc *asyncProc, Bool *status);
 Selectable ProcMgr_GetAsyncProcSelectable(ProcMgr_AsyncProc *asyncProc);
 ProcMgr_Pid ProcMgr_GetPid(ProcMgr_AsyncProc *asyncProc);
 Bool ProcMgr_IsAsyncProcRunning(ProcMgr_AsyncProc *asyncProc);
 int ProcMgr_GetExitCode(ProcMgr_AsyncProc *asyncProc, int *result);
 void ProcMgr_Free(ProcMgr_AsyncProc *asyncProc);
-#if !defined(N_PLAT_NLM) && !defined(_WIN32)
+#if !defined(_WIN32)
 Bool ProcMgr_ImpersonateUserStart(const char *user,      // UTF-8
                                   AuthToken token);
 Bool ProcMgr_ImpersonateUserStop(void);

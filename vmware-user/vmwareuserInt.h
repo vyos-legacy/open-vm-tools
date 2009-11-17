@@ -35,6 +35,7 @@
 #include "vm_basic_types.h"
 #include "rpcout.h"
 #include "rpcin.h"
+#include "dnd.h"
 
 #include "guestApp.h"
 
@@ -119,7 +120,6 @@ extern Display *gXDisplay;
 extern Window gXRoot;
 extern DblLnkLst_Links *gEventQueue;
 extern GtkWidget *gUserMainWidget;
-extern Bool optionCopyPaste;
-extern int gBlockFd;
+extern DnDBlockControl gBlockCtrl;
 
 #endif // _VMWAREUSER_INT_H_

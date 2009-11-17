@@ -67,7 +67,6 @@
 #include "debug.h"
 #include "str.h"
 #include "strutil.h"
-#include "vm_app.h"
 #include "eventManager.h"
 #include "guestApp.h"
 #include "dnd.h"
@@ -81,7 +80,7 @@
 #include "escape.h"
 #include "hostinfo.h"
 #include "wiper.h"
-
+#include "vmware/guestrpc/tclodefs.h"
 
 /*
  * Gtk 1.2 doesn't know about the CLIPBOARD selection, but that doesn't matter, we
@@ -578,16 +577,16 @@ CopyPasteSelectionGetCB(GtkWidget        *widget,         // IN: unused
       gHGFCPFileTransferStatus = FCP_FILE_TRANSFERRING;
    }
 
-   if (gBlockFd > 0) {
+   if (DnD_BlockIsReady(&gBlockCtrl)) {
       /* Add a block on the staging directory for this command. */
-      if (DnD_AddBlock(gBlockFd, gFileRoot)) {
+      if (gBlockCtrl.AddBlock(gBlockCtrl.fd, gFileRoot)) {
          Debug("CopyPasteSelectionGetCB: add block [%s].\n", gFileRoot);
          blockAdded = TRUE;
       } else {
          Warning("CopyPasteSelectionGetCB: Unable to add block [%s].\n", gFileRoot);
       }
    }
-   
+
    if (!blockAdded) {
       /*
        * If there is no blocking driver, wait here till file copy is done.
@@ -1466,7 +1465,8 @@ CopyPasteRpcInHGDataFinishCB(char const **result,   // OUT
    ASSERT(gHGFCPFileTransferStatus == FCP_FILE_TRANSFERRING);
    gHGFCPFileTransferStatus = FCP_FILE_TRANSFERRED;
 
-   if (gBlockFd > 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+   if (DnD_BlockIsReady(&gBlockCtrl) &&
+       !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
       Warning("CopyPasteRpcInHGDataFinishCB: Unable to remove block [%s].\n",
               gFileRoot);
    }
@@ -1520,6 +1520,7 @@ CopyPasteHGSetFileList(char const **result,     // OUT
    Bool ret = FALSE;
    char *retStr;
    int iAtom;
+   Bool usingDnDBlock;
 
    gHGFCPFileTransferStatus = FCP_FILE_TRANSFER_NOT_YET;
    /* Parse value string. */
@@ -1561,7 +1562,8 @@ CopyPasteHGSetFileList(char const **result,     // OUT
    memcpy(data, args + index, listSize);
    data[listSize] = '\0';
 
-   if (gBlockFd > 0) {
+   usingDnDBlock = DnD_BlockIsReady(&gBlockCtrl);
+   if (usingDnDBlock) {
       /*
        * Here we take the last component of the actual file root, which is
        * a temporary directory for this DnD operation, and append it to the
@@ -1575,18 +1577,18 @@ CopyPasteHGSetFileList(char const **result,     // OUT
          retStr = "error construct stagingDirName";
          goto exit;
       }
-      if (sizeof VMBLOCK_MOUNT_POINT - 1 +
+      if (strlen(gBlockCtrl.blockRoot) +
           (sizeof DIRSEPS - 1) * 2 + strlen(stagingDirName) >= sizeof mountDirName) {
          Debug("CopyPasteHGSetFileList: directory name too large.\n");
          retStr = "directory name too large";
          goto exit;
       }
       Str_Sprintf(mountDirName, sizeof mountDirName,
-                  VMBLOCK_MOUNT_POINT DIRSEPS"%s"DIRSEPS, stagingDirName);
+                  "%s" DIRSEPS "%s" DIRSEPS, gBlockCtrl.blockRoot, stagingDirName);
    }
 
    /* Add the file root to the relative paths received from host */
-   if (!DnD_PrependFileRoot(gBlockFd > 0 ? mountDirName : gFileRoot,
+   if (!DnD_PrependFileRoot(usingDnDBlock ? mountDirName : gFileRoot,
                             &data, &listSize)) {
       Debug("CopyPasteHGSetFileList: error prepending guest file root\n");
       retStr = "error prepending file root";
@@ -1818,6 +1820,7 @@ CopyPaste_GetVmxCopyPasteVersion(void)
    char *reply = NULL;
    size_t replyLen;
 
+   Debug("%s: enter\n", __FUNCTION__);
    if (!RpcOut_sendOne(&reply, &replyLen, "vmx.capability.copypaste_version")) {
       Debug("CopyPaste_GetVmxCopyPasteVersion: could not get VMX copyPaste "
             "version capability: %s\n", reply ? reply : "NULL");
@@ -1854,6 +1857,7 @@ CopyPaste_GetVmxCopyPasteVersion(void)
 Bool
 CopyPaste_RegisterCapability(void)
 {
+   Debug("%s: enter\n", __FUNCTION__);
    /* Tell the VMX about the copyPaste version we support. */
    if (!RpcOut_sendOne(NULL, NULL, "tools.capability.copypaste_version 2")) {
       Debug("CopyPaste_RegisterCapability: could not set guest copypaste "
@@ -1885,6 +1889,7 @@ CopyPaste_RegisterCapability(void)
 Bool
 CopyPaste_Register(GtkWidget* mainWnd)
 {
+   Debug("%s: enter\n", __FUNCTION__);
    /* Text copy/paste initialization for all versions. */
 #ifndef GDK_SELECTION_CLIPBOARD
    GDK_SELECTION_CLIPBOARD = gdk_atom_intern("CLIPBOARD", FALSE);
@@ -1960,6 +1965,7 @@ CopyPaste_Register(GtkWidget* mainWnd)
 void
 CopyPaste_Unregister(GtkWidget* mainWnd)
 {
+   Debug("%s: enter\n", __FUNCTION__);
    gtk_signal_disconnect_by_func(GTK_OBJECT(mainWnd),
                                  GTK_SIGNAL_FUNC(CopyPasteSelectionReceivedCB),
                                  mainWnd);
@@ -1969,6 +1975,11 @@ CopyPaste_Unregister(GtkWidget* mainWnd)
    gtk_signal_disconnect_by_func(GTK_OBJECT(mainWnd),
                                  GTK_SIGNAL_FUNC(CopyPasteSelectionClearCB),
                                  mainWnd);
+   RpcIn_UnregisterCallback(gRpcIn, "copypaste.hg.data.set");
+   RpcIn_UnregisterCallback(gRpcIn, "copypaste.hg.data.finish");
+   RpcIn_UnregisterCallback(gRpcIn, "copypaste.gh.data.get");
+   RpcIn_UnregisterCallback(gRpcIn, "copypaste.gh.get.next.file");
+   RpcIn_UnregisterCallback(gRpcIn, "copypaste.gh.finish");
 }
 
 
@@ -1991,9 +2002,11 @@ CopyPaste_Unregister(GtkWidget* mainWnd)
 void
 CopyPaste_OnReset(void)
 {
+   Debug("%s: enter\n", __FUNCTION__);
    if (gHGFCPFileTransferStatus == FCP_FILE_TRANSFERRING) {
       File_DeleteDirectoryTree(gFileRoot);
-      if (gBlockFd > 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+      if (DnD_BlockIsReady(&gBlockCtrl) &&
+          !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
          Warning("CopyPasteRpcInHGDataFinishCB: Unable to remove block [%s].\n",
                  gFileRoot);
       }
@@ -2069,6 +2082,7 @@ CopyPaste_IsRpcCPSupported(void)
 void
 CopyPasteStateInit(void)
 {
+   Debug("%s: enter\n", __FUNCTION__);
    gHostClipboardBuf[0] = '\0';
    gGuestSelPrimaryBuf[0] = '\0';
    gGuestSelClipboardBuf[0] = '\0';
@@ -2083,6 +2097,6 @@ CopyPasteStateInit(void)
        * or greater.
        */
       gFileRootSize = DnD_GetNewFileRoot(gFileRoot, sizeof gFileRoot);
-      Debug("CopyPaste_Register create file root [%s]\n", gFileRoot);
+      Debug("%s: create file root [%s]\n", __FUNCTION__, gFileRoot);
    }
 }

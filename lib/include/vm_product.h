@@ -66,6 +66,7 @@
 #define PRODUCT_WORKSTATION_ENTERPRISE_BRIEF_NAME \
          PRODUCT_WORKSTATION_BRIEF_NAME " " "ACE Edition"
 #define PRODUCT_PLAYER_BRIEF_NAME "Player"
+#define PRODUCT_ACE_PLAYER_BRIEF_NAME "ACE " PRODUCT_PLAYER_BRIEF_NAME
 #define PRODUCT_MAC_DESKTOP_BRIEF_NAME "Fusion"
 #define PRODUCT_ACE_MANAGEMENT_SERVER_BRIEF_NAME "ACE Management Server"
 
@@ -91,6 +92,7 @@
 #define PRODUCT_CONSOLE_NAME MAKE_NAME("Server Console")
 #define PRODUCT_PLAYER_NAME MAKE_NAME(PRODUCT_PLAYER_BRIEF_NAME)
 #define PRODUCT_PLAYER_NAME_FOR_LICENSE PRODUCT_PLAYER_NAME
+#define PRODUCT_ACE_PLAYER_NAME MAKE_NAME(PRODUCT_ACE_PLAYER_BRIEF_NAME)
 #define PRODUCT_ACE_MANAGEMENT_SERVER_NAME MAKE_NAME(PRODUCT_ACE_MANAGEMENT_SERVER_BRIEF_NAME)
 
 #define PRODUCT_VMLS_SHORT_NAME "VMLS"
@@ -132,7 +134,7 @@
 #define PRODUCT_VDDK_SHORT_NAME "VDDK"
 #define PRODUCT_VDDK_NAME MAKE_NAME("VMware Virtual Disk Development Kit")
 
-#define PRODUCT_VDM_CLIENT_NAME MAKE_NAME("VDM Client")
+#define PRODUCT_VDM_CLIENT_NAME MAKE_NAME("View Client")
 #define PRODUCT_VDM_CLIENT_NAME_FOR_LICENSE PRODUCT_VDM_CLIENT_NAME
 
 // XXX VMvisor is the underlying technology for possibly several products,
@@ -231,7 +233,7 @@
       || defined(VMX86_WGS)      \
       || defined(VMX86_DESKTOP)  \
       || defined(VMX86_ENTERPRISE_DESKTOP) \
-      || defined(VMX86_MUI)  	   \
+      || defined(VMX86_MUI)      \
       || defined(VMX86_API)      \
       || defined(VMX86_VPX)      \
       || defined(VMX86_WBC)      \
@@ -245,7 +247,7 @@
       || defined(VMX86_P2V)      \
       || defined(VMX86_DDK)      \
       || defined(VMX86_VDDK))
-#   if defined(_WIN32)
+#   if defined(_WIN32) || defined(__APPLE__)
       /*
        * XXX Make the product be Workstation by default if none of the defines
        * XXX above are not defined in defs-globaldefs.mk -- Edward A. Waugh
@@ -369,7 +371,11 @@
 #      define PRODUCT_NAME_FOR_LICENSE "VMware ESX Server"
 #      define PRODUCT_SMP_NAME_FOR_LICENSE PRODUCT_ESX_SMP_NAME
 #   elif defined(VMX86_DESKTOP)
-#      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " for " PRODUCT_OS
+#      if defined(__APPLE__)
+#         define PRODUCT_NAME_FOR_LICENSE "VMware Fusion for Mac OS"
+#      else
+#         define PRODUCT_NAME_FOR_LICENSE "VMware Workstation"
+#      endif
 #      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
 #   elif defined(VMX86_WGS_MIGRATION)
 #      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " for " PRODUCT_OS
@@ -471,7 +477,11 @@
  * another flavor of the product to run.
  */
 #   if defined(VMX86_DESKTOP)
-#      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " for Win32"
+#      if defined(__APPLE__)
+#         define PRODUCT_NAME_FOR_LICENSE "VMware Fusion for Mac OS"
+#      else
+#         define PRODUCT_NAME_FOR_LICENSE "VMware Workstation"
+#      endif
 #      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
 #   elif defined(VMX86_WGS_MIGRATION)
 #      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " for Win32"
@@ -539,12 +549,12 @@
  * For Host Agent (hostd)
  */
 
-#define HOST_AGENT_PRODUCT_NAME		PRODUCT_NAME " Host Agent"
+#define HOST_AGENT_PRODUCT_NAME     PRODUCT_NAME " Host Agent"
 
 /* Used by bora/vim/lib/vmgina module.
  * @todo Use this also in /bora/install/msi/InstUtil/desktop/vmInstUtil.cpp
  *       to guarantee that the service is installed with exactly this name.
  */
-#define HOST_AGENT_SERVICE_NAME		"VMwareHostd"
+#define HOST_AGENT_SERVICE_NAME     "VMwareHostd"
 
 #endif /* VM_PRODUCT_H */

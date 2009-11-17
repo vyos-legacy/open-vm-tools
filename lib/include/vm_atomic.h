@@ -20,10 +20,24 @@
  * vm_atomic.h --
  *
  *	Atomic power
+ *
+ * Note: Only partially tested on ARM processors: Works for View Open
+ *       Client, which shouldn't have threads.
+ *
+ *       In ARM, GCC intrinsics (__sync*) compile but might not
+ *       work, while MS intrinsics (_Interlocked*) do not compile,
+ *       and ARM has no equivalent to the "lock" instruction prior to
+ *       ARMv6; the current ARM target is ARMv5.  According to glibc
+ *       documentation, ARMv5 cannot have atomic code in user space.
+ *       Instead a Linux system call to kernel code referenced in
+ *       entry-armv.S is used to achieve atomic functions.  See bug
+ *       478054 for details.
  */
 
 #ifndef _ATOMIC_H_
 #define _ATOMIC_H_
+
+//#define FAKE_ATOMIC /* defined if true atomic not needed */
 
 #define INCLUDE_ALLOW_USERLEVEL
 #define INCLUDE_ALLOW_VMMEXT
@@ -52,6 +66,35 @@ typedef struct  Atomic_uint64 {
    volatile uint64 value;
 } Atomic_uint64 ALIGNED(8);
 
+#ifdef __arm__
+#ifndef NOT_IMPLEMENTED
+#error NOT_IMPLEMENTED undefined
+#endif
+#ifdef __GNUC__
+EXTERN Atomic_uint32 atomicLocked64bit;
+#ifndef FAKE_ATOMIC
+   /*
+    * Definitions for kernel function call which attempts an
+    * atomic exchange, returning 0 only upon success.
+    * The code actually called is put in memory by the kernel,
+    * and is in fact what the kernel uses for this atomic
+    * instruction.  This does not work for Linux versions
+    * before 2.6 or (obviously) for non-Linux implementations.
+    * For other implementations on ARMv6 and up, use
+    * LDREX/SUBS/STREXEQ/LDRNE/ADDS/BNE spin-lock; for pre-ARMv6,
+    * use SWP-based spin-lock.
+    */
+#if !defined(__linux__)
+#define __kernel_cmpxchg(x, y, z) NOT_IMPLEMENTED()
+#else
+   typedef int (__kernel_cmpxchg_t)(uint32 oldVal,
+                                    uint32 newVal,
+                                    volatile uint32 *mem);
+#define __kernel_cmpxchg (*(__kernel_cmpxchg_t *)0xffff0fc0)
+#endif
+#endif // FAKE_ATOMIC
+#endif // __GNUC__
+#endif // __arm__
 
 /*
  * Prototypes for msft atomics.  These are defined & inlined by the
@@ -154,7 +197,8 @@ Atomic_VolatileToAtomic(volatile uint32 *var)
      __GNUC__ >= 3 &&                                                   \
     (defined(__VMKERNEL__) || !defined(__FreeBSD__)) &&                 \
     (!defined(MODULE) || defined(__VMKERNEL_MODULE__)) &&               \
-    !defined(__APPLE__) /* PR136775 */
+    !defined(__APPLE__) &&                                              \
+    (defined(__i386__) || defined(__x86_64__)) /* PR136775 */
 #define ATOMIC_USE_FENCE
 #endif
 
@@ -185,7 +229,7 @@ Atomic_SetFence(Bool fenceAfterLock) /* IN: TRUE to enable lfence */
    AtomicUseFence = fenceAfterLock;
 #if defined(__VMKERNEL__)
    extern void Atomic_SetFenceVMKAPI(Bool fenceAfterLock);
-   Atomic_SetFenceVMKAPI(fenceAfterLock);  
+   Atomic_SetFenceVMKAPI(fenceAfterLock);
 #endif
    atomicFenceInitialized = TRUE;
 }
@@ -196,9 +240,21 @@ static INLINE void
 AtomicEpilogue(void)
 {
 #ifdef ATOMIC_USE_FENCE
+#ifdef VMM
+      /* The monitor conditionally patches out the lfence when not needed.*/
+      /* Construct a MonitorPatchTextEntry in the .patchtext section. */
+   asm volatile ("1:\n\t"
+                 "lfence\n\t"
+                 "2:\n\t"
+                 ".pushsection .patchtext\n\t"
+                 ".quad 1b\n\t"
+                 ".quad 2b\n\t"
+                 ".popsection\n\t" ::: "memory");
+#else
    if (UNLIKELY(AtomicUseFence)) {
       asm volatile ("lfence" ::: "memory");
    }
+#endif
 #endif
 }
 
@@ -307,8 +363,21 @@ Atomic_Write(Atomic_uint32 *var, // IN
 static INLINE uint32
 Atomic_ReadWrite(Atomic_uint32 *var, // IN
                  uint32 val)         // IN
-#ifdef __GNUC__
 {
+#ifdef FAKE_ATOMIC
+   uint32 retval = var->value;
+   var->value = val;
+   return retval;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   register uint32 retval;
+   register volatile uint32 *mem = &(var->value);
+   /* XXX - ARMv5 only: for ARMv6, use LDREX/STREX/CMP/BEQ spin-lock */
+   __asm__ __volatile__("swp %0, %1, [%2]"
+			: "=&r,&r" (retval)
+			: "r,0" (val), "r,r" (mem) : "memory");
+   return retval;
+#else // __arm__ (assume x86*)
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "xchgl %0, %1"
@@ -325,24 +394,25 @@ Atomic_ReadWrite(Atomic_uint32 *var, // IN
    );
    AtomicEpilogue();
    return val;
-}
-#elif _MSC_VER >= 1310
-{
+#endif // __arm__
+#elif defined _MSC_VER
+#if _MSC_VER >= 1310
    return _InterlockedExchange((long *)&var->value, (long)val);
-}
-#elif _MSC_VER
+#else
 #pragma warning(push)
 #pragma warning(disable : 4035)         // disable no-return warning
-{
-   __asm mov eax, val
-   __asm mov ebx, var
-   __asm xchg [ebx]Atomic_uint32.value, eax
-   // eax is the return value, this is documented to work - edward
-}
+   {
+      __asm mov eax, val
+      __asm mov ebx, var
+      __asm xchg [ebx]Atomic_uint32.value, eax
+      // eax is the return value, this is documented to work - edward
+   }
 #pragma warning(pop)
+#endif
 #else
 #error No compiler defined for Atomic_ReadWrite
 #endif
+}
 #define Atomic_ReadWrite32 Atomic_ReadWrite
 
 
@@ -366,8 +436,28 @@ static INLINE uint32
 Atomic_ReadIfEqualWrite(Atomic_uint32 *var, // IN
                         uint32 oldVal,      // IN
                         uint32 newVal)      // IN
-#ifdef __GNUC__
 {
+#ifdef FAKE_ATOMIC
+   uint32 readVal = var->value;
+
+   if (oldVal == readVal) {
+     var->value = newVal;
+   }
+   return oldVal;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   uint32 readVal;
+   register volatile uint32 *mem = &(var->value);
+
+   // loop until var not oldVal or var successfully replaced when var oldVal
+   do {
+      readVal = Atomic_Read(var);
+      if (oldVal != readVal) {
+         return readVal;
+      }
+   } while (__kernel_cmpxchg(oldVal, newVal, mem) != 0);
+   return oldVal; // success
+#else // __arm__ (assume x86*)
    uint32 val;
 
    /* Checked against the Intel manual and GCC --walken */
@@ -382,14 +472,14 @@ Atomic_ReadIfEqualWrite(Atomic_uint32 *var, // IN
       : "=a" (val),
 	"=m" (var->value)
       : "r" (newVal),
-	"0" (oldVal) 
-     /* 
+	"0" (oldVal)
+     /*
       * "1" (var->value): results in inconsistent constraints on gcc 2.7.2.3
       * when compiling enterprise-2.2.17-14-RH7.0-update.
       * The constraint has been commented out for now. We may consider doing
       * this systematically, but we need to be sure it is the right thing to
       * do. However, it is also possible that the offending use of this asm
-      * function will be removed in the near future in which case we may 
+      * function will be removed in the near future in which case we may
       * decide to reintroduce the constraint instead. hpreg & agesen.
       */
 #   endif
@@ -397,27 +487,28 @@ Atomic_ReadIfEqualWrite(Atomic_uint32 *var, // IN
    );
    AtomicEpilogue();
    return val;
-}
-#elif _MSC_VER >= 1310
-{
+#endif // __arm__
+#elif defined _MSC_VER
+#if _MSC_VER >= 1310
    return _InterlockedCompareExchange((long *)&var->value,
 				      (long)newVal,
 				      (long)oldVal);
-}
-#elif _MSC_VER
+#else
 #pragma warning(push)
 #pragma warning(disable : 4035)         // disable no-return warning
-{
-   __asm mov eax, oldVal
-   __asm mov ebx, var
-   __asm mov ecx, newVal
-   __asm lock cmpxchg [ebx]Atomic_uint32.value, ecx
-   // eax is the return value, this is documented to work - edward
-}
+   {
+      __asm mov eax, oldVal
+      __asm mov ebx, var
+      __asm mov ecx, newVal
+      __asm lock cmpxchg [ebx]Atomic_uint32.value, ecx
+      // eax is the return value, this is documented to work - edward
+   }
 #pragma warning(pop)
+#endif
 #else
 #error No compiler defined for Atomic_ReadIfEqualWrite
 #endif
+}
 #define Atomic_ReadIfEqualWrite32 Atomic_ReadIfEqualWrite
 
 
@@ -457,7 +548,7 @@ Atomic_ReadIfEqualWrite64(Atomic_uint64 *var, // IN
    );
    AtomicEpilogue();
    return val;
-#elif _MSC_VER
+#elif defined _MSC_VER
    return _InterlockedCompareExchange64((__int64 *)&var->value,
 					(__int64)newVal,
 					(__int64)oldVal);
@@ -488,7 +579,18 @@ static INLINE void
 Atomic_And(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef __GNUC__
+#ifdef FAKE_ATOMIC
+   var->value &= val;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   /* same as Atomic_FetchAndAnd without return value */
+   uint32 res;
+   register volatile uint32 *mem = &(var->value);
+
+   do {
+     res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res & val, mem) != 0);
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; andl %1, %0"
@@ -503,7 +605,8 @@ Atomic_And(Atomic_uint32 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#endif // __arm__
+#elif defined _MSC_VER
 #if defined(__x86_64__)
    _InterlockedAnd((long *)&var->value, (long)val);
 #else
@@ -548,7 +651,7 @@ Atomic_And64(Atomic_uint64 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#elif defined _MSC_VER
    _InterlockedAnd64((__int64 *)&var->value, (__int64)val);
 #else
 #error No compiler defined for Atomic_And64
@@ -577,7 +680,18 @@ static INLINE void
 Atomic_Or(Atomic_uint32 *var, // IN
           uint32 val)         // IN
 {
-#ifdef __GNUC__
+#ifdef FAKE_ATOMIC
+   var->value |= val;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   /* same as Atomic_FetchAndOr without return value */
+   uint32 res;
+   register volatile uint32 *mem = &(var->value);
+
+   do {
+     res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res | val, mem) != 0);
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; orl %1, %0"
@@ -592,7 +706,8 @@ Atomic_Or(Atomic_uint32 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#endif // __arm__
+#elif defined _MSC_VER
 #if defined(__x86_64__)
    _InterlockedOr((long *)&var->value, (long)val);
 #else
@@ -637,7 +752,7 @@ Atomic_Or64(Atomic_uint64 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#elif defined _MSC_VER
    _InterlockedOr64((__int64 *)&var->value, (__int64)val);
 #else
 #error No compiler defined for Atomic_Or64
@@ -666,7 +781,17 @@ static INLINE void
 Atomic_Xor(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef __GNUC__
+#ifdef FAKE_ATOMIC
+   var->value ^= val;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   uint32 res;
+   register volatile uint32 *mem = &(var->value);
+
+   do {
+     res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res ^ val, mem) != 0);
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; xorl %1, %0"
@@ -681,7 +806,8 @@ Atomic_Xor(Atomic_uint32 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#endif // __arm__
+#elif defined _MSC_VER
 #if defined(__x86_64__)
    _InterlockedXor((long *)&var->value, (long)val);
 #else
@@ -726,7 +852,7 @@ Atomic_Xor64(Atomic_uint64 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#elif defined _MSC_VER
    _InterlockedXor64((__int64 *)&var->value, (__int64)val);
 #else
 #error No compiler defined for Atomic_Xor64
@@ -755,7 +881,18 @@ static INLINE void
 Atomic_Add(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef __GNUC__
+#ifdef FAKE_ATOMIC
+   var->value += val;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   /* same as Atomic_FetchAndAddUnfenced without return value */
+   uint32 res;
+   register volatile uint32 *mem = &(var->value);
+
+   do {
+     res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res + val, mem) != 0);
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; addl %1, %0"
@@ -770,12 +907,15 @@ Atomic_Add(Atomic_uint32 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER >= 1310
+#endif // __arm__
+#elif defined _MSC_VER
+#if _MSC_VER >= 1310
    _InterlockedExchangeAdd((long *)&var->value, (long)val);
-#elif _MSC_VER
+#else
    __asm mov eax, val
    __asm mov ebx, var
    __asm lock add [ebx]Atomic_uint32.value, eax
+#endif
 #else
 #error No compiler defined for Atomic_Add
 #endif
@@ -813,7 +953,7 @@ Atomic_Add64(Atomic_uint64 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#elif defined _MSC_VER
    _InterlockedExchangeAdd64((__int64 *)&var->value, (__int64)val);
 #else
 #error No compiler defined for Atomic_Add64
@@ -842,7 +982,17 @@ static INLINE void
 Atomic_Sub(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef __GNUC__
+#ifdef FAKE_ATOMIC
+   var->value -= val;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   uint32 res;
+   register volatile uint32 *mem = &(var->value);
+
+   do {
+     res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res - val, mem) != 0);
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; subl %1, %0"
@@ -857,12 +1007,15 @@ Atomic_Sub(Atomic_uint32 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER >= 1310
+#endif // __arm__
+#elif defined _MSC_VER
+#if _MSC_VER >= 1310
    _InterlockedExchangeAdd((long *)&var->value, (long)-val);
-#elif _MSC_VER
+#else
    __asm mov eax, val
    __asm mov ebx, var
    __asm lock sub [ebx]Atomic_uint32.value, eax
+#endif
 #else
 #error No compiler defined for Atomic_Sub
 #endif
@@ -900,7 +1053,7 @@ Atomic_Sub64(Atomic_uint64 *var, // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER
+#elif defined _MSC_VER
    _InterlockedExchangeAdd64((__int64 *)&var->value, (__int64)-val);
 #else
 #error No compiler defined for Atomic_Sub64
@@ -929,6 +1082,10 @@ static INLINE void
 Atomic_Inc(Atomic_uint32 *var) // IN
 {
 #ifdef __GNUC__
+#ifdef __arm__
+   /* just use Atomic_Add */
+   Atomic_Add(var, 1);
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; incl %0"
@@ -942,54 +1099,19 @@ Atomic_Inc(Atomic_uint32 *var) // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER >= 1310
+#endif // __arm__
+#elif defined _MSC_VER
+#if _MSC_VER >= 1310
    _InterlockedIncrement((long *)&var->value);
-#elif _MSC_VER
+#else
    __asm mov ebx, var
    __asm lock inc [ebx]Atomic_uint32.value
+#endif
 #else
 #error No compiler defined for Atomic_Inc
 #endif
 }
 #define Atomic_Inc32 Atomic_Inc
-
-
-#if defined(__x86_64__)
-/*
- *-----------------------------------------------------------------------------
- *
- * Atomic_Inc64 --
- *
- *      Atomic read, increment, write.
- *
- * Results:
- *      None
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-static INLINE void
-Atomic_Inc64(Atomic_uint64 *var) // IN
-{
-#if defined(__GNUC__)
-   /* Checked against the AMD manual and GCC --hpreg */
-   __asm__ __volatile__(
-      "lock; incq %0"
-      : "+m" (var->value)
-      :
-      : "cc"
-   );
-   AtomicEpilogue();
-#elif _MSC_VER
-   _InterlockedIncrement64((__int64 *)&var->value);
-#else
-#error No compiler defined for Atomic_Inc64
-#endif
-}
-#endif
 
 
 /*
@@ -1012,6 +1134,10 @@ static INLINE void
 Atomic_Dec(Atomic_uint32 *var) // IN
 {
 #ifdef __GNUC__
+#ifdef __arm__
+   /* just use Atomic_Sub */
+   Atomic_Sub(var, 1);
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; decl %0"
@@ -1025,54 +1151,19 @@ Atomic_Dec(Atomic_uint32 *var) // IN
       : "cc"
    );
    AtomicEpilogue();
-#elif _MSC_VER >= 1310
+#endif // __arm__
+#elif defined _MSC_VER
+#if _MSC_VER >= 1310
    _InterlockedDecrement((long *)&var->value);
-#elif _MSC_VER
+#else
    __asm mov ebx, var
    __asm lock dec [ebx]Atomic_uint32.value
+#endif
 #else
 #error No compiler defined for Atomic_Dec
 #endif
 }
 #define Atomic_Dec32 Atomic_Dec
-
-
-#if defined(__x86_64__)
-/*
- *-----------------------------------------------------------------------------
- *
- * Atomic_Dec64 --
- *
- *      Atomic read, decrement, write.
- *
- * Results:
- *      None
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-static INLINE void
-Atomic_Dec64(Atomic_uint64 *var) // IN
-{
-#if defined(__GNUC__)
-   /* Checked against the AMD manual and GCC --hpreg */
-   __asm__ __volatile__(
-      "lock; decq %0"
-      : "+m" (var->value)
-      :
-      : "cc"
-   );
-   AtomicEpilogue();
-#elif _MSC_VER
-   _InterlockedDecrement64((__int64 *)&var->value);
-#else
-#error No compiler defined for Atomic_Dec64
-#endif
-}
-#endif
 
 
 /*
@@ -1103,10 +1194,16 @@ Atomic_FetchAndOr(Atomic_uint32 *var, // IN
 {
    uint32 res;
 
+#if defined(__arm__) && !defined(FAKE_ATOMIC)
+   register volatile uint32 *mem = &(var->value);
    do {
-      res = var->value;
+      res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res | val, mem) != 0);
+#else
+   do {
+      res = Atomic_Read(var);
    } while (res != Atomic_ReadIfEqualWrite(var, res, res | val));
-
+#endif
    return res;
 }
 
@@ -1133,10 +1230,16 @@ Atomic_FetchAndAnd(Atomic_uint32 *var, // IN
 {
    uint32 res;
 
+#if defined(__arm__) && !defined(FAKE_ATOMIC)
+   register volatile uint32 *mem = &(var->value);
    do {
-      res = var->value;
+      res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res & val, mem) != 0);
+#else
+   do {
+      res = Atomic_Read(var);
    } while (res != Atomic_ReadIfEqualWrite(var, res, res & val));
-
+#endif
    return res;
 }
 #define Atomic_ReadOr32 Atomic_FetchAndOr
@@ -1200,8 +1303,22 @@ Atomic_ReadOr64(Atomic_uint64 *var, // IN
 static INLINE uint32
 Atomic_FetchAndAddUnfenced(Atomic_uint32 *var, // IN
                            uint32 val)         // IN
-#ifdef __GNUC__
 {
+#ifdef FAKE_ATOMIC
+   uint32 res = var->value;
+   var->value = res + val;
+   return res;
+#elif defined(__GNUC__)
+#ifdef __arm__
+   uint32 res;
+
+   register volatile uint32 *mem = &(var->value);
+   do {
+      res = Atomic_Read(var);
+   } while (__kernel_cmpxchg(res, res + val, mem) != 0);
+
+   return res;
+#else // __arm__
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
 #   if VM_ASM_PLUS
@@ -1219,23 +1336,24 @@ Atomic_FetchAndAddUnfenced(Atomic_uint32 *var, // IN
 #   endif
    );
    return val;
-}
-#elif _MSC_VER >= 1310
-{
+#endif // __arm__
+#elif defined _MSC_VER
+#if _MSC_VER >= 1310
    return _InterlockedExchangeAdd((long *)&var->value, (long)val);
-}
-#elif _MSC_VER
+#else
 #pragma warning(push)
 #pragma warning(disable : 4035)         // disable no-return warning
-{
-   __asm mov eax, val
-   __asm mov ebx, var
-   __asm lock xadd [ebx]Atomic_uint32.value, eax
-}
+   {
+      __asm mov eax, val
+      __asm mov ebx, var
+      __asm lock xadd [ebx]Atomic_uint32.value, eax
+   }
 #pragma warning(pop)
+#endif
 #else
 #error No compiler defined for Atomic_FetchAndAdd
 #endif
+}
 #define Atomic_ReadAdd32 Atomic_FetchAndAdd
 
 
@@ -1265,17 +1383,15 @@ Atomic_FetchAndAddUnfenced(Atomic_uint32 *var, // IN
 static INLINE uint32
 Atomic_FetchAndAdd(Atomic_uint32 *var, // IN
                    uint32 val)         // IN
-#ifdef __GNUC__
 {
+#if defined(__GNUC__) && !defined(__arm__)
    val = Atomic_FetchAndAddUnfenced(var, val);
    AtomicEpilogue();
    return val;
-}
 #else
-{
    return Atomic_FetchAndAddUnfenced(var, val);
-}
 #endif
+}
 
 
 #if defined(__x86_64__)
@@ -1310,7 +1426,7 @@ Atomic_ReadAdd64(Atomic_uint64 *var, // IN
    );
    AtomicEpilogue();
    return val;
-#elif _MSC_VER
+#elif defined _MSC_VER
    return _InterlockedExchangeAdd64((__int64 *)&var->value, (__int64)val);
 #else
 #error No compiler defined for Atomic_ReadAdd64
@@ -1467,10 +1583,10 @@ typedef struct {
  *
  *      Compare exchange: Read variable, if equal to oldVal, write newVal
  *
- *      XXX: Ensure that if this function is to be inlined by gcc, it is 
- *      compiled with -fno-strict-aliasing. Otherwise it will break. 
+ *      XXX: Ensure that if this function is to be inlined by gcc, it is
+ *      compiled with -fno-strict-aliasing. Otherwise it will break.
  *      Unfortunately we know that gcc 2.95.3 (used to build the FreeBSD 3.2
- *      Tools) does not honor -fno-strict-aliasing. As a workaround, we avoid 
+ *      Tools) does not honor -fno-strict-aliasing. As a workaround, we avoid
  *      inlining the function entirely for versions of gcc under 3.0.
  *
  * Results:
@@ -1482,6 +1598,9 @@ typedef struct {
  *-----------------------------------------------------------------------------
  */
 
+#ifdef __arm__
+#define Atomic_CMPXCHG64(x, y, z) NOT_IMPLEMENTED()
+#else // __arm__
 #if defined(__GNUC__) && __GNUC__ < 3
 static Bool
 #else
@@ -1490,12 +1609,19 @@ static INLINE Bool
 Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
                  uint64 const *oldVal, // IN
                  uint64 const *newVal) // IN
-#ifdef __GNUC__
 {
+#ifdef FAKE_ATOMIC
+   uint64 readVal = var->value;
+
+   if (*oldVal == readVal) {
+     var->value = *newVal;
+   }
+   return (*oldVal == readVal);
+#elif defined(__GNUC__)
    Bool equal;
 
    /* Checked against the Intel manual and GCC --walken */
-#ifdef VMM64
+#if defined(__x86_64__)
    uint64 dummy;
    __asm__ __volatile__(
       "lock; cmpxchgq %3, %0" "\n\t"
@@ -1509,7 +1635,7 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
    );
 #else /* 32-bit version */
    int dummy1, dummy2;
-#   if defined __PIC__ && !vm_x86_64 // %ebx is reserved by the compiler.
+#   if defined __PIC__ // %ebx is reserved by the compiler.
 #      if defined __GNUC__ && __GNUC__ < 3 // Part of #188541 - for RHL 6.2 etc.
    __asm__ __volatile__(
       "xchg %%ebx, %6\n\t"
@@ -1562,38 +1688,37 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
       : "cc"
    );
 #   endif
-#endif
+#endif /* 32-bit version */
    AtomicEpilogue();
    return equal;
-} 
-#elif _MSC_VER
+#elif defined _MSC_VER
 #if defined(__x86_64__)
-{
    return *oldVal == _InterlockedCompareExchange64((__int64 *)&var->value,
-                                                   (__int64)*newVal, 
+                                                   (__int64)*newVal,
 						   (__int64)*oldVal);
-}
 #else
 #pragma warning(push)
 #pragma warning(disable : 4035)		// disable no-return warning
-{
-   __asm mov esi, var
-   __asm mov edx, oldVal
-   __asm mov ecx, newVal
-   __asm mov eax, [edx]S_uint64.lowValue
-   __asm mov edx, [edx]S_uint64.highValue
-   __asm mov ebx, [ecx]S_uint64.lowValue
-   __asm mov ecx, [ecx]S_uint64.highValue
-   __asm lock cmpxchg8b [esi]
-   __asm sete al
-   __asm movzx eax, al
-   // eax is the return value, this is documented to work - edward
-} 
+   {
+      __asm mov esi, var
+      __asm mov edx, oldVal
+      __asm mov ecx, newVal
+      __asm mov eax, [edx]S_uint64.lowValue
+      __asm mov edx, [edx]S_uint64.highValue
+      __asm mov ebx, [ecx]S_uint64.lowValue
+      __asm mov ecx, [ecx]S_uint64.highValue
+      __asm lock cmpxchg8b [esi]
+      __asm sete al
+      __asm movzx eax, al
+      // eax is the return value, this is documented to work - edward
+   }
 #pragma warning(pop)
 #endif
 #else
 #error No compiler defined for Atomic_CMPXCHG64
 #endif
+}
+#endif // __arm__
 
 
 /*
@@ -1617,7 +1742,19 @@ Atomic_CMPXCHG32(Atomic_uint32 *var,   // IN/OUT
                  uint32 oldVal, // IN
                  uint32 newVal) // IN
 {
-#ifdef __GNUC__
+#ifdef FAKE_ATOMIC
+   uint32 readVal = var->value;
+
+   if (oldVal == readVal) {
+     var->value = newVal;
+   }
+   return (oldVal == readVal);
+#elif defined(__GNUC__)
+#ifdef __arm__
+   register volatile uint32 *mem = &(var->value);
+
+   return !__kernel_cmpxchg(oldVal, newVal, mem);
+#else // __arm__
    Bool equal;
 
    uint32 dummy;
@@ -1642,11 +1779,25 @@ Atomic_CMPXCHG32(Atomic_uint32 *var,   // IN/OUT
    );
    AtomicEpilogue();
    return equal;
-#else
+#endif // __arm__
+#else // defined(__GNUC__)
    return (Atomic_ReadIfEqualWrite(var, oldVal, newVal) == oldVal);
-#endif
-} 
+#endif // defined(__GNUC__)
+}
 
+
+#ifdef __arm__
+
+#define Atomic_Read64(x)          NOT_IMPLEMENTED()
+#define Atomic_FetchAndAdd64(x,y) NOT_IMPLEMENTED()
+#define Atomic_FetchAndInc64(x)   NOT_IMPLEMENTED()
+#define Atomic_FetchAndDec64(x)   NOT_IMPLEMENTED()
+#define Atomic_Inc64(x)           NOT_IMPLEMENTED()
+#define Atomic_Dec64(x)           NOT_IMPLEMENTED()
+#define Atomic_ReadWrite64(x,y)   NOT_IMPLEMENTED()
+#define Atomic_Write64(x,y)       NOT_IMPLEMENTED()
+
+#else // __arm__
 
 /*
  *-----------------------------------------------------------------------------
@@ -1666,14 +1817,14 @@ Atomic_CMPXCHG32(Atomic_uint32 *var,   // IN/OUT
 
 static INLINE uint64
 Atomic_Read64(Atomic_uint64 const *var) // IN
-#if defined(__x86_64__)
 {
+#if defined(FAKE_ATOMIC)
    return var->value;
-}
+#elif defined(__x86_64__)
+   return var->value;
 #elif defined(__GNUC__) && defined(__i386__) /* GCC on x86 */
-{
    uint64 value;
-   /* 
+   /*
     * Since cmpxchg8b will replace the contents of EDX:EAX with the
     * value in memory if there is no match, we need only execute the
     * instruction once in order to atomically read 64 bits from
@@ -1692,21 +1843,21 @@ Atomic_Read64(Atomic_uint64 const *var) // IN
    );
    AtomicEpilogue();
    return value;
-}
-#elif _MSC_VER /* MSC (assume on x86 for now) */
+#elif defined _MSC_VER /* MSC (assume on x86 for now) */
 #   pragma warning(push)
 #   pragma warning(disable : 4035)		// disable no-return warning
-{
-   __asm mov ecx, var
-   __asm mov edx, ecx
-   __asm mov eax, ebx
-   __asm lock cmpxchg8b [ecx]
-   // edx:eax is the return value; this is documented to work. --mann
-}
+   {
+      __asm mov ecx, var
+      __asm mov edx, ecx
+      __asm mov eax, ebx
+      __asm lock cmpxchg8b [ecx]
+      // edx:eax is the return value; this is documented to work. --mann
+   }
 #   pragma warning(pop)
 #else
 #   error No compiler defined for Atomic_Read64
 #endif
+}
 
 
 /*
@@ -1798,6 +1949,82 @@ Atomic_FetchAndDec64(Atomic_uint64 *var) // IN/OUT
 /*
  *-----------------------------------------------------------------------------
  *
+ * Atomic_Inc64 --
+ *
+ *      Atomic read, increment, write.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static INLINE void
+Atomic_Inc64(Atomic_uint64 *var) // IN
+{
+#if !defined(__x86_64__)
+   Atomic_FetchAndInc64(var);
+#elif defined(__GNUC__)
+   /* Checked against the AMD manual and GCC --hpreg */
+   __asm__ __volatile__(
+      "lock; incq %0"
+      : "+m" (var->value)
+      :
+      : "cc"
+   );
+   AtomicEpilogue();
+#elif defined _MSC_VER
+   _InterlockedIncrement64((__int64 *)&var->value);
+#else
+#error No compiler defined for Atomic_Inc64
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Atomic_Dec64 --
+ *
+ *      Atomic read, decrement, write.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static INLINE void
+Atomic_Dec64(Atomic_uint64 *var) // IN
+{
+#if !defined(__x86_64__)
+   Atomic_FetchAndDec64(var);
+#elif defined(__GNUC__)
+   /* Checked against the AMD manual and GCC --hpreg */
+   __asm__ __volatile__(
+      "lock; decq %0"
+      : "+m" (var->value)
+      :
+      : "cc"
+   );
+   AtomicEpilogue();
+#elif defined _MSC_VER
+   _InterlockedDecrement64((__int64 *)&var->value);
+#else
+#error No compiler defined for Atomic_Dec64
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
  * Atomic_ReadWrite64 --
  *
  *      Read followed by write
@@ -1826,7 +2053,7 @@ Atomic_ReadWrite64(Atomic_uint64 *var, // IN
    );
    AtomicEpilogue();
    return val;
-#elif _MSC_VER
+#elif defined _MSC_VER
    return _InterlockedExchange64((__int64 *)&var->value, (__int64)val);
 #else
 #error No compiler defined for Atomic_ReadWrite64
@@ -1869,6 +2096,7 @@ Atomic_Write64(Atomic_uint64 *var, // IN
    (void)Atomic_ReadWrite64(var, val);
 #endif
 }
+#endif // __arm__
 
 
 /*
@@ -1885,6 +2113,17 @@ Atomic_Write64(Atomic_uint64 *var, // IN
 
 #define MAKE_ATOMIC_TYPE(name, size, in, out, cast)                           \
    typedef Atomic_uint ## size Atomic_ ## name;                               \
+                                                                              \
+                                                                              \
+   static INLINE void                                                         \
+   AtomicAssertOnCompile ## name(void)                                        \
+   {                                                                          \
+      enum { AssertOnCompileMisused =    8 * sizeof (in) == size              \
+                                      && 8 * sizeof (out) == size             \
+                                      && 8 * sizeof (cast) == size            \
+                                         ? 1 : -1 };                          \
+      typedef char AssertOnCompileFailed[AssertOnCompileMisused];             \
+   }                                                                          \
                                                                               \
                                                                               \
    static INLINE out                                                          \
@@ -2045,11 +2284,10 @@ Atomic_Write64(Atomic_uint64 *var, // IN
  */
 #if defined(__x86_64__)
 MAKE_ATOMIC_TYPE(Ptr, 64, void const *, void *, uintptr_t)
-MAKE_ATOMIC_TYPE(Int, 64, int, int, int)
 #else
 MAKE_ATOMIC_TYPE(Ptr, 32, void const *, void *, uintptr_t)
-MAKE_ATOMIC_TYPE(Int, 32, int, int, int)
 #endif
+MAKE_ATOMIC_TYPE(Int, 32, int, int, int)
 
 
 /*

@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * cpNameLinux.c --
  *
@@ -24,7 +38,7 @@
  *
  */
 
-#if defined(sun) && !defined(SOL9)
+#if defined sun && !defined SOL9
 #include <memory.h>
 #endif
 
@@ -113,7 +127,7 @@ CPName_ConvertFromRoot(char const **bufIn, // IN/OUT: Input to convert
     */
    len = CPName_GetComponent(*bufIn, *bufIn + *inSize, &next);
    if (len < 0) {
-      Log("CPName_ConvertFromRoot: get first component failed\n");
+      Log("%s: get first component failed\n", __FUNCTION__);
       return HGFS_NAME_STATUS_FAILURE;
    }
 

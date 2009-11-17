@@ -24,8 +24,10 @@ SUBDIRS += auth
 SUBDIRS += backdoor
 SUBDIRS += conf
 SUBDIRS += dict
-SUBDIRS += deployPkg
 SUBDIRS += dnd
+if HAVE_GTKMM
+   SUBDIRS += dndGuest
+endif
 SUBDIRS += dynxdr
 SUBDIRS += err
 SUBDIRS += eventManager
@@ -40,6 +42,7 @@ SUBDIRS += guestApp
 SUBDIRS += guestInfo
 SUBDIRS += hgfs
 SUBDIRS += hgfsBd
+SUBDIRS += hgfsHelper
 SUBDIRS += hgfsServer
 SUBDIRS += hgfsServerManagerGuest
 SUBDIRS += hgfsServerPolicyGuest
@@ -61,17 +64,19 @@ endif
 if HAVE_X11
    SUBDIRS += resolution
 endif
+SUBDIRS += rpcChannel
 SUBDIRS += rpcIn
 SUBDIRS += rpcOut
 SUBDIRS += rpcVmx
+if USE_SLASH_PROC
+   SUBDIRS += slashProc
+endif
 SUBDIRS += SLPv2Parser
-SUBDIRS += socketMgr
 SUBDIRS += string
 SUBDIRS += stubs
 SUBDIRS += sync
 SUBDIRS += syncDriver
 SUBDIRS += system
-SUBDIRS += toolsLogger
 SUBDIRS += unicode
 if ENABLE_UNITY
    SUBDIRS += unity
@@ -81,7 +86,6 @@ else
 endif
 SUBDIRS += user
 SUBDIRS += vixTools
-SUBDIRS += vmBackupLib
 SUBDIRS += vmCheck
 SUBDIRS += vmSignal
 SUBDIRS += wiper

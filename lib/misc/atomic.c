@@ -28,6 +28,7 @@
 #include "vmware.h"
 #include "vm_atomic.h"
 #include "x86cpuid.h"
+#include "x86cpuid_asm.h"
 #include "vm_basic_asm.h"
 
 
@@ -69,6 +70,7 @@ AtomicInitFence(void)
    ASSERT(!atomicFenceInitialized);
 
    needFence = FALSE;
+#if defined(__i386__) || defined(__x86_64__)
    __GET_CPUID(0, &regs);
    if (CPUID_ID0RequiresFence(&regs)) {
       __GET_CPUID(1, &regs);
@@ -76,6 +78,7 @@ AtomicInitFence(void)
 	 needFence = TRUE;
       }
    }
+#endif
 
    Atomic_SetFence(needFence);
 }

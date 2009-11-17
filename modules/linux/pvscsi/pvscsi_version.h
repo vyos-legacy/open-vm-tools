@@ -19,14 +19,12 @@
 /*
  * pvscsi_version.h --
  *
- * Version definitions for the Linux PVSCSI driver.
+ *      Version definitions for the Linux PVSCSI driver.
  */
 
 #ifndef _PVSCSI_VERSION_H_
 #define _PVSCSI_VERSION_H_
 
-#define PVSCSI_DRIVER_VERSION          0.0.0.6
-#define PVSCSI_DRIVER_VERSION_COMMAS   0,0,0,6
-#define PVSCSI_DRIVER_VERSION_STRING   "0.0.0.6"
+#define PVSCSI_DRIVER_VERSION_STRING   "1.0.1.1"
 
 #endif /* _PVSCSI_VERSION_H_ */

@@ -1333,7 +1333,7 @@ Posix_ReadLink(ConstUnicode pathName)  // IN:
       return NULL;
    }
 
-   bytes = readlink(path, link, sizeof link);
+   bytes = readlink(path, link, sizeof link - 1);
    ASSERT_NOT_IMPLEMENTED(bytes < (ssize_t) sizeof link);
 
    free(path);
@@ -2951,12 +2951,11 @@ exit:
  *
  * Posix_Printf --
  *
- *      Wrapper around printf. [w]printf can only print characters from
- *      the local character set.  So instead we use ConsoleWriteW which can
- *      print characters from the entire Unicode character set. 
+ *      POSIX printf.
  *
  * Returns:
- *      Returns the number of characters printed out.
+ *      Returns the number of characters printed out or a negative value on
+ *      failure.
  *
  * Side effects:
  *      None.
@@ -2993,10 +2992,11 @@ Posix_Printf(ConstUnicode format,
  *
  * Posix_Fprintf --
  *
- *      Wrapper around fprintf. 
- *      
+ *      POSIX fprintf.
+ *
  * Returns:
- *      Returns the number of bytes characters printed out.
+ *      Returns the number of characters printed out or a negative value on
+ *      failure.
  *
  * Side effects:
  *      None.

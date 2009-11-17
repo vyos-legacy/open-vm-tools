@@ -19,7 +19,7 @@
 /* 
  * vmciDatagram.c --
  *
- *      Simple Datagram API for the Linux guest driver.
+ *      Simple Datagram API for the guest driver.
  */
 
 #ifdef __linux__
@@ -456,6 +456,70 @@ VMCIDatagram_CreateHnd(VMCIId resourceID,          // IN:
 /*
  *-----------------------------------------------------------------------------
  *
+ * VMCIDatagram_CreateHndPriv --
+ *
+ *      API provided for compatibility with the host vmci API. This function
+ *      doesn't ever succeed since you can't ask for elevated privileges from
+ *      the guest. Use VMCIDatagram_CreateHnd instead.
+ *
+ * Results:
+ *      Returns a negative error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+#ifdef __linux__
+EXPORT_SYMBOL(VMCIDatagram_CreateHndPriv);
+#endif
+
+int
+VMCIDatagram_CreateHndPriv(VMCIId resourceID,            // IN:
+                           uint32 flags,                 // IN:
+                           VMCIPrivilegeFlags privFlags, // IN:
+                           VMCIDatagramRecvCB recvCB,    // IN:
+                           void *clientData,             // IN:
+                           VMCIHandle *outHandle)        // OUT:
+{
+   return VMCI_ERROR_NO_ACCESS;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMCIDatagramCreateHndPriv --
+ *
+ *      API provided for compatibility with the host vmci API. This function
+ *      doesn't ever succeed since you can't ask for elevated privileges from
+ *      the guest. Use VMCIDatagramCreateHndInt instead.
+ *
+ * Results:
+ *      Returns VMCI_ERROR_NO_ACCESS.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+VMCIDatagramCreateHndPriv(VMCIId resourceID,            // IN:
+                          uint32 flags,                 // IN:
+                          VMCIPrivilegeFlags privFlags, // IN:
+                          VMCIDatagramRecvCB recvCB,    // IN:
+                          void *clientData,             // IN:
+                          VMCIHandle *outHandle)        // OUT:
+{
+   return VMCI_ERROR_NO_ACCESS;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
  * VMCIDatagramDestroyHndInt --
  *
  *      Destroys a handle.
@@ -788,8 +852,9 @@ DatagramProcessNotify(void *clientData,   // IN:
  */
 
 int
-VMCIDatagramProcess_Create(VMCIDatagramProcess **outDgmProc,    // IN:
-                           VMCIDatagramCreateInfo *createInfo)  // IN:
+VMCIDatagramProcess_Create(VMCIDatagramProcess **outDgmProc,    // OUT:
+                           VMCIDatagramCreateInfo *createInfo,  // IN:
+                           uintptr_t eventHnd)                  // IN:
 {
    VMCIDatagramProcess *dgmProc;
 
@@ -802,7 +867,7 @@ VMCIDatagramProcess_Create(VMCIDatagramProcess **outDgmProc,    // IN:
 
    VMCI_InitLock(&dgmProc->datagramQueueLock, "VMCIDgmProc",
 		 VMCI_LOCK_RANK_MIDDLE_BH);
-   VMCIHost_InitContext(&dgmProc->host, createInfo->eventHnd);
+   VMCIHost_InitContext(&dgmProc->host, eventHnd);
    dgmProc->pendingDatagrams = 0;
    dgmProc->datagramQueueSize = 0;
    dgmProc->datagramQueue = NULL;

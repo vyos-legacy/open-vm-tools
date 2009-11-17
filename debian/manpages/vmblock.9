@@ -1,0 +1,52 @@
+.TH VMBLOCK 9 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmblock \- vmware kernel module
+
+.SH SYNOPSIS
+modprobe vmblock
+
+.SH DESCRIPTION
+This is a kernel filesystem module. Ideally, it should be loaded before any of the Tools userlevel components are allowed to start, though vmblock itself has no dependencies. When loaded, vmblock will establish itself in /proc/fs/vmblock and create two nodes therein, dev and mountPoint. Before mounting a vmblock filesystem, ensure that /tmp/VMwareDnD exists as a directory with permissions 1777, otherwise host to guest drag n' drop operations won't work.
+.PP
+To mount, issue:
+.PP
+	mount \-t vmblock none /proc/fs/vmblock/mountPoint
+.PP
+Once mounted, \fIvmware\-user\fR(1) can begin to make use of vmblock to assist with DnD operations. Note that while \fIvmware\-user\fR(1) is running, it'll keep an open file descriptor on /proc/fs/vmblock/dev, and thus all \fIvmware\-user\fR(1) instances must be killed to unmount and unload vmblock.
+
+.SH OPTIONS
+vmblock has no options.
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsync\fR(9)
+.br
+\fIvmxnet\fR(9)
+
+.SH HOMEPAGE
+More information about vmblock and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

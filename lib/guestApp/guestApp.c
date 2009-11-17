@@ -32,7 +32,6 @@ extern "C" {
 #include <string.h>
 
 #include "vmware.h"
-#include "vm_app.h"
 #include "vm_version.h"
 #include "vm_tools_version.h"
 #include "guestApp.h"
@@ -47,17 +46,14 @@ extern "C" {
 #include "dictll.h"
 #include "msg.h"
 #include "file.h"
-#include "dynbuf.h"
-#include "vmstdio.h"
 #include "codeset.h"
 #include "productState.h"
 #include "posix.h"
+#include "vmware/guestrpc/tclodefs.h"
 
-#if !defined(N_PLAT_NLM)
-# include "hgfs.h"
-# include "cpName.h"
-# include "cpNameUtil.h"
-#endif
+#include "hgfs.h"
+#include "cpName.h"
+#include "cpNameUtil.h"
 
 #ifdef _MSC_VER
 #include <windows.h>
@@ -73,9 +69,7 @@ extern "C" {
  * intelligent for that platform as well.
  */
 
-#if defined(N_PLAT_NLM)
-#define GUESTAPP_TOOLS_INSTALL_PATH "SYS:\\ETC\\VMWTOOL"
-#elif defined(_WIN32)
+#if defined(_WIN32)
 #define GUESTAPP_TOOLS_INSTALL_PATH ""
 #else
 #define GUESTAPP_TOOLS_INSTALL_PATH "/etc/vmware-tools"
@@ -105,8 +99,6 @@ struct GuestApp_Dict {
 typedef HRESULT (WINAPI *PSHGETFOLDERPATH)(HWND, int, HANDLE, DWORD, LPWSTR);
 static PSHGETFOLDERPATH pfnSHGetFolderPath = NULL;
 #endif
-
-Bool runningInForeignVM = FALSE;
 
 
 /*
@@ -446,7 +438,7 @@ GuestApp_GetDictEntryBool(GuestApp_Dict *dict, // IN
       return FALSE;
    }
 
-#if  (defined N_PLAT_NLM || defined _WIN32)
+#if defined (_WIN32)
    return (stricmp(value, "TRUE") == 0);
 #else
    return (strcasecmp(value, "TRUE") == 0);
@@ -540,15 +532,11 @@ GuestApp_OldGetOptions(void)
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0);
-   } else {
-      Debug("Retrieving tools options (old)\n");
+   Debug("Retrieving tools options (old)\n");
 
-      bp.in.cx.halfs.low = BDOOR_CMD_GETGUIOPTIONS;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETGUIOPTIONS;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 
@@ -573,13 +561,11 @@ GuestApp_OldSetOptions(uint32 options) // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      Debug("Setting tools options (old)\n");
+   Debug("Setting tools options (old)\n");
 
-      bp.in.cx.halfs.low = BDOOR_CMD_SETGUIOPTIONS;
-      bp.in.size = options;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETGUIOPTIONS;
+   bp.in.size = options;
+   Backdoor(&bp);
 }
 
 
@@ -1156,86 +1142,6 @@ GuestApp_GetLogPath(void)
 /*
  *----------------------------------------------------------------------
  *
- * GuestApp_GetCmdOutput --
- *
- *      Run a cmd & get its cmd line output
- *
- * Results:
- *      An allocated string or NULL if an error occurred.
- *
- * Side effects:
- *	The cmd is run.
- *
- *----------------------------------------------------------------------
- */
-
-char *
-GuestApp_GetCmdOutput(const char *cmd) // IN
-{
-#ifdef N_PLAT_NLM
-   Debug("Trying to execute command \"%s\" and catch its output... No way on NetWare...\n", cmd);
-   return NULL;
-#else
-   DynBuf db;
-   FILE *stream;
-   char *out = NULL;
-
-   DynBuf_Init(&db);
-
-   stream = Posix_Popen(cmd, "r");
-   if (stream == NULL) {
-      Debug("Unable to get output of command \"%s\"\n", cmd);
-
-      return NULL;
-   }
-
-   for (;;) {
-      char *line = NULL;
-      size_t size;
-
-      switch (StdIO_ReadNextLine(stream, &line, 0, &size)) {
-      case StdIO_Error:
-         goto close;
-         break;
-
-      case StdIO_EOF:
-         break;
-
-      case StdIO_Success:
-         break;
-
-      default:
-         ASSERT_NOT_IMPLEMENTED(FALSE);
-      }
-
-      if (line == NULL) {
-         break;
-      }
-
-      DynBuf_Append(&db, line, size);
-      free(line);
-   }
-
-   if (DynBuf_Get(&db)) {
-      out = (char *)DynBuf_AllocGet(&db);
-   }
- close:
-   DynBuf_Destroy(&db);
-
-#ifndef _WIN32
-   pclose(stream);
-#else
-   _pclose(stream);
-#endif
-
-   return out;
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
  * GuestApp_IsHgfsCapable --
  *
  *      Is the host capable of handling hgfs requests?
@@ -1279,14 +1185,12 @@ GuestApp_GetAbsoluteMouseState(void)
    Backdoor_proto bp;
    GuestAppAbsoluteMouseState state = GUESTAPP_ABSMOUSE_UNKNOWN;
 
-   if (!runningInForeignVM) {
-      bp.in.cx.halfs.low = BDOOR_CMD_ISMOUSEABSOLUTE;
-      Backdoor(&bp);
-      if (bp.out.ax.word == 0) {
-         state = GUESTAPP_ABSMOUSE_UNAVAILABLE;
-      } else if (bp.out.ax.word == 1) {
-         state = GUESTAPP_ABSMOUSE_AVAILABLE;
-      }
+   bp.in.cx.halfs.low = BDOOR_CMD_ISMOUSEABSOLUTE;
+   Backdoor(&bp);
+   if (bp.out.ax.word == 0) {
+      state = GUESTAPP_ABSMOUSE_UNAVAILABLE;
+   } else if (bp.out.ax.word == 1) {
+      state = GUESTAPP_ABSMOUSE_AVAILABLE;
    }
 
    return state;
@@ -1395,15 +1299,10 @@ GuestApp_GetPos(int16 *x, // OUT
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      *x = 0;
-      *y = 0;
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETPTRLOCATION;
-      Backdoor(&bp);
-      *x = bp.out.ax.word >> 16;
-      *y = bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETPTRLOCATION;
+   Backdoor(&bp);
+   *x = bp.out.ax.word >> 16;
+   *y = bp.out.ax.word;
 }
 
 
@@ -1430,11 +1329,9 @@ GuestApp_SetPos(uint16 x, // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      bp.in.cx.halfs.low = BDOOR_CMD_SETPTRLOCATION;
-      bp.in.size = (x << 16) | y;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETPTRLOCATION;
+   bp.in.size = (x << 16) | y;
+   Backdoor(&bp);
 }
 
 
@@ -1471,13 +1368,9 @@ GuestApp_GetHostSelectionLen(void)
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0);
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETSELLENGTH;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETSELLENGTH;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 
@@ -1502,13 +1395,9 @@ GuestAppGetNextPiece(void)
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0); 
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETNEXTPIECE;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_GETNEXTPIECE;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 
@@ -1566,11 +1455,9 @@ GuestApp_SetSelLength(uint32 length) // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      bp.in.cx.halfs.low = BDOOR_CMD_SETSELLENGTH;
-      bp.in.size = length;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETSELLENGTH;
+   bp.in.size = length;
+   Backdoor(&bp);
 }
 
 
@@ -1595,11 +1482,9 @@ GuestApp_SetNextPiece(uint32 data) // IN
 {
    Backdoor_proto bp;
 
-   if (!runningInForeignVM) {
-      bp.in.cx.halfs.low = BDOOR_CMD_SETNEXTPIECE;
-      bp.in.size = data;
-      Backdoor(&bp);
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_SETNEXTPIECE;
+   bp.in.size = data;
+   Backdoor(&bp);
 }
 
 
@@ -1626,14 +1511,10 @@ GuestApp_SetDeviceState(uint16 id,      // IN: Device ID
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(TRUE);
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_TOGGLEDEVICE;
-      bp.in.size = (connected ? 0x80000000 : 0) | id;
-      Backdoor(&bp);
-      return bp.out.ax.word ? TRUE : FALSE;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_TOGGLEDEVICE;
+   bp.in.size = (connected ? 0x80000000 : 0) | id;
+   Backdoor(&bp);
+   return bp.out.ax.word ? TRUE : FALSE;
 }
 
 
@@ -1668,19 +1549,14 @@ GuestAppGetDeviceListElement(uint16 id,     // IN : Device ID
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      *data = 0;
-      return TRUE;
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_GETDEVICELISTELEMENT;
-      bp.in.size = (id << 16) | offset;
-      Backdoor(&bp);
-      if (bp.out.ax.word == FALSE) {
-         return FALSE;
-      }
-      *data = bp.out.bx.word;
-      return TRUE;
+   bp.in.cx.halfs.low = BDOOR_CMD_GETDEVICELISTELEMENT;
+   bp.in.size = (id << 16) | offset;
+   Backdoor(&bp);
+   if (bp.out.ax.word == FALSE) {
+      return FALSE;
    }
+   *data = bp.out.bx.word;
+   return TRUE;
 }
 
 
@@ -1757,18 +1633,13 @@ GuestApp_HostCopyStep(uint8 c) // IN
 {
    Backdoor_proto bp;
 
-   if (runningInForeignVM) {
-      return(0);
-   } else {
-      bp.in.cx.halfs.low = BDOOR_CMD_HOSTCOPY;
-      bp.in.size = c;
-      Backdoor(&bp);
-      return bp.out.ax.word;
-   }
+   bp.in.cx.halfs.low = BDOOR_CMD_HOSTCOPY;
+   bp.in.size = c;
+   Backdoor(&bp);
+   return bp.out.ax.word;
 }
 
 
-#if !defined(N_PLAT_NLM)
 /*
  *----------------------------------------------------------------------------
  *
@@ -1915,35 +1786,6 @@ GuestApp_RpcSendOneCPName(char const *cmd,  // IN: RPCI command
 
    free(rpcMessage);
    return TRUE;
-}
-#endif
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * GuestApp_ControlRecord --
- *
- *    Start or stop recording process, flagged by command. 
- *    Command definition is in statelogger_backdoor_def.h.
- *
- * Results:
- *    TRUE on success and FALSE on failure.
- *
- * Side effects:
- *    Host VMware product starts or stops recording this vm.
- *
- *-----------------------------------------------------------------------------
- */
-
-Bool
-GuestApp_ControlRecord(int32 command) // IN: flag of starting or stopping recording
-{
-   Backdoor_proto bp;
-   bp.in.size = command;
-   bp.in.cx.halfs.low = BDOOR_CMD_STATELOGGER;
-   Backdoor(&bp);
-   return (bp.out.ax.halfs.low == 1);
 }
 
 #ifdef __cplusplus

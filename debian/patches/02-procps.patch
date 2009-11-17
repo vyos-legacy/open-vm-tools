@@ -1,0 +1,55 @@
+Author: Daniel Baumann <daniel@debian.org>
+Description: Don't hardcode procps version.
+
+diff -Naurp open-vm-tools.orig/configure open-vm-tools/configure
+--- open-vm-tools.orig/configure	2009-05-29 05:25:21.000000000 +0000
++++ open-vm-tools/configure	2009-06-01 11:01:12.000000000 +0000
+@@ -23019,7 +23019,7 @@ if test "$with_procps" = "yes"; then
+    fi
+ 
+ 
+-   if test -z "proc-3.2.7"; then
++   if test -z "proc"; then
+       { { echo "$as_me:$LINENO: error: 'library' parameter is required.'" >&5
+ echo "$as_me: error: 'library' parameter is required.'" >&2;}
+    { (exit 1); exit 1; }; }
+@@ -23038,7 +23038,7 @@ echo "$as_me: error: 'lvar' parameter is
+    # First, try any user-defined CUSTOM_* flags.
+    #
+    if test -n "${CUSTOM_PROCPS_CPPFLAGS}" || test -n "${CUSTOM_PROCPS_LIBS}"; then
+-      CUSTOM_PROCPS_LIBS="${CUSTOM_PROCPS_LIBS} -lproc-3.2.7"
++      CUSTOM_PROCPS_LIBS="${CUSTOM_PROCPS_LIBS} -lproc"
+       if test -n ""; then
+          ORIGINAL_CPPFLAGS="$CPPFLAGS"
+          CPPFLAGS="${CUSTOM_PROCPS_CPPFLAGS} $CPPFLAGS"
+@@ -23193,14 +23193,14 @@ fi
+          else
+             ac_vmw_function=strlen
+          fi
+-         as_ac_Lib=`echo "ac_cv_lib_proc-3.2.7_$ac_vmw_function" | $as_tr_sh`
+-{ echo "$as_me:$LINENO: checking for $ac_vmw_function in -lproc-3.2.7" >&5
+-echo $ECHO_N "checking for $ac_vmw_function in -lproc-3.2.7... $ECHO_C" >&6; }
++         as_ac_Lib=`echo "ac_cv_lib_proc_$ac_vmw_function" | $as_tr_sh`
++{ echo "$as_me:$LINENO: checking for $ac_vmw_function in -lproc" >&5
++echo $ECHO_N "checking for $ac_vmw_function in -lproc... $ECHO_C" >&6; }
+ if { as_var=$as_ac_Lib; eval "test \"\${$as_var+set}\" = set"; }; then
+   echo $ECHO_N "(cached) $ECHO_C" >&6
+ else
+   ac_check_lib_save_LIBS=$LIBS
+-LIBS="-lproc-3.2.7 ${CUSTOM_PROCPS_LIBS} $LIBS"
++LIBS="-lproc ${CUSTOM_PROCPS_LIBS} $LIBS"
+ cat >conftest.$ac_ext <<_ACEOF
+ /* confdefs.h.  */
+ _ACEOF
+diff -Naurp open-vm-tools.orig/configure.ac open-vm-tools/configure.ac
+--- open-vm-tools.orig/configure.ac	2009-05-29 05:25:21.000000000 +0000
++++ open-vm-tools/configure.ac	2009-06-01 11:00:51.000000000 +0000
+@@ -608,7 +608,7 @@ if test "$with_procps" = "yes"; then
+    if test -z "$CUSTOM_PROCPS_LIBS"; then
+       CUSTOM_PROCPS_LIBS="-L/lib"
+    fi
+-   AC_VMW_CHECK_LIB([proc-3.2.7],
++   AC_VMW_CHECK_LIB([proc],
+                     [PROCPS],
+                     [],
+                     [],

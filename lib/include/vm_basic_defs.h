@@ -16,6 +16,48 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of VMware Inc. nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission of VMware Inc.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *********************************************************/
+
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * vm_basic_defs.h --
  *
@@ -45,10 +87,11 @@
 
 #if defined _WIN32 && defined USERLEVEL
    #include <stddef.h>  /*
-                         * We re-define offsetof macro from stddef, make 
-                         * sure that its already defined before we do it
+                         * We redefine offsetof macro from stddef; make 
+                         * sure that it's already defined before we do that.
                          */
    #include <windows.h>	// for Sleep() and LOWORD() etc.
+   #undef GetFreeSpace  // Unpollute preprocessor namespace.
 #endif
 
 
@@ -109,9 +152,17 @@ Max(int a, int b)
 #include <machine/param.h>
 #undef MASK
 #endif
+
+/*
+ * The MASK macro behaves badly when given negative numbers or numbers larger
+ * than the highest order bit number (e.g. 32 on a 32-bit machine) as an
+ * argument. The range 0..31 is safe.
+ */
+
 #define MASK(n)			((1 << (n)) - 1)	/* make an n-bit mask */
-#define DWORD_ALIGN(x)          ((((x)+3) >> 2) << 2)
-#define QWORD_ALIGN(x)          ((((x)+4) >> 3) << 3)
+
+#define DWORD_ALIGN(x)          ((((x) + 3) >> 2) << 2)
+#define QWORD_ALIGN(x)          ((((x) + 7) >> 3) << 3)
 
 #define IMPLIES(a,b) (!(a) || (b))
 
@@ -158,6 +209,8 @@ Max(int a, int b)
 #if defined VM_I386
    #define PAGE_SHIFT    12
 #elif defined __APPLE__
+   #define PAGE_SHIFT    12
+#elif defined __arm__
    #define PAGE_SHIFT    12
 #else
    #error
@@ -215,6 +268,10 @@ Max(int a, int b)
 
 #ifndef VM_PAE_LARGE_2_SMALL_PAGES
 #define VM_PAE_LARGE_2_SMALL_PAGES (BYTES_2_PAGES(VM_PAE_LARGE_PAGE_SIZE))
+#endif
+
+#ifndef NR_MPNS_PER_PAGE
+#define NR_MPNS_PER_PAGE (PAGE_SIZE / sizeof(MPN))
 #endif
 
 /*
@@ -362,8 +419,11 @@ GetCallerFrameAddr(void)
 #ifdef _WIN32 // {
 
 #define snprintf  _snprintf
-#define	vsnprintf _vsnprintf
 #define strtok_r  strtok_s
+
+#if (_MSC_VER < 1500)
+#define	vsnprintf _vsnprintf
+#endif
 
 typedef int uid_t;
 typedef int gid_t;
@@ -415,13 +475,19 @@ typedef int pid_t;
 
 #elif defined(__APPLE__) && defined(KERNEL)
 
-/*
- * MacOS kernel-mode needs va_copy. Based on inspection of stdarg.h
- * from the MacOSX10.4u.sdk kernel framework, this should work.
- * (Future versions of the SDK may break this).
- */
+#include "availabilityMacOS.h"
 
+#if MAC_OS_X_VERSION_MIN_REQUIRED >= 1050
+// The Mac OS 10.5 kernel SDK defines va_copy in stdarg.h.
+#include <stdarg.h>
+#else
+/*
+ * The Mac OS 10.4 kernel SDK needs va_copy. Based on inspection of
+ * stdarg.h from the MacOSX10.4u.sdk kernel framework, this should
+ * work.
+ */
 #define va_copy(dest, src) ((dest) = (src))
+#endif // MAC_OS_X_VERSION_MIN_REQUIRED
 
 #elif defined(__GNUC__) && (__GNUC__ < 3)
 
@@ -449,25 +515,6 @@ typedef int pid_t;
 #ifndef strncasecmp
 #define strncasecmp(_s1,_s2,_n)   _strnicmp((_s1),(_s2),(_n))
 #endif
-#endif
-
-/* 
- * Convenience macro for COMMUNITY_SOURCE
- */
-#undef EXCLUDE_COMMUNITY_SOURCE
-#ifdef COMMUNITY_SOURCE
-   #define EXCLUDE_COMMUNITY_SOURCE(x) 
-#else
-   #define EXCLUDE_COMMUNITY_SOURCE(x) x
-#endif
-
-#undef COMMUNITY_SOURCE_INTEL_SECRET
-#if !defined(COMMUNITY_SOURCE) || defined(INTEL_SOURCE)
-/*
- * It's ok to include INTEL_SECRET source code for non-commsrc,
- * or for drops directed at Intel.
- */
-   #define COMMUNITY_SOURCE_INTEL_SECRET
 #endif
 
 /*
@@ -560,6 +607,12 @@ typedef int pid_t;
 #define POSIX_ONLY(x) x
 #endif
 
+#ifdef __linux__
+#define LINUX_ONLY(x) x
+#else
+#define LINUX_ONLY(x)
+#endif
+
 #ifdef VMM
 #define VMM_ONLY(x) x
 #define USER_ONLY(x)
@@ -597,7 +650,7 @@ typedef int pid_t;
  */
 #ifdef _WIN32
 #ifndef USES_OLD_WINDDK
-#if defined(VMX86_DEBUG) || defined(ASSERT_ALWAYS_AVAILABLE)
+#if defined(VMX86_LOG)
 #define WinDrvPrint(arg, ...) DbgPrint(arg, __VA_ARGS__)
 #define WinDrvEngPrint(arg, ...) EngDbgPrint(arg, __VA_ARGS__)
 #else
@@ -606,5 +659,11 @@ typedef int pid_t;
 #endif
 #endif
 #endif // _WIN32
+
+#ifdef HOSTED_LG_PG
+#define hosted_lg_pg 1
+#else
+#define hosted_lg_pg 0
+#endif
 
 #endif // ifndef _VM_BASIC_DEFS_H_

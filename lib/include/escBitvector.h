@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 
 
 #ifndef _ESC_BITVECTOR_H_
@@ -31,14 +45,14 @@
 #include "driver-config.h"
 #include <linux/string.h>
 /* Don't include these if compiling for the Solaris or Apple kernels. */
-#elif !defined(_KERNEL) && !defined(KERNEL)
+#elif !defined _KERNEL && !defined KERNEL
 #include <stdlib.h>
 #include <string.h>
 #endif
 
-#if defined(_KERNEL) && defined(__FreeBSD__)
+#if defined _KERNEL && defined __FreeBSD__
 # include <sys/libkern.h>
-#elif defined(KERNEL) && defined(__APPLE__)
+#elif defined KERNEL && defined __APPLE__
 # include <string.h>
 #endif
 

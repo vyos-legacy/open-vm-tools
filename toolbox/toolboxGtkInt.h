@@ -48,14 +48,12 @@
 #define TAB_LABEL_DEVICES "De_vices"
 #define TAB_LABEL_SCRIPTS "Scri_pts"
 #define TAB_LABEL_SHRINK "Shrin_k"
-#define TAB_LABEL_RECORD "_Record"
 #define TAB_LABEL_ABOUT "Abo_ut"
 #else
 #define TAB_LABEL_OPTIONS "Options"
 #define TAB_LABEL_DEVICES "Devices"
 #define TAB_LABEL_SCRIPTS "Scripts"
 #define TAB_LABEL_SHRINK "Shrink"
-#define TAB_LABEL_RECORD "Record"
 #define TAB_LABEL_ABOUT "About"
 #endif
 
@@ -64,14 +62,12 @@ void OnViewportSizeRequest(GtkWidget *widget, GtkRequisition *requisition,
 
 Bool ToolsMain_YesNoBox(gchar* title, gchar *msg);
 void ToolsMain_MsgBox(gchar* title, gchar *msg);
-void ToolsMain_OnDestroy(GtkWidget *widget, gpointer data);
 
 GtkWidget* About_Create(GtkWidget* mainWnd);
 GtkWidget* Devices_Create(GtkWidget* mainWnd);
 GtkWidget* Options_Create(GtkWidget* mainWnd);
 GtkWidget* Scripts_Create(GtkWidget* mainWnd);
 GtkWidget* Shrink_Create(GtkWidget* mainWnd);
-GtkWidget* Record_Create(GtkWidget* mainWnd);
 
 void Options_OnTimeSyncToggled(gpointer btn, gpointer data);
 void Devices_OnDeviceToggled(gpointer btn, gpointer data);
@@ -84,5 +80,6 @@ extern GdkColormap* colormap;
 extern GtkWidget *optionsTimeSync;
 extern DblLnkLst_Links *gEventQueue;
 extern GtkWidget *scriptsApply;
+extern const char **gNativeEnviron;
 
 #endif // _TOOLBOX_INT_H_

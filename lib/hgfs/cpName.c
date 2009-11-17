@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * cpName.c --
  *
@@ -82,13 +96,18 @@ CPName_GetComponent(char const *begin,   // IN: Beginning of buffer
          /* Found a NUL */
 
          if (walk == begin) {
-            Log("CPName_GetComponent: error: first char can't be NUL\n");
+            Log("%s: error: first char can't be NUL\n", __FUNCTION__);
             return -1;
          }
 
          myNext = walk + 1;
+         /* Skip consecutive path delimiters. */
+         while ((*myNext == '\0') && (myNext != end)) {
+            myNext++;
+         }
          if (myNext == end) {
             /* Last character in the buffer is not allowed to be NUL */
+            Log("%s: error: last char can't be NUL\n", __FUNCTION__);
             return -1;
          }
 
@@ -99,7 +118,7 @@ CPName_GetComponent(char const *begin,   // IN: Beginning of buffer
    len = walk - begin;
 
    *next = myNext;
-   return ((int) len);
+   return (int) len;
 }
 
 
@@ -135,14 +154,16 @@ CPNameEscapeAndConvertFrom(char const **bufIn, // IN/OUT: Input to convert
                            char pathSep)       // IN: Path separator character
 {
    int result;
-   size_t inputSize;
+   int inputSize;
    inputSize = HgfsEscape_GetSize(*bufIn, *inSize);
-   if (inputSize != 0) {
+   if (inputSize < 0) {
+      result = -1;
+   } else if (inputSize != 0) {
       char *savedBufOut = *bufOut;
       char const *savedOutConst = savedBufOut;
       size_t savedOutSize = *outSize;
       if (inputSize > *outSize) {
-         Log("CPNameEscapeAndConvertFrom: error: not enough room for escaping\n");
+         Log("%s: error: not enough room for escaping\n", __FUNCTION__);
          return -1;
       }
 
@@ -214,14 +235,14 @@ CPNameConvertFrom(char const **bufIn, // IN/OUT: Input to convert
 
       len = CPName_GetComponent(in, inEnd, &next);
       if (len < 0) {
-         Log("CPNameConvertFrom: error: get next component failed\n");
+         Log("%s: error: get next component failed\n", __FUNCTION__);
          return len;
       }
 
       /* Bug 27926 - preventing escaping from shared folder. */
       if ((len == 1 && *in == '.') ||
           (len == 2 && in[0] == '.' && in[1] == '.')) {
-         Log("CPNameConvertFrom: error: found dot/dotdot\n");
+         Log("%s: error: found dot/dotdot\n", __FUNCTION__);
          return -1;
       }
 
@@ -232,7 +253,7 @@ CPNameConvertFrom(char const **bufIn, // IN/OUT: Input to convert
 
       newLen = ((int) myOutSize) - len - 1;
       if (newLen < 0) {
-         Log("CPNameConvertFrom: error: not enough room\n");
+         Log("%s: error: not enough room\n", __FUNCTION__);
          return -1;
       }
       myOutSize = (size_t) newLen;
@@ -248,7 +269,7 @@ CPNameConvertFrom(char const **bufIn, // IN/OUT: Input to convert
 
    /* NUL terminate */
    if (myOutSize < 1) {
-      Log("CPNameConvertFrom: error: not enough room\n");
+      Log("%s: error: not enough room\n", __FUNCTION__);
       return -1;
    }
    *out = '\0';
@@ -415,9 +436,21 @@ CPNameConvertTo(char const *nameIn, // IN:  Buf to convert
       nameIn++;
    }
 
-    /* Copy the string to the output buf, converting all path separators into '\0'. */
-   for (; *nameIn != '\0' && bufOut < endOut; nameIn++) {
-      *bufOut = (*nameIn == pathSep) ? '\0' : *nameIn;
+    /*
+     * Copy the string to the output buf, converting all path separators into '\0'.
+     * Collapse multiple consecutive path separators into a single one since
+     * CPName_GetComponent can't handle consecutive path separators.
+     */
+   while (*nameIn != '\0' && bufOut < endOut) {
+      if (*nameIn == pathSep) {
+         *bufOut = '\0';
+         do {
+            nameIn++;
+         } while (*nameIn == pathSep);
+      } else {
+         *bufOut = *nameIn;
+         nameIn++;
+      }
       bufOut++;
    }
 

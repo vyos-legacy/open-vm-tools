@@ -19,20 +19,19 @@
 #include <string.h>
 #include <stdlib.h>
 
-
 #include "vmware.h"
 #include "str.h"
 #include "cpName.h"
 #include "cpNameLite.h"
 #include "hgfsServerInt.h"
 #include "hgfsServerPolicy.h"
-#include "hgfsServerManager.h"
 #include "codeset.h"
 #include "config.h"
 #include "file.h"
 #include "util.h"
 #include "wiper.h"
 #include "syncMutex.h"
+#include "hgfsDirNotify.h"
 
 #if defined(_WIN32)
 #include <io.h>
@@ -47,6 +46,7 @@
 #define LOGLEVEL_MODULE hgfs
 #include "loglevel_user.h"
 
+
 /*
  * Define this to enable an ASSERT on HGFS_STATUS_PROTOCOL_ERROR.
  * This is useful if client is to be guaranteed to work with the server
@@ -59,8 +59,8 @@
 #if 0
 #define HGFS_ASSERT_CLIENT(op) \
    do { \
-      LOG(4, ("%s: op: %u.\n", __FUNCTION__, op)); \
-      ASSERT(status != HGFS_STATUS_PROTOCOL_ERROR); \
+   LOG(4, ("%s: op: %u.\n", __FUNCTION__, op)); \
+   ASSERT(status != HGFS_STATUS_PROTOCOL_ERROR); \
    } while(0)
 #else
 #define HGFS_ASSERT_CLIENT(op)
@@ -98,20 +98,7 @@
  * Array of FileNodes for opening files.
  */
 #define NUM_FILE_NODES 100
-
-static HgfsFileNode *nodeArray = NULL;
-uint32 numNodes;
-
-/* Free list of file nodes. LIFO to be cache-friendly */
-DblLnkLst_Links nodeFreeList;
-
 #define NUM_SEARCHES 100
-
-static HgfsSearch *searchArray = NULL;
-uint32 numSearches;
-
-/* Free list of searches. LIFO to be cache-friendly */
-DblLnkLst_Links searchFreeList;
 
 /* Default maximum number of open nodes. */
 #define MAX_CACHED_FILENODES 30
@@ -119,58 +106,257 @@ DblLnkLst_Links searchFreeList;
 /* Default maximun number of open nodes that have server locks. */
 #define MAX_LOCKED_FILENODES 10
 
+
 /* Maximum number of cached open nodes. */
 static unsigned int maxCachedOpenNodes;
-
-/* List of cached open nodes. */
-static DblLnkLst_Links nodeCachedList;
-
-/* Current number of open nodes. */
-static unsigned int numCachedOpenNodes;
-
-/* Current number of open nodes that have server locks. */
-static unsigned int numCachedLockedNodes;
 
 /* Value of config option to require using host timestamps */
 Bool alwaysUseHostTime = FALSE;
 
 /*
- * Monotonically increasing handle counter used to dish out HgfsHandles. Not
- * static so that it can be used in the VMX checkpointing code.
+ * Monotonically increasing handle counter used to dish out HgfsHandles.
+ * This value is checkpointed.
  */
-uint32 hgfsHandleCounter = 0;
+static Atomic_uint32 hgfsHandleCounter = {0};
+
+
+static HgfsServerStateLogger *hgfsMgrData = NULL;
 
 /*
- * HGFS requests can now be executed asynchronously. As a result, we need to
- * protect our shared data structures: the node and search caches.
+ * Session usage and locking.
  *
- * We also need to protect certain cases of read/write IO. Where possible,
- * we try to combine the seek and read/write steps into one atomic syscall or
- * win32 API call. But in some cases (Win9x, non-Linux server), the two steps
- * are split, and thus are not atomic. We need a lock to protect against those
- * cases.
+ * The channel will serialize callbacks to connect, disconnect, close
+ * and invalidate objects for sessions.
+ * The receives will also be serialized with the above when received through
+ * the backdoor channel.
+ * However, when requests are received from a socket, they will be from a
+ * worker thread. It is the responsibility of the socket channel to keep
+ * the session alive when processing the receive request which it does by
+ * an additional reference for the session. This means even if a disconnect
+ * occurs and the socket is closed, the channel will not call the session
+ * close until the hgfs server returns from the receive processing. Thus
+ * the hgfs server session data will remain valid.
+ * When the hgfs server processes requests asynchronously, or returns from
+ * receive request prior to sending the reply to be done at a later time,
+ * a reference on the session is taken out while processing the message,
+ * and not removed until the reply is processed. This reference will ensure
+ * the session is not torndown until the final reference is removed, even
+ * if the close session is called from the channel.
  */
-static SyncMutex hgfsNodeArrayLock;
-static SyncMutex hgfsSearchArrayLock;
 
-/* Not static because it's used in per-platform server code. */
-SyncMutex hgfsIOLock;
+#ifdef VMX86_TOOLS
+/* We need to have a static session for use of HGFS server inside Tools. */
+struct HgfsStaticSession {
+   HgfsSessionInfo *session;        /* Session. */
+   char *bufferOut;                 /* Reply buffer. */
+   size_t bufferOutLen;             /* Reply buffer length. */
+} hgfsStaticSession;
+#endif
+
+/* Session related callbacks. */
+static void HgfsServerSessionReceive(char const *packetIn,
+                                     size_t packetSize,
+                                     void *clientData,
+                                     HgfsReceiveFlags flags);
+static Bool HgfsServerSessionConnect(void *transportData,
+                                     HgfsSessionSendFunc *send,
+                                     void **clientData);
+static void HgfsServerSessionDisconnect(void *clientData);
+static void HgfsServerSessionClose(void *clientData);
+static void HgfsServerSessionInvalidateObjects(void *clientData,
+                                               DblLnkLst_Links *shares);
+static void HgfsServerSessionSendComplete(void *clientData, char *buffer);
+
+/*
+ * Callback table passed to transport and any channels.
+ */
+HgfsServerSessionCallbacks hgfsServerSessionCBTable = {
+   HgfsServerSessionConnect,
+   HgfsServerSessionDisconnect,
+   HgfsServerSessionClose,
+   HgfsServerSessionReceive,
+   HgfsServerSessionInvalidateObjects,
+   HgfsServerSessionSendComplete,
+};
+
+static Bool hgfsChangeNotificationSupported = FALSE;
+
 
 /* Local functions. */
 
-static Bool HgfsServerCheckPathPrefix(const char *path,
-				      const char *share,
-				      size_t shareLen);
-static Bool HgfsAddToCacheInternal(HgfsHandle handle);
-static Bool HgfsIsCachedInternal(HgfsHandle handle);
-static Bool HgfsRemoveLruNode(void);
-static Bool HgfsRemoveFromCacheInternal(HgfsHandle handle);
-static void HgfsRemoveSearchInternal(HgfsSearch *search);
-static HgfsSearch *HgfsSearchHandle2Search(HgfsHandle handle);
+static void HgfsInvalidateSessionObjects(DblLnkLst_Links *shares,
+                                         HgfsSessionInfo *session);
+static Bool HgfsAddToCacheInternal(HgfsHandle handle,
+                                   HgfsSessionInfo *session);
+static Bool HgfsIsCachedInternal(HgfsHandle handle,
+                                 HgfsSessionInfo *session);
+static Bool HgfsRemoveLruNode(HgfsSessionInfo *session);
+static Bool HgfsRemoveFromCacheInternal(HgfsHandle handle,
+                                        HgfsSessionInfo *session);
+static void HgfsRemoveSearchInternal(HgfsSearch *search,
+                                     HgfsSessionInfo *session);
+static HgfsSearch *HgfsSearchHandle2Search(HgfsHandle handle,
+                                           HgfsSessionInfo *session);
 static HgfsHandle HgfsSearch2SearchHandle(HgfsSearch const *search);
 static HgfsSearch *HgfsAddNewSearch(char const *utf8Dir,
                                     DirectorySearchType type,
-                                    char const *utf8ShareName);
+                                    char const *utf8ShareName,
+                                    char const *rootDir,
+                                    HgfsSessionInfo *session);
+static void HgfsDumpAllSearches(HgfsSessionInfo *session);
+static void HgfsDumpAllNodes(HgfsSessionInfo *session);
+static void HgfsFreeFileNode(HgfsHandle handle,
+                             HgfsSessionInfo *session);
+static void HgfsFreeFileNodeInternal(HgfsHandle handle,
+                                     HgfsSessionInfo *session);
+static HgfsFileNode *HgfsAddNewFileNode(HgfsFileOpenInfo *openInfo,
+                                        HgfsLocalId const *localId,
+                                        fileDesc fileDesc,
+                                        Bool append,
+                                        size_t shareNameLen,
+                                        char const *shareName,
+                                        Bool sharedFolderOpen,
+                                        HgfsSessionInfo *session);
+static void HgfsRemoveFileNode(HgfsFileNode *node,
+                               HgfsSessionInfo *session);
+static HgfsFileNode *HgfsGetNewNode(HgfsSessionInfo *session);
+static HgfsHandle HgfsFileNode2Handle(HgfsFileNode const *fileNode);
+static HgfsFileNode *HgfsHandle2FileNode(HgfsHandle handle,
+                                         HgfsSessionInfo *session);
+static void HgfsServerExitSessionInternal(HgfsSessionInfo *session);
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsServerSessionGet --
+ *
+ *      Increment session reference count.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static void
+HgfsServerSessionGet(HgfsSessionInfo *session)   // IN: session context
+{
+   ASSERT(session);
+   Atomic_Inc(&session->refCount);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsServerSessionPut --
+ *
+ *      Decrement session reference count.
+ *
+ *      Free session info data if no reference.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static void
+HgfsServerSessionPut(HgfsSessionInfo *session)   // IN: session context
+{
+   ASSERT(session);
+   if (Atomic_FetchAndDec(&session->refCount) == 1) {
+      HgfsServerExitSessionInternal(session);
+   }
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServerInitHandleCounter --
+ *
+ *    Initialize the file handle counter to the new value passed.
+ *
+ * Results:
+ *    None.
+ *
+ * Side effects:
+ *    None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+HgfsServerInitHandleCounter(uint32 newHandleCounter)
+{
+   Atomic_Write(&hgfsHandleCounter, newHandleCounter);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServerGetHandleCounter --
+ *
+ *    Return file handle counter. This is used by the checkpointing code to
+ *    checkpoint this value so we avoid the risk of handle collision.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static uint32
+HgfsServerGetHandleCounter(void)
+{
+   return Atomic_Read(&hgfsHandleCounter);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServerGetNextHandleCounter --
+ *
+ *    Return file handle counter. This is used by the checkpointing code to
+ *    checkpoint this value so we avoid the risk of handle collision.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static uint32
+HgfsServerGetNextHandleCounter(void)
+{
+   uint32 count = Atomic_FetchAndInc(&hgfsHandleCounter);
+   /*
+    * Call server manager for logging state updates.
+    * XXX - This will have to be reworked when the server is
+    * more concurrent than with the current access.
+    */
+   if (hgfsMgrData != NULL &&
+       hgfsMgrData->logger != NULL) {
+      hgfsMgrData->logger(hgfsMgrData->loggerData, count + 1);
+   }
+   return count;
+}
 
 
 /*
@@ -180,7 +366,7 @@ static HgfsSearch *HgfsAddNewSearch(char const *utf8Dir,
  *
  *    Retrieve the file node a handle refers to.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this function.
  *
  * Results:
  *    The file node if the handle is valid (i.e. it refers to an existing file
@@ -194,18 +380,20 @@ static HgfsSearch *HgfsAddNewSearch(char const *utf8Dir,
  */
 
 static HgfsFileNode *
-HgfsHandle2FileNode(HgfsHandle handle)    // IN: Hgfs file handle
+HgfsHandle2FileNode(HgfsHandle handle,        // IN: Hgfs file handle
+                    HgfsSessionInfo *session) // IN: Session info
 {
    unsigned int i;
    HgfsFileNode *fileNode = NULL;
 
-   ASSERT(nodeArray);
+   ASSERT(session);
+   ASSERT(session->nodeArray);
 
    /* XXX: This O(n) lookup can and should be optimized. */
-   for (i = 0; i < numNodes; i++) {
-      if (nodeArray[i].state != FILENODE_STATE_UNUSED &&
-          nodeArray[i].handle == handle) {
-         fileNode = &nodeArray[i];
+   for (i = 0; i < session->numNodes; i++) {
+      if (session->nodeArray[i].state != FILENODE_STATE_UNUSED &&
+          session->nodeArray[i].handle == handle) {
+         fileNode = &session->nodeArray[i];
          break;
       }
    }
@@ -221,7 +409,7 @@ HgfsHandle2FileNode(HgfsHandle handle)    // IN: Hgfs file handle
  *
  *    Retrieve the handle that represents a file node outside of the server.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this function.
  *
  * Results:
  *    The handle
@@ -248,7 +436,7 @@ HgfsFileNode2Handle(HgfsFileNode const *fileNode) // IN
  *
  *    Debugging routine; print all nodes in the nodeArray.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this function.
  *
  * Results:
  *    None
@@ -260,18 +448,21 @@ HgfsFileNode2Handle(HgfsFileNode const *fileNode) // IN
  */
 
 static void
-HgfsDumpAllNodes(void)
+HgfsDumpAllNodes(HgfsSessionInfo *session)  // IN: session info
 {
    unsigned int i;
 
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+
    Log("Dumping all nodes\n");
-   for (i = 0; i < numNodes; i++) {
+   for (i = 0; i < session->numNodes; i++) {
       Log("handle %u, name \"%s\", localdev %"FMT64"u, localInum %"FMT64"u %u\n",
-          nodeArray[i].handle,
-          nodeArray[i].utf8Name ? nodeArray[i].utf8Name : "NULL",
-          nodeArray[i].localId.volumeId,
-          nodeArray[i].localId.fileId,
-          nodeArray[i].fileDesc);
+          session->nodeArray[i].handle,
+          session->nodeArray[i].utf8Name ? session->nodeArray[i].utf8Name : "NULL",
+          session->nodeArray[i].localId.volumeId,
+          session->nodeArray[i].localId.fileId,
+          session->nodeArray[i].fileDesc);
    }
    Log("Done\n");
 }
@@ -296,23 +487,28 @@ HgfsDumpAllNodes(void)
  */
 
 Bool
-HgfsHandle2FileDesc(HgfsHandle handle,    // IN: Hgfs file handle
-                    fileDesc *fd)         // OUT: OS handle (file descriptor)
+HgfsHandle2FileDesc(HgfsHandle handle,        // IN: Hgfs file handle
+                    HgfsSessionInfo *session, // IN: Session info
+                    fileDesc *fd,             // OUT: OS handle (file descriptor)
+                    void **fileCtx)           // OUT: OS file context
 {
    Bool found = FALSE;
    HgfsFileNode *fileNode = NULL;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   fileNode = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   fileNode = HgfsHandle2FileNode(handle, session);
    if (fileNode == NULL) {
       goto exit;
    }
 
    *fd = fileNode->fileDesc;
+   if (fileCtx) {
+      *fileCtx = fileNode->fileCtx;
+   }
    found = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    return found;
 }
@@ -337,14 +533,15 @@ exit:
  */
 
 Bool
-HgfsHandle2AppendFlag(HgfsHandle handle,   // IN: Hgfs file handle
-                      Bool *appendFlag)    // OUT: append flag
+HgfsHandle2AppendFlag(HgfsHandle handle,        // IN: Hgfs file handle
+                      HgfsSessionInfo *session, // IN: Session info
+                      Bool *appendFlag)         // OUT: append flag
 {
    Bool found = FALSE;
    HgfsFileNode *fileNode = NULL;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   fileNode = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   fileNode = HgfsHandle2FileNode(handle, session);
    if (fileNode == NULL) {
       goto exit;
    }
@@ -353,7 +550,7 @@ HgfsHandle2AppendFlag(HgfsHandle handle,   // IN: Hgfs file handle
    found = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    return found;
 }
@@ -378,16 +575,17 @@ exit:
  */
 
 Bool
-HgfsHandle2LocalId(HgfsHandle handle,     // IN: Hgfs file handle
-                   HgfsLocalId *localId)  // OUT: local id info
+HgfsHandle2LocalId(HgfsHandle handle,        // IN: Hgfs file handle
+                   HgfsSessionInfo *session, // IN: Session info
+                   HgfsLocalId *localId)     // OUT: local id info
 {
    Bool found = FALSE;
    HgfsFileNode *fileNode = NULL;
 
    ASSERT(localId);
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   fileNode = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   fileNode = HgfsHandle2FileNode(handle, session);
    if (fileNode == NULL) {
       goto exit;
    }
@@ -398,7 +596,7 @@ HgfsHandle2LocalId(HgfsHandle handle,     // IN: Hgfs file handle
    found = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    return found;
 }
@@ -424,8 +622,9 @@ exit:
  */
 
 Bool
-HgfsHandle2ServerLock(HgfsHandle handle,     // IN: Hgfs file handle
-                      HgfsServerLock *lock)  // OUT: Server lock
+HgfsHandle2ServerLock(HgfsHandle handle,        // IN: Hgfs file handle
+                      HgfsSessionInfo *session, // IN: Session info
+                      HgfsServerLock *lock)     // OUT: Server lock
 {
 #ifdef HGFS_OPLOCKS
    Bool found = FALSE;
@@ -433,8 +632,8 @@ HgfsHandle2ServerLock(HgfsHandle handle,     // IN: Hgfs file handle
 
    ASSERT(lock);
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   fileNode = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   fileNode = HgfsHandle2FileNode(handle, session);
    if (fileNode == NULL) {
       goto exit;
    }
@@ -443,7 +642,7 @@ HgfsHandle2ServerLock(HgfsHandle handle,     // IN: Hgfs file handle
    found = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    return found;
 #else
@@ -471,16 +670,20 @@ exit:
  */
 
 Bool
-HgfsFileDesc2Handle(fileDesc fd,          // IN: OS handle (file descriptor)
-                    HgfsHandle *handle)   // OUT: Hgfs file handle
+HgfsFileDesc2Handle(fileDesc fd,              // IN: OS handle (file descriptor)
+                    HgfsSessionInfo *session, // IN: Session info
+                    HgfsHandle *handle)       // OUT: Hgfs file handle
 {
    unsigned int i;
    Bool found = FALSE;
    HgfsFileNode *existingFileNode = NULL;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   for (i = 0; i < numNodes; i++) {
-      existingFileNode = &nodeArray[i];
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+
+   SyncMutex_Lock(&session->nodeArrayLock);
+   for (i = 0; i < session->numNodes; i++) {
+      existingFileNode = &session->nodeArray[i];
       if ((existingFileNode->state == FILENODE_STATE_IN_USE_CACHED) &&
           (existingFileNode->fileDesc == fd)) {
          *handle = HgfsFileNode2Handle(existingFileNode);
@@ -489,7 +692,7 @@ HgfsFileDesc2Handle(fileDesc fd,          // IN: OS handle (file descriptor)
       }
    }
 
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    return found;
 }
@@ -514,6 +717,7 @@ HgfsFileDesc2Handle(fileDesc fd,          // IN: OS handle (file descriptor)
 
 Bool
 HgfsHandle2ShareMode(HgfsHandle handle,         // IN: Hgfs file handle
+                     HgfsSessionInfo *session,  // IN: Session info
                      HgfsOpenMode *shareMode)   // OUT:share access mode
 {
    Bool found = FALSE;
@@ -524,8 +728,8 @@ HgfsHandle2ShareMode(HgfsHandle handle,         // IN: Hgfs file handle
       return found;
    }
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   existingFileNode = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   existingFileNode = HgfsHandle2FileNode(handle, session);
    if (existingFileNode == NULL) {
       goto exit_unlock;
    }
@@ -536,7 +740,7 @@ HgfsHandle2ShareMode(HgfsHandle handle,         // IN: Hgfs file handle
    found = (nameStatus == HGFS_NAME_STATUS_COMPLETE);
 
 exit_unlock:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return found;
 }
 
@@ -560,8 +764,40 @@ exit_unlock:
 
 Bool
 HgfsHandle2FileName(HgfsHandle handle,       // IN: Hgfs file handle
+                    HgfsSessionInfo *session,// IN: Session info
                     char **fileName,         // OUT: UTF8 file name
                     size_t *fileNameSize)    // OUT: UTF8 file name size
+{
+   Bool unused1, unused2;
+   return HgfsHandle2FileNameMode(handle, session, &unused1, &unused2, fileName,
+                                  fileNameSize);
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsHandle2FileNameMode --
+ *
+ *    Given an OS handle/fd, return file's hgfs name and permissions
+ *    associated with the corresponding shared folder.
+ *
+ * Results:
+ *    TRUE if the node was found.
+ *    FALSE otherwise.
+ *
+ * Side effects:
+ *    Allocates memory and makes a copy of the file name.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+HgfsHandle2FileNameMode(HgfsHandle handle,       // IN: Hgfs file handle
+                        HgfsSessionInfo *session,// IN: Session info
+                        Bool *readPermissions,   // OUT: shared folder permissions
+                        Bool *writePermissions,  // OUT: shared folder permissions
+                        char **fileName,         // OUT: UTF8 file name
+                        size_t *fileNameSize)    // OUT: UTF8 file name size
 {
    Bool found = FALSE;
    HgfsFileNode *existingFileNode = NULL;
@@ -572,8 +808,8 @@ HgfsHandle2FileName(HgfsHandle handle,       // IN: Hgfs file handle
       return found;
    }
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   existingFileNode = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   existingFileNode = HgfsHandle2FileNode(handle, session);
    if (existingFileNode == NULL) {
       goto exit_unlock;
    }
@@ -582,13 +818,15 @@ HgfsHandle2FileName(HgfsHandle handle,       // IN: Hgfs file handle
    if (name == NULL) {
       goto exit_unlock;
    }
+   *readPermissions = existingFileNode->shareInfo.readPermissions;
+   *writePermissions = existingFileNode->shareInfo.writePermissions;
    nameSize = existingFileNode->utf8NameLen;
    memcpy(name, existingFileNode->utf8Name, nameSize);
    name[nameSize] = '\0';
    found = TRUE;
 
 exit_unlock:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    *fileName = name;
    *fileNameSize = nameSize;
    return found;
@@ -616,6 +854,7 @@ exit_unlock:
 
 Bool
 HgfsFileHasServerLock(const char *utf8Name,             // IN: Name in UTF8
+                      HgfsSessionInfo *session,         // IN: Session info
                       HgfsServerLock *serverLock,       // OUT: Existing oplock
                       fileDesc   *fileDesc)             // OUT: Existing fd
 {
@@ -624,9 +863,12 @@ HgfsFileHasServerLock(const char *utf8Name,             // IN: Name in UTF8
    Bool found = FALSE;
    ASSERT(utf8Name);
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   for (i = 0; i < numNodes; i++) {
-      HgfsFileNode *existingFileNode = &nodeArray[i];
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+
+   SyncMutex_Lock(&session->nodeArrayLock);
+   for (i = 0; i < session->numNodes; i++) {
+      HgfsFileNode *existingFileNode = &session->nodeArray[i];
       if ((existingFileNode->state == FILENODE_STATE_IN_USE_CACHED) &&
           (existingFileNode->serverLock != HGFS_LOCK_NONE) &&
           (!stricmp(existingFileNode->utf8Name, utf8Name))) {
@@ -638,7 +880,7 @@ HgfsFileHasServerLock(const char *utf8Name,             // IN: Name in UTF8
       }
    }
 
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return found;
 #else
    return FALSE;
@@ -667,6 +909,7 @@ HgfsFileHasServerLock(const char *utf8Name,             // IN: Name in UTF8
 
 Bool
 HgfsGetNodeCopy(HgfsHandle handle,        // IN: Hgfs file handle
+                HgfsSessionInfo *session, // IN: Session info
                 Bool copyName,            // IN: Should we copy the name?
                 HgfsFileNode *copy)       // IN/OUT: Copy of the node
 {
@@ -675,8 +918,8 @@ HgfsGetNodeCopy(HgfsHandle handle,        // IN: Hgfs file handle
 
    ASSERT(copy);
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   original = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   original = HgfsHandle2FileNode(handle, session);
    if (original == NULL) {
       goto exit;
    }
@@ -701,10 +944,11 @@ HgfsGetNodeCopy(HgfsHandle handle,        // IN: Hgfs file handle
    copy->flags = original->flags;
    copy->state = original->state;
    copy->handle = original->handle;
+   copy->fileCtx = original->fileCtx;
    found = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return found;
 }
 
@@ -727,16 +971,17 @@ exit:
  */
 
 Bool
-HgfsHandleIsSequentialOpen(HgfsHandle handle,     // IN:  Hgfs file handle
-                           Bool *sequentialOpen)  // OUT: If open was sequential
+HgfsHandleIsSequentialOpen(HgfsHandle handle,        // IN:  Hgfs file handle
+                           HgfsSessionInfo *session, // IN: Session info
+                           Bool *sequentialOpen)     // OUT: If open was sequential
 {
    HgfsFileNode *node;
    Bool success = FALSE;
 
    ASSERT(sequentialOpen);
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   node = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   node = HgfsHandle2FileNode(handle, session);
    if (node == NULL) {
       goto exit;
    }
@@ -745,7 +990,7 @@ HgfsHandleIsSequentialOpen(HgfsHandle handle,     // IN:  Hgfs file handle
    success = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return success;
 }
 
@@ -768,16 +1013,17 @@ exit:
  */
 
 Bool
-HgfsHandleIsSharedFolderOpen(HgfsHandle handle,       // IN:  Hgfs file handle
-                             Bool *sharedFolderOpen)  // OUT: If shared folder
+HgfsHandleIsSharedFolderOpen(HgfsHandle handle,        // IN:  Hgfs file handle
+                             HgfsSessionInfo *session, // IN: Session info
+                             Bool *sharedFolderOpen)   // OUT: If shared folder
 {
    HgfsFileNode *node;
    Bool success = FALSE;
 
    ASSERT(sharedFolderOpen);
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   node = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   node = HgfsHandle2FileNode(handle, session);
    if (node == NULL) {
       goto exit;
    }
@@ -786,7 +1032,7 @@ HgfsHandleIsSharedFolderOpen(HgfsHandle handle,       // IN:  Hgfs file handle
    success = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return success;
 }
 
@@ -810,23 +1056,26 @@ exit:
  */
 
 Bool
-HgfsUpdateNodeFileDesc(HgfsHandle handle, // IN: Hgfs file handle
-                       fileDesc fd)       // OUT: OS handle (file desc)
+HgfsUpdateNodeFileDesc(HgfsHandle handle,        // IN: Hgfs file handle
+                       HgfsSessionInfo *session, // IN: Session info
+                       fileDesc fd,              // IN: OS handle (file desc)
+                       void *fileCtx)            // IN: OS file context
 {
    HgfsFileNode *node;
    Bool updated = FALSE;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   node = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   node = HgfsHandle2FileNode(handle, session);
    if (node == NULL) {
       goto exit;
    }
 
    node->fileDesc = fd;
+   node->fileCtx = fileCtx;
    updated = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return updated;
 }
 
@@ -851,15 +1100,19 @@ exit:
 
 Bool
 HgfsUpdateNodeServerLock(fileDesc fd,                // IN: OS handle
+                         HgfsSessionInfo *session,   // IN: Session info
                          HgfsServerLock serverLock)  // IN: new oplock
 {
    unsigned int i;
    HgfsFileNode *existingFileNode = NULL;
    Bool updated = FALSE;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   for (i = 0; i < numNodes; i++) {
-      existingFileNode = &nodeArray[i];
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+
+   SyncMutex_Lock(&session->nodeArrayLock);
+   for (i = 0; i < session->numNodes; i++) {
+      existingFileNode = &session->nodeArray[i];
       if (existingFileNode->state != FILENODE_STATE_UNUSED) {
          if (existingFileNode->fileDesc == fd) {
             existingFileNode->serverLock = serverLock;
@@ -869,7 +1122,7 @@ HgfsUpdateNodeServerLock(fileDesc fd,                // IN: OS handle
       }
    }
 
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return updated;
 }
 
@@ -892,14 +1145,15 @@ HgfsUpdateNodeServerLock(fileDesc fd,                // IN: OS handle
  */
 
 Bool
-HgfsUpdateNodeAppendFlag(HgfsHandle handle, // IN: Hgfs file handle
-                         Bool appendFlag)   // OUT: Append flag
+HgfsUpdateNodeAppendFlag(HgfsHandle handle,        // IN: Hgfs file handle
+                         HgfsSessionInfo *session, // IN: Session info
+                         Bool appendFlag)          // OUT: Append flag
 {
    HgfsFileNode *node;
    Bool updated = FALSE;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   node = HgfsHandle2FileNode(handle);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   node = HgfsHandle2FileNode(handle, session);
    if (node == NULL) {
       goto exit;
    }
@@ -910,8 +1164,81 @@ HgfsUpdateNodeAppendFlag(HgfsHandle handle, // IN: Hgfs file handle
    updated = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
    return updated;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServerCheckOpenFlagsForShare --
+ *
+ *    Given an open mode check this is compatible with the mode for
+ *    the share upon which the open file resides.
+ *
+ *    If the share is read only and mode is HGFS_OPEN_CREATE we remap
+ *    it to HGFS_OPEN which is allowed if the file exists.
+ *
+ * Results:
+ *    TRUE if the mode is compatible.
+ *    FALSE otherwise.
+ *
+ * Side effects:
+ *    None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+HgfsServerCheckOpenFlagsForShare(HgfsFileOpenInfo *openInfo,// IN: Hgfs file handle
+                                 HgfsOpenFlags *flags)      // IN/OUT: open mode
+{
+   Bool status = TRUE;
+   HgfsNameStatus nameStatus;
+   HgfsOpenMode shareMode;
+   char const *inEnd;
+   char const *next;
+   int len;
+
+   ASSERT(openInfo);
+   ASSERT(flags);
+
+   inEnd = openInfo->cpName + openInfo->cpNameSize;
+
+   /* The share name is the first component of the cross-platform name. */
+   len = CPName_GetComponent(openInfo->cpName, inEnd, &next);
+   if (len < 0) {
+      LOG(4, ("%s: get first component failed\n", __FUNCTION__));
+      status = FALSE;
+      goto exit;
+   }
+
+   nameStatus = HgfsServerPolicy_GetShareMode(openInfo->cpName, len,
+                                              &shareMode);
+   if (nameStatus != HGFS_NAME_STATUS_COMPLETE) {
+      status = FALSE;
+      goto exit;
+   }
+
+   if (shareMode == HGFS_OPEN_MODE_READ_ONLY) {
+      /* Read only share we may have work to do. */
+      if (*flags != HGFS_OPEN && *flags != HGFS_OPEN_CREATE) {
+         status = FALSE;
+         goto exit;
+      }
+      if (*flags == HGFS_OPEN_CREATE) {
+         /*
+          * Map open or create, to just open, which will fail if
+          * if the file does not exist, which it is okay, as creating
+          * a new file is not allowed and should be failed.
+          */
+         *flags = HGFS_OPEN;
+      }
+   }
+
+exit:
+   return status;
 }
 
 
@@ -922,7 +1249,7 @@ exit:
  *
  *    Debugging routine; print all searches in the searchArray.
  *
- *    Caller should hold hgfsSearchArrayLock.
+ *    Caller should hold the session's searchArrayLock.
  *
  * Results:
  *    None
@@ -933,17 +1260,20 @@ exit:
  *-----------------------------------------------------------------------------
  */
 
-void
-HgfsDumpAllSearches(void)
+static void
+HgfsDumpAllSearches(HgfsSessionInfo *session)   // IN: session info
 {
    unsigned int i;
 
+   ASSERT(session);
+   ASSERT(session->searchArray);
+
    Log("Dumping all searches\n");
-   for (i = 0; i < numSearches; i++) {
+   for (i = 0; i < session->numSearches; i++) {
       Log("handle %u, baseDir \"%s\"\n",
-          searchArray[i].handle,
-          searchArray[i].utf8Dir ?
-          searchArray[i].utf8Dir : "(NULL)");
+          session->searchArray[i].handle,
+          session->searchArray[i].utf8Dir ?
+          session->searchArray[i].utf8Dir : "(NULL)");
    }
    Log("Done\n");
 }
@@ -961,7 +1291,7 @@ HgfsDumpAllSearches(void)
  *    initializes it appropriately, adds the new entries to the
  *    free list, and then returns one off the free list.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this function.
  *
  * Results:
  *    An unused file node on success
@@ -974,16 +1304,19 @@ HgfsDumpAllSearches(void)
  */
 
 static HgfsFileNode *
-HgfsGetNewNode(void)
+HgfsGetNewNode(HgfsSessionInfo *session)  // IN: session info
 {
    HgfsFileNode *node;
    HgfsFileNode *newMem;
    unsigned int newNumNodes;
    unsigned int i;
 
-   LOG(4, ("HgfsGetNewNode: entered\n"));
+   ASSERT(session);
+   ASSERT(session->nodeArray);
 
-   if (nodeFreeList.next == &nodeFreeList) {
+   LOG(4, ("%s: entered\n", __FUNCTION__));
+
+   if (!DblLnkLst_IsLinked(&session->nodeFreeList)) {
       /*
        * This has to be unsigned and with maximum bit length. This is
        * required to take care of "negative" differences as well.
@@ -992,21 +1325,22 @@ HgfsGetNewNode(void)
 
       if (DOLOG(4)) {
          Log("Dumping nodes before realloc\n");
-         HgfsDumpAllNodes();
+         HgfsDumpAllNodes(session);
       }
 
       /* Try to get twice as much memory as we had */
-      newNumNodes = 2 * numNodes;
-      newMem = (HgfsFileNode *)realloc(nodeArray,
-                                       newNumNodes * sizeof *nodeArray);
+      newNumNodes = 2 * session->numNodes;
+      newMem = (HgfsFileNode *)realloc(session->nodeArray,
+                                       newNumNodes * sizeof *(session->nodeArray));
       if (!newMem) {
-         LOG(4, ("HgfsGetNewNode: can't realloc more nodes\n"));
+         LOG(4, ("%s: can't realloc more nodes\n", __FUNCTION__));
+
          return NULL;
       }
 
-      ptrDiff = (char *)newMem - (char *)nodeArray;
+      ptrDiff = (char *)newMem - (char *)session->nodeArray;
       if (ptrDiff) {
-         size_t const oldSize = numNodes * sizeof *nodeArray;
+         size_t const oldSize = session->numNodes * sizeof *(session->nodeArray);
 
          /*
           * The portion of memory that contains all our file nodes moved.
@@ -1015,20 +1349,21 @@ HgfsGetNewNode(void)
           *
           * We'll need to lock this if we multithread.
           */
-         LOG(4, ("Rebasing pointers, diff is %"FMTSZ"u, sizeof node is %"FMTSZ"u\n",
-                  ptrDiff, sizeof(HgfsFileNode)));
-         LOG(4, ("old: %p new: %p\n", nodeArray, newMem));
-         ASSERT(newMem == (HgfsFileNode*)((char*)nodeArray + ptrDiff));
+
+         LOG(4, ("Rebasing pointers, diff is %"FMTSZ"u, sizeof node is "
+                  "%"FMTSZ"u\n", ptrDiff, sizeof(HgfsFileNode)));
+         LOG(4, ("old: %p new: %p\n", session->nodeArray, newMem));
+         ASSERT(newMem == (HgfsFileNode *)((char*)session->nodeArray + ptrDiff));
 
 #define HgfsServerRebase(_ptr, _type)                                   \
-   if ((size_t)((char *)_ptr - (char *)nodeArray) < oldSize) {          \
+   if ((size_t)((char *)_ptr - (char *)session->nodeArray) < oldSize) { \
       _ptr = (_type *)((char *)_ptr + ptrDiff);                         \
    }
 
          /*
           * Rebase the links of all file nodes
           */
-         for (i = 0; i < numNodes; i++) {
+         for (i = 0; i < session->numNodes; i++) {
             HgfsServerRebase(newMem[i].links.prev, DblLnkLst_Links)
             HgfsServerRebase(newMem[i].links.next, DblLnkLst_Links)
          }
@@ -1039,35 +1374,36 @@ HgfsGetNewNode(void)
           */
 
          /* Rebase the anchor of the cached file nodes list. */
-         HgfsServerRebase(nodeCachedList.prev, DblLnkLst_Links)
-         HgfsServerRebase(nodeCachedList.next, DblLnkLst_Links)
+         HgfsServerRebase(session->nodeCachedList.prev, DblLnkLst_Links)
+         HgfsServerRebase(session->nodeCachedList.next, DblLnkLst_Links)
 
 #undef HgfsServerRebase
       }
 
       /* Initialize the new nodes */
-      LOG(4, ("numNodes was %u, now is %u\n", numNodes, newNumNodes));
-      for (i = numNodes; i < newNumNodes; i++) {
+      LOG(4, ("numNodes was %u, now is %u\n", session->numNodes, newNumNodes));
+      for (i = session->numNodes; i < newNumNodes; i++) {
          DblLnkLst_Init(&newMem[i].links);
 
          newMem[i].state = FILENODE_STATE_UNUSED;
          newMem[i].utf8Name = NULL;
          newMem[i].utf8NameLen = 0;
+         newMem[i].fileCtx = NULL;
 
          /* Append at the end of the list */
-         DblLnkLst_LinkLast(&nodeFreeList, &newMem[i].links);
+         DblLnkLst_LinkLast(&session->nodeFreeList, &newMem[i].links);
       }
-      nodeArray = newMem;
-      numNodes = newNumNodes;
+      session->nodeArray = newMem;
+      session->numNodes = newNumNodes;
 
       if (DOLOG(4)) {
          Log("Dumping nodes after pointer changes\n");
-         HgfsDumpAllNodes();
+         HgfsDumpAllNodes(session);
       }
    }
 
    /* Remove the first item from the list */
-   node = DblLnkLst_Container(nodeFreeList.next, HgfsFileNode, links);
+   node = DblLnkLst_Container(session->nodeFreeList.next, HgfsFileNode, links);
    DblLnkLst_Unlink1(&node->links);
 
    return node;
@@ -1081,7 +1417,8 @@ HgfsGetNewNode(void)
  *
  *    Free its localname, clear its fields, return it to the free list.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this
+ *    function.
  *
  * Results:
  *    None
@@ -1094,14 +1431,13 @@ HgfsGetNewNode(void)
  */
 
 static void
-HgfsRemoveFileNode(HgfsFileNode *node) // IN
+HgfsRemoveFileNode(HgfsFileNode *node,        // IN: file node
+                   HgfsSessionInfo *session)  // IN: session info
 {
    ASSERT(node);
 
-   LOG(4, ("HgfsRemoveFileNode: handle %u, name %s, fileId %"FMT64"u\n",
-           HgfsFileNode2Handle(node),
-           node->utf8Name,
-           node->localId.fileId));
+   LOG(4, ("%s: handle %u, name %s, fileId %"FMT64"u\n", __FUNCTION__,
+           HgfsFileNode2Handle(node), node->utf8Name, node->localId.fileId));
 
    if (node->shareName) {
       free(node->shareName);
@@ -1113,9 +1449,11 @@ HgfsRemoveFileNode(HgfsFileNode *node) // IN
    }
    node->utf8Name = NULL;
    node->state = FILENODE_STATE_UNUSED;
+   ASSERT(node->fileCtx == NULL);
+   node->fileCtx = NULL;
 
    /* Prepend at the beginning of the list */
-   DblLnkLst_LinkFirst(&nodeFreeList, &node->links);
+   DblLnkLst_LinkFirst(&session->nodeFreeList, &node->links);
 }
 
 
@@ -1126,7 +1464,7 @@ HgfsRemoveFileNode(HgfsFileNode *node) // IN
  *
  *    Free its localname, clear its fields, return it to the free list.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this function.
  *
  * Results:
  *    None
@@ -1139,11 +1477,12 @@ HgfsRemoveFileNode(HgfsFileNode *node) // IN
  */
 
 static void
-HgfsFreeFileNodeInternal(HgfsHandle handle) // IN: Handle to free
+HgfsFreeFileNodeInternal(HgfsHandle handle,        // IN: Handle to free
+                         HgfsSessionInfo *session) // IN: Session info
 {
-   HgfsFileNode *node = HgfsHandle2FileNode(handle);
+   HgfsFileNode *node = HgfsHandle2FileNode(handle, session);
    ASSERT(node);
-   HgfsRemoveFileNode(node);
+   HgfsRemoveFileNode(node, session);
 }
 
 
@@ -1165,11 +1504,12 @@ HgfsFreeFileNodeInternal(HgfsHandle handle) // IN: Handle to free
  */
 
 static void
-HgfsFreeFileNode(HgfsHandle handle) // IN: Handle to free
+HgfsFreeFileNode(HgfsHandle handle,         // IN: Handle to free
+                 HgfsSessionInfo *session)  // IN: Session info
 {
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   HgfsFreeFileNodeInternal(handle);
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   HgfsFreeFileNodeInternal(handle, session);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 }
 
 
@@ -1181,7 +1521,8 @@ HgfsFreeFileNode(HgfsHandle handle) // IN: Handle to free
  *    Gets a free node off the free list, sets its name, localId info,
  *    file descriptor and permissions.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this
+ *    function.
  *
  * Results:
  *    A pointer to the newly added node on success
@@ -1200,26 +1541,30 @@ HgfsAddNewFileNode(HgfsFileOpenInfo *openInfo,  // IN: open info struct
                    Bool append,                 // IN: open with append flag
                    size_t shareNameLen,         // IN: share name byte length
                    char const *shareName,       // IN: share name
-                   Bool sharedFolderOpen)       // IN: shared folder only open
+                   Bool sharedFolderOpen,       // IN: shared folder only open
+                   HgfsSessionInfo *session)    // IN: session info
 {
    HgfsFileNode *newNode;
+   char* rootDir;
 
    ASSERT(openInfo);
    ASSERT(localId);
+   ASSERT(session);
 
    /* This was already verified in HgfsUnpackOpenRequest... */
    ASSERT(openInfo->mask & HGFS_OPEN_VALID_FILE_NAME);
 
    /* Get an unused node */
-   newNode = HgfsGetNewNode();
+   newNode = HgfsGetNewNode(session);
    if (!newNode) {
-      LOG(4, ("HgfsAddNewFileNode: out of memory\n"));
+      LOG(4, ("%s: out of memory\n", __FUNCTION__));
+
       return NULL;
    }
 
    /* Set new node's fields */
    if (!HgfsServerGetOpenMode(openInfo, &newNode->mode)) {
-      HgfsRemoveFileNode(newNode);
+      HgfsRemoveFileNode(newNode, session);
       return NULL;
    }
 
@@ -1229,8 +1574,8 @@ HgfsAddNewFileNode(HgfsFileOpenInfo *openInfo,  // IN: open info struct
     */
    newNode->shareName = malloc(shareNameLen + 1);
    if (newNode->shareName == NULL) {
-      LOG(4, ("HgfsAddNewFileNode: out of memory\n"));
-      HgfsRemoveFileNode(newNode);
+      LOG(4, ("%s: out of memory\n", __FUNCTION__));
+      HgfsRemoveFileNode(newNode, session);
       return NULL;
    }
    memcpy(newNode->shareName, shareName, shareNameLen);
@@ -1240,19 +1585,31 @@ HgfsAddNewFileNode(HgfsFileOpenInfo *openInfo,  // IN: open info struct
    newNode->utf8NameLen = strlen(openInfo->utf8Name);
    newNode->utf8Name = malloc(newNode->utf8NameLen + 1);
    if (newNode->utf8Name == NULL) {
-      LOG(4, ("HgfsAddNewFileNode: out of memory\n"));
-      HgfsRemoveFileNode(newNode);
+      LOG(4, ("%s: out of memory\n", __FUNCTION__));
+      HgfsRemoveFileNode(newNode, session);
       return NULL;
    }
    memcpy(newNode->utf8Name, openInfo->utf8Name, newNode->utf8NameLen);
    newNode->utf8Name[newNode->utf8NameLen] = '\0';
 
-   newNode->handle = hgfsHandleCounter++;
+   newNode->shareInfo.rootDirLen = strlen(openInfo->shareInfo.rootDir);
+   rootDir = malloc(newNode->shareInfo.rootDirLen + 1);
+   if (rootDir == NULL) {
+      LOG(4, ("HgfsAddNewFileNode: out of memory\n"));
+      HgfsRemoveFileNode(newNode, session);
+      return NULL;
+   }
+   memcpy(rootDir, openInfo->shareInfo.rootDir, newNode->shareInfo.rootDirLen);
+   rootDir[newNode->shareInfo.rootDirLen] = '\0';
+   newNode->shareInfo.rootDir = rootDir;
+
+   newNode->handle = HgfsServerGetNextHandleCounter();
    newNode->localId = *localId;
    newNode->fileDesc = fileDesc;
    newNode->shareAccess = (openInfo->mask & HGFS_OPEN_VALID_SHARE_ACCESS) ?
       openInfo->shareAccess : HGFS_DEFAULT_SHARE_ACCESS;
    newNode->flags = 0;
+
    if (append) {
       newNode->flags |= HGFS_FILE_NODE_APPEND_FL;
    }
@@ -1265,8 +1622,10 @@ HgfsAddNewFileNode(HgfsFileOpenInfo *openInfo,  // IN: open info struct
 
    newNode->serverLock = openInfo->acquiredLock;
    newNode->state = FILENODE_STATE_IN_USE_NOT_CACHED;
+   newNode->shareInfo.readPermissions = openInfo->shareInfo.readPermissions;
+   newNode->shareInfo.writePermissions = openInfo->shareInfo.writePermissions;
 
-   LOG(4, ("HgfsAddNewFileNode: got new node, handle %u\n",
+   LOG(4, ("%s: got new node, handle %u\n", __FUNCTION__,
            HgfsFileNode2Handle(newNode)));
    return newNode;
 }
@@ -1281,7 +1640,8 @@ HgfsAddNewFileNode(HgfsFileOpenInfo *openInfo,  // IN: open info struct
  *    the maximum number of entries then the first node is removed. The
  *    first node should be the least recently used.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this
+ *    function.
  *
  * Results:
  *    TRUE on success
@@ -1294,34 +1654,37 @@ HgfsAddNewFileNode(HgfsFileOpenInfo *openInfo,  // IN: open info struct
  */
 
 Bool
-HgfsAddToCacheInternal(HgfsHandle handle) // IN: HGFS file handle
+HgfsAddToCacheInternal(HgfsHandle handle,         // IN: HGFS file handle
+                       HgfsSessionInfo *session)  // IN: Session info
 {
    HgfsFileNode *node;
 
    /* Check if the node is already cached. */
-   if (HgfsIsCachedInternal(handle)) {
-      ASSERT((node = HgfsHandle2FileNode(handle)) &&
+   if (HgfsIsCachedInternal(handle, session)) {
+      ASSERT((node = HgfsHandle2FileNode(handle, session)) &&
              node->state == FILENODE_STATE_IN_USE_CACHED);
       return TRUE;
    }
 
    /* Remove the LRU node if the list is full. */
-   if (numCachedOpenNodes == maxCachedOpenNodes) {
-      if (!HgfsRemoveLruNode()) {
-         LOG(4, ("HgfsAddToCacheInternal: Unable to remove LRU node from cache.\n"));
+   if (session->numCachedOpenNodes == maxCachedOpenNodes) {
+      if (!HgfsRemoveLruNode(session)) {
+         LOG(4, ("%s: Unable to remove LRU node from cache.\n",
+                 __FUNCTION__));
+
          return FALSE;
       }
    }
 
-   ASSERT_BUG(36244, numCachedOpenNodes < maxCachedOpenNodes);
+   ASSERT_BUG(36244, session->numCachedOpenNodes < maxCachedOpenNodes);
 
-   node = HgfsHandle2FileNode(handle);
+   node = HgfsHandle2FileNode(handle, session);
    ASSERT(node);
    /* Append at the end of the list. */
-   DblLnkLst_LinkLast(&nodeCachedList, &node->links);
+   DblLnkLst_LinkLast(&session->nodeCachedList, &node->links);
 
    node->state = FILENODE_STATE_IN_USE_CACHED;
-   numCachedOpenNodes++;
+   session->numCachedOpenNodes++;
 
    /*
     * Keep track of how many open nodes we have with
@@ -1333,7 +1696,7 @@ HgfsAddToCacheInternal(HgfsHandle handle) // IN: HGFS file handle
     */
 
    if (node->serverLock != HGFS_LOCK_NONE) {
-      numCachedLockedNodes++;
+      session->numCachedLockedNodes++;
    }
 
    return TRUE;
@@ -1349,7 +1712,8 @@ HgfsAddToCacheInternal(HgfsHandle handle) // IN: HGFS file handle
  *    file descriptor. If the node was not already in the cache then nothing
  *    is done.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this
+ *    function.
  *
  * Results:
  *    TRUE on success
@@ -1362,13 +1726,17 @@ HgfsAddToCacheInternal(HgfsHandle handle) // IN: HGFS file handle
  */
 
 Bool
-HgfsRemoveFromCacheInternal(HgfsHandle handle)	// IN: Hgfs handle to the node
+HgfsRemoveFromCacheInternal(HgfsHandle handle,        // IN: Hgfs handle to the node
+                            HgfsSessionInfo *session) // IN: Session info
 {
    HgfsFileNode *node;
 
-   node = HgfsHandle2FileNode(handle);
+   ASSERT(session);
+
+   node = HgfsHandle2FileNode(handle, session);
    if (node == NULL) {
-      LOG(4, ("HgfsRemoveFromCacheInternal: invalid handle.\n"));
+      LOG(4, ("%s: invalid handle.\n", __FUNCTION__));
+
       return FALSE;
    }
 
@@ -1376,7 +1744,7 @@ HgfsRemoveFromCacheInternal(HgfsHandle handle)	// IN: Hgfs handle to the node
       /* Unlink the node from the list of cached fileNodes. */
       DblLnkLst_Unlink1(&node->links);
       node->state = FILENODE_STATE_IN_USE_NOT_CACHED;
-      numCachedOpenNodes--;
+      session->numCachedOpenNodes--;
 
       /*
        * XXX: From this point and up in the call chain (i.e. this function and
@@ -1389,11 +1757,12 @@ HgfsRemoveFromCacheInternal(HgfsHandle handle)	// IN: Hgfs handle to the node
        * Instead, we'll just await the lobotomization of the node cache to
        * really fix this.
        */
-      if (HgfsCloseFile(node->fileDesc)) {
-         LOG(4, ("HgfsRemoveFromCacheInternal: Could not close fd %u\n",
-                 node->fileDesc));
+      if (HgfsCloseFile(node->fileDesc, node->fileCtx)) {
+         LOG(4, ("%s: Could not close fd %u\n", __FUNCTION__, node->fileDesc));
+
          return FALSE;
       }
+      node->fileCtx = NULL;
 
      /*
       * If we have just removed the node then the number of used nodes better
@@ -1402,7 +1771,7 @@ HgfsRemoveFromCacheInternal(HgfsHandle handle)	// IN: Hgfs handle to the node
       * we have a problem (see bug 36244).
       */
 
-      ASSERT(numCachedOpenNodes < maxCachedOpenNodes);
+      ASSERT(session->numCachedOpenNodes < maxCachedOpenNodes);
    }
 
    return TRUE;
@@ -1418,7 +1787,7 @@ HgfsRemoveFromCacheInternal(HgfsHandle handle)	// IN: Hgfs handle to the node
  *    the cache then move it to the end of the list. Most recently
  *    used nodes move towards the end of the list.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session nodeArrayLock should be acquired prior to calling this function.
  *
  * Results:
  *    TRUE if the node is found in the cache.
@@ -1431,21 +1800,27 @@ HgfsRemoveFromCacheInternal(HgfsHandle handle)	// IN: Hgfs handle to the node
  */
 
 Bool
-HgfsIsCachedInternal(HgfsHandle handle) // IN: Structure representing file node
+HgfsIsCachedInternal(HgfsHandle handle,         // IN: Structure representing file node
+                     HgfsSessionInfo *session)  // IN: Session info
 {
    HgfsFileNode *node;
 
-   node = HgfsHandle2FileNode(handle);
+   ASSERT(session);
+
+   node = HgfsHandle2FileNode(handle, session);
    if (node == NULL) {
-      LOG(4, ("HgfsIsCached: invalid handle.\n"));
+      LOG(4, ("%s: invalid handle.\n", __FUNCTION__));
+
       return FALSE;
    }
+
    if (node->state == FILENODE_STATE_IN_USE_CACHED) {
       /*
        * Move this node to the end of the list.
        */
       DblLnkLst_Unlink1(&node->links);
-      DblLnkLst_LinkLast(&nodeCachedList, &node->links);
+      DblLnkLst_LinkLast(&session->nodeCachedList, &node->links);
+
       return TRUE;
    }
 
@@ -1475,13 +1850,14 @@ HgfsIsCachedInternal(HgfsHandle handle) // IN: Structure representing file node
  */
 
 Bool
-HgfsIsServerLockAllowed()
+HgfsIsServerLockAllowed(HgfsSessionInfo *session)  // IN: session info
 {
    Bool allowed;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   allowed = numCachedLockedNodes < MAX_LOCKED_FILENODES;
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   allowed = session->numCachedLockedNodes < MAX_LOCKED_FILENODES;
+   SyncMutex_Unlock(&session->nodeArrayLock);
+
    return allowed;
 }
 
@@ -1498,7 +1874,7 @@ HgfsIsServerLockAllowed()
  *    initializes it appropriately, adds the new entries to the
  *    free list, and then returns one off the free list.
  *
- *    Caller should hold hgfsSearchArrayLock.
+ *    Caller should hold the session's searchArrayLock.
  *
  * Results:
  *    An unused search on success
@@ -1511,39 +1887,44 @@ HgfsIsServerLockAllowed()
  */
 
 static HgfsSearch *
-HgfsGetNewSearch(void)
+HgfsGetNewSearch(HgfsSessionInfo *session)  // IN: session info
 {
    HgfsSearch *search;
    HgfsSearch *newMem;
    unsigned int newNumSearches;
    unsigned int i;
 
-   LOG(4, ("HgfsGetNewSearch: entered\n"));
+   ASSERT(session);
+   ASSERT(session->searchArray);
 
-   if (searchFreeList.next == &searchFreeList) {
+   LOG(4, ("%s: entered\n", __FUNCTION__));
+
+   if (!DblLnkLst_IsLinked(&session->searchFreeList)) {
       /*
        * This has to be unsigned and with maximum bit length. This is
        * required to take care of "negative" differences as well.
        */
+
       uintptr_t ptrDiff;
 
       if (DOLOG(4)) {
          Log("Dumping searches before realloc\n");
-         HgfsDumpAllSearches();
+         HgfsDumpAllSearches(session);
       }
 
       /* Try to get twice as much memory as we had */
-      newNumSearches = 2 * numSearches;
-      newMem = (HgfsSearch *)realloc(searchArray,
-                                     newNumSearches * sizeof *searchArray);
+      newNumSearches = 2 * session->numSearches;
+      newMem = (HgfsSearch *)realloc(session->searchArray,
+                                     newNumSearches * sizeof *(session->searchArray));
       if (!newMem) {
-         LOG(4, ("HgfsGetNewSearch: can't realloc more searches\n"));
+         LOG(4, ("%s: can't realloc more searches\n", __FUNCTION__));
+
          return NULL;
       }
 
-      ptrDiff = (char *)newMem - (char *)searchArray;
+      ptrDiff = (char *)newMem - (char *)session->searchArray;
       if (ptrDiff) {
-         size_t const oldSize = numSearches * sizeof *searchArray;
+         size_t const oldSize = session->numSearches * sizeof *(session->searchArray);
 
          /*
           * The portion of memory that contains all our searches moved.
@@ -1551,21 +1932,21 @@ HgfsGetNewSearch(void)
           * must be updated to point to the new portion of memory.
           */
 
-         LOG(4, ("Rebasing pointers, diff is %"FMTSZ"u, sizeof search is %"FMTSZ"u\n",
-                 ptrDiff, sizeof(HgfsSearch)));
-         LOG(4, ("old: %p new: %p\n", searchArray, newMem));
-         ASSERT(newMem == (HgfsSearch*)((char*)searchArray + ptrDiff));
+         LOG(4, ("Rebasing pointers, diff is %"FMTSZ"u, sizeof search is "
+                 "%"FMTSZ"u\n", ptrDiff, sizeof(HgfsSearch)));
+         LOG(4, ("old: %p new: %p\n", session->searchArray, newMem));
+         ASSERT(newMem == (HgfsSearch*)((char*)session->searchArray + ptrDiff));
 
-#define HgfsServerRebase(_ptr, _type)                                   \
-   if ((size_t)((char *)_ptr - (char *)searchArray) < oldSize) {        \
-      _ptr = (_type *)((char *)_ptr + ptrDiff);                         \
+#define HgfsServerRebase(_ptr, _type)                                     \
+   if ((size_t)((char *)_ptr - (char *)session->searchArray) < oldSize) { \
+      _ptr = (_type *)((char *)_ptr + ptrDiff);                           \
    }
 
          /*
           * Rebase the links of all searches
           */
 
-         for (i = 0; i < numSearches; i++) {
+         for (i = 0; i < session->numSearches; i++) {
             HgfsServerRebase(newMem[i].links.prev, DblLnkLst_Links)
             HgfsServerRebase(newMem[i].links.next, DblLnkLst_Links)
          }
@@ -1579,30 +1960,34 @@ HgfsGetNewSearch(void)
       }
 
       /* Initialize the new searches */
-      LOG(4, ("numSearches was %u, now is %u\n", numSearches, newNumSearches));
-      for (i = numSearches; i < newNumSearches; i++) {
+      LOG(4, ("numSearches was %u, now is %u\n", session->numSearches,
+               newNumSearches));
+
+      for (i = session->numSearches; i < newNumSearches; i++) {
          DblLnkLst_Init(&newMem[i].links);
          newMem[i].utf8Dir = NULL;
          newMem[i].utf8DirLen = 0;
          newMem[i].utf8ShareName = NULL;
          newMem[i].utf8ShareNameLen = 0;
+         newMem[i].shareInfo.rootDir = NULL;
+         newMem[i].shareInfo.rootDirLen = 0;
          newMem[i].dents = NULL;
          newMem[i].numDents = 0;
 
          /* Append at the end of the list */
-         DblLnkLst_LinkLast(&searchFreeList, &newMem[i].links);
+         DblLnkLst_LinkLast(&session->searchFreeList, &newMem[i].links);
       }
-      searchArray = newMem;
-      numSearches = newNumSearches;
+      session->searchArray = newMem;
+      session->numSearches = newNumSearches;
 
       if (DOLOG(4)) {
          Log("Dumping searches after pointer changes\n");
-         HgfsDumpAllSearches();
+         HgfsDumpAllSearches(session);
       }
    }
 
    /* Remove the first item from the list */
-   search = DblLnkLst_Container(searchFreeList.next, HgfsSearch, links);
+   search = DblLnkLst_Container(session->searchFreeList.next, HgfsSearch, links);
    DblLnkLst_Unlink1(&search->links);
 
    return search;
@@ -1616,7 +2001,7 @@ HgfsGetNewSearch(void)
  *
  *    Retrieve the handle that represents a search outside of the server.
  *
- *    Caller should hold hgfsSearchArrayLock.
+ *    Caller should hold the session's searchArrayLock.
  *
  * Results:
  *    The handle
@@ -1660,6 +2045,7 @@ HgfsSearch2SearchHandle(HgfsSearch const *search) // IN
 
 Bool
 HgfsGetSearchCopy(HgfsHandle handle,        // IN: Hgfs search handle
+                  HgfsSessionInfo *session, // IN: Session info
                   HgfsSearch *copy)         // IN/OUT: Copy of the search
 {
    HgfsSearch *original = NULL;
@@ -1667,8 +2053,8 @@ HgfsGetSearchCopy(HgfsHandle handle,        // IN: Hgfs search handle
 
    ASSERT(copy);
 
-   SyncMutex_Lock(&hgfsSearchArrayLock);
-   original = HgfsSearchHandle2Search(handle);
+   SyncMutex_Lock(&session->searchArrayLock);
+   original = HgfsSearchHandle2Search(handle, session);
    if (original == NULL) {
       goto exit;
    }
@@ -1698,7 +2084,8 @@ HgfsGetSearchCopy(HgfsHandle handle,        // IN: Hgfs search handle
    found = TRUE;
 
 exit:
-   SyncMutex_Unlock(&hgfsSearchArrayLock);
+   SyncMutex_Unlock(&session->searchArrayLock);
+
    return found;
 }
 
@@ -1711,7 +2098,7 @@ exit:
  *    Gets a free search off the free list, sets its base directory, dents,
  *    and type.
  *
- *    Caller should hold hgfsSearchArrayLock.
+ *    Caller should hold the session's searchArrayLock.
  *
  * Results:
  *    A pointer to the newly added search on success
@@ -1726,39 +2113,51 @@ exit:
 HgfsSearch *
 HgfsAddNewSearch(char const *utf8Dir,       // IN: UTF8 name of dir to search in
                  DirectorySearchType type,  // IN: What kind of search is this?
-                 char const *utf8ShareName) // IN: Share name containing the directory
+                 char const *utf8ShareName, // IN: Share name containing the directory
+                 char const *rootDir,       // IN: Root directory for the share
+                 HgfsSessionInfo *session)  // IN: Session info
 {
    HgfsSearch *newSearch;
 
    ASSERT(utf8Dir);
 
    /* Get an unused search */
-   newSearch = HgfsGetNewSearch();
+   newSearch = HgfsGetNewSearch(session);
    if (!newSearch) {
-      LOG(4, ("HgfsAddNewSearch: out of memory\n"));
+      LOG(4, ("%s: out of memory\n", __FUNCTION__));
+
       return NULL;
    }
 
    newSearch->dents = NULL;
    newSearch->numDents = 0;
    newSearch->type = type;
-   newSearch->handle = hgfsHandleCounter++;
+   newSearch->handle = HgfsServerGetNextHandleCounter();
 
    newSearch->utf8DirLen = strlen(utf8Dir);
    newSearch->utf8Dir = strdup(utf8Dir);
    if (newSearch->utf8Dir == NULL) {
-      HgfsRemoveSearchInternal(newSearch);
+      HgfsRemoveSearchInternal(newSearch, session);
+
       return NULL;
    }
 
    newSearch->utf8ShareNameLen = strlen(utf8ShareName);
    newSearch->utf8ShareName = strdup(utf8ShareName);
    if (newSearch->utf8ShareName == NULL) {
-      HgfsRemoveSearchInternal(newSearch);
+      HgfsRemoveSearchInternal(newSearch, session);
+
       return NULL;
    }
 
-   LOG(4, ("HgfsAddNewSearch: got new search, handle %u\n",
+   newSearch->shareInfo.rootDirLen = strlen(rootDir);
+   newSearch->shareInfo.rootDir = strdup(rootDir);
+   if (newSearch->shareInfo.rootDir == NULL) {
+      HgfsRemoveSearchInternal(newSearch, session);
+      return NULL;
+   }
+
+   LOG(4, ("%s: got new search, handle %u\n", __FUNCTION__,
            HgfsSearch2SearchHandle(newSearch)));
    return newSearch;
 }
@@ -1771,7 +2170,7 @@ HgfsAddNewSearch(char const *utf8Dir,       // IN: UTF8 name of dir to search in
  *
  *    Destroy a search object and recycle it to the free list
  *
- *    Caller should hold hgfsSearchArrayLock.
+ *    Caller should hold the session's searchArrayLock.
  *
  * Results:
  *    None
@@ -1783,11 +2182,13 @@ HgfsAddNewSearch(char const *utf8Dir,       // IN: UTF8 name of dir to search in
  */
 
 void
-HgfsRemoveSearchInternal(HgfsSearch *search) // IN
+HgfsRemoveSearchInternal(HgfsSearch *search,       // IN: search
+                         HgfsSessionInfo *session) // IN: session info
 {
    ASSERT(search);
+   ASSERT(session);
 
-   LOG(4, ("HgfsRemoveSearchInternal: handle %u, dir %s\n",
+   LOG(4, ("%s: handle %u, dir %s\n", __FUNCTION__,
            HgfsSearch2SearchHandle(search), search->utf8Dir));
 
    /* Free all of the dirents */
@@ -1803,9 +2204,10 @@ HgfsRemoveSearchInternal(HgfsSearch *search) // IN
 
    free(search->utf8Dir);
    free(search->utf8ShareName);
+   free((char*)search->shareInfo.rootDir);
 
    /* Prepend at the beginning of the list */
-   DblLnkLst_LinkFirst(&searchFreeList, &search->links);
+   DblLnkLst_LinkFirst(&session->searchFreeList, &search->links);
 }
 
 
@@ -1828,18 +2230,19 @@ HgfsRemoveSearchInternal(HgfsSearch *search) // IN
  */
 
 Bool
-HgfsRemoveSearch(HgfsHandle handle) // IN
+HgfsRemoveSearch(HgfsHandle handle,        // IN: search
+                 HgfsSessionInfo *session) // IN: session info
 {
    HgfsSearch *search;
    Bool success = FALSE;
 
-   SyncMutex_Lock(&hgfsSearchArrayLock);
-   search = HgfsSearchHandle2Search(handle);
+   SyncMutex_Lock(&session->searchArrayLock);
+   search = HgfsSearchHandle2Search(handle, session);
    if (search != NULL) {
-      HgfsRemoveSearchInternal(search);
+      HgfsRemoveSearchInternal(search, session);
       success = TRUE;
    }
-   SyncMutex_Unlock(&hgfsSearchArrayLock);
+   SyncMutex_Unlock(&session->searchArrayLock);
 
    return success;
 }
@@ -1865,15 +2268,16 @@ HgfsRemoveSearch(HgfsHandle handle) // IN
  */
 
 DirectoryEntry *
-HgfsGetSearchResult(HgfsHandle handle, // IN: Handle to search
-                    uint32 offset,     // IN: Offset to retrieve at
-                    Bool remove)       // IN: If true, removes the result
+HgfsGetSearchResult(HgfsHandle handle,         // IN: Handle to search
+                    HgfsSessionInfo *session,  // IN: Session info
+                    uint32 offset,             // IN: Offset to retrieve at
+                    Bool remove)               // IN: If true, removes the result
 {
    HgfsSearch *search;
    DirectoryEntry *dent = NULL;
 
-   SyncMutex_Lock(&hgfsSearchArrayLock);
-   search = HgfsSearchHandle2Search(handle);
+   SyncMutex_Lock(&session->searchArrayLock);
+   search = HgfsSearchHandle2Search(handle, session);
    if (search == NULL || search->dents == NULL) {
       goto out;
    }
@@ -1928,7 +2332,8 @@ HgfsGetSearchResult(HgfsHandle handle, // IN: Handle to search
    }
 
   out:
-   SyncMutex_Unlock(&hgfsSearchArrayLock);
+   SyncMutex_Unlock(&session->searchArrayLock);
+
    return dent;
 }
 
@@ -1945,7 +2350,7 @@ HgfsGetSearchResult(HgfsHandle handle, // IN: Handle to search
  *     that is currently in use)
  *    NULL if the handle is invalid
  *
- *    Caller should hold hgfsSearchArrayLock.
+ *    Caller should hold the session's searchArrayLock.
  *
  * Side effects:
  *    None
@@ -1954,18 +2359,20 @@ HgfsGetSearchResult(HgfsHandle handle, // IN: Handle to search
  */
 
 HgfsSearch *
-HgfsSearchHandle2Search(HgfsHandle handle) // IN
+HgfsSearchHandle2Search(HgfsHandle handle,         // IN: handle
+                        HgfsSessionInfo *session)  // IN: session info
 {
    unsigned int i;
    HgfsSearch *search = NULL;
 
-   ASSERT(searchArray);
+   ASSERT(session);
+   ASSERT(session->searchArray);
 
    /* XXX: This O(n) lookup can and should be optimized. */
-   for (i = 0; i < numSearches; i++) {
-      if (!DblLnkLst_IsLinked(&searchArray[i].links) &&
-          searchArray[i].handle == handle) {
-         search = &searchArray[i];
+   for (i = 0; i < session->numSearches; i++) {
+      if (!DblLnkLst_IsLinked(&session->searchArray[i].links) &&
+          session->searchArray[i].handle == handle) {
+         search = &session->searchArray[i];
          break;
       }
    }
@@ -1994,7 +2401,8 @@ HgfsSearchHandle2Search(HgfsHandle handle) // IN
 
 void
 HgfsUpdateNodeNames(const char *oldLocalName,  // IN: Name of file to look for
-                    const char *newLocalName)  // IN: Name to replace with
+                    const char *newLocalName,  // IN: Name to replace with
+                    HgfsSessionInfo *session)  // IN: Session info
 {
    HgfsFileNode *fileNode;
    unsigned int i;
@@ -2003,13 +2411,14 @@ HgfsUpdateNodeNames(const char *oldLocalName,  // IN: Name of file to look for
 
    ASSERT(oldLocalName);
    ASSERT(newLocalName);
+   ASSERT(session);
+   ASSERT(session->nodeArray);
 
    newBufferLen = strlen(newLocalName);
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   ASSERT(nodeArray);
-   for (i = 0; i < numNodes; i++) {
-      fileNode = &nodeArray[i];
+   SyncMutex_Lock(&session->nodeArrayLock);
+   for (i = 0; i < session->numNodes; i++) {
+      fileNode = &session->nodeArray[i];
 
       /* If the node is on the free list, skip it. */
       if (fileNode->state == FILENODE_STATE_UNUSED) {
@@ -2019,7 +2428,7 @@ HgfsUpdateNodeNames(const char *oldLocalName,  // IN: Name of file to look for
       if (strcmp(fileNode->utf8Name, oldLocalName) == 0) {
          newBuffer = malloc(newBufferLen + 1);
          if (!newBuffer) {
-            LOG(4, ("HgfsUpdateNodeNames: Failed to update a node name.\n"));
+            LOG(4, ("%s: Failed to update a node name.\n", __FUNCTION__));
             continue;
          }
          memcpy(newBuffer, newLocalName, newBufferLen);
@@ -2031,7 +2440,7 @@ HgfsUpdateNodeNames(const char *oldLocalName,  // IN: Name of file to look for
          fileNode->utf8NameLen = newBufferLen;
       }
    }
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 }
 
 
@@ -2053,17 +2462,18 @@ HgfsUpdateNodeNames(const char *oldLocalName,  // IN: Name of file to look for
  */
 
 static HgfsInternalStatus
-HgfsServerClose(char const *packetIn, // IN: incoming packet
-                char *packetOut,      // OUT: outgoing packet
-                size_t *packetSize)   // IN/OUT: size of packet
+HgfsServerClose(char const *packetIn,      // IN: incoming packet
+                size_t packetSize,         // IN: size of packet
+                HgfsSessionInfo *session)  // IN: session info
 {
    HgfsRequest *header = (HgfsRequest *)packetIn;
    HgfsHandle *file;
+   char *packetOut;
    size_t replySize;
+   HgfsInternalStatus status = 0;
 
    ASSERT(packetIn);
-   ASSERT(packetOut);
-   ASSERT(packetSize);
+   ASSERT(session);
 
    if (header->op == HGFS_OP_CLOSE_V3) {
       HgfsRequestCloseV3 *request;
@@ -2071,27 +2481,40 @@ HgfsServerClose(char const *packetIn, // IN: incoming packet
       request = (HgfsRequestCloseV3 *)HGFS_REQ_GET_PAYLOAD_V3(packetIn);
       file = &request->file;
 
+      replySize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      packetOut = Util_SafeMalloc(replySize);
       reply = (HgfsReplyCloseV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
       reply->reserved = 0;
-      replySize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
    } else {
       HgfsRequestClose *request;
       request = (HgfsRequestClose *)packetIn;
       file = &request->file;
-      replySize = sizeof *request;
+      replySize = sizeof (HgfsReplyClose);
+      packetOut = Util_SafeMalloc(replySize);
    }
 
-   LOG(4, ("HgfsServerClose: close fh %u\n", *file));
+   LOG(4, ("%s: close fh %u\n", __FUNCTION__, *file));
 
-   if (!HgfsRemoveFromCache(*file)) {
-      LOG(4, ("HgfsServerClose: Could not remove the node from cache.\n"));
-      return HGFS_INTERNAL_STATUS_ERROR;
+   if (!HgfsRemoveFromCache(*file, session)) {
+      LOG(4, ("%s: Could not remove the node from cache.\n", __FUNCTION__));
+      status = HGFS_INTERNAL_STATUS_ERROR;
+      goto error;
    } else {
-      HgfsFreeFileNode(*file);
+      HgfsFreeFileNode(*file, session);
    }
 
-   *packetSize = replySize;
+   ((HgfsReply *)packetOut)->id = header->id;
+   ((HgfsReply *)packetOut)->status = HgfsConvertFromInternalStatus(status);
+   if (!HgfsPacketSend(packetOut, replySize, session, 0)) {
+      goto error;
+   }
+
    return 0;
+
+error:
+   free(packetOut);
+
+   return status;
 }
 
 
@@ -2113,54 +2536,73 @@ HgfsServerClose(char const *packetIn, // IN: incoming packet
  */
 
 static HgfsInternalStatus
-HgfsServerSearchClose(char const *packetIn, // IN: incoming packet
-                      char *packetOut,      // OUT: outgoing packet
-                      size_t *packetSize)   // IN/OUT: size of packet
+HgfsServerSearchClose(char const *packetIn,      // IN: incoming packet
+                      size_t packetSize,         // IN: size of packet
+                      HgfsSessionInfo *session)  // IN: session info
 {
    HgfsRequest *header = (HgfsRequest *)packetIn;
    HgfsHandle *search;
    size_t replySize;
+   char *packetOut;
+   HgfsInternalStatus status = 0;
 
    ASSERT(packetIn);
-   ASSERT(packetOut);
-   ASSERT(packetSize);
+   ASSERT(session);
 
    if (header->op == HGFS_OP_SEARCH_CLOSE_V3) {
+      HgfsReplySearchCloseV3 *reply;
       HgfsRequestSearchCloseV3 *request =
                    (HgfsRequestSearchCloseV3 *)HGFS_REQ_GET_PAYLOAD_V3(packetIn);
-      HgfsReplySearchCloseV3 *reply =
-                   (HgfsReplySearchCloseV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
+
+      replySize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      packetOut = Util_SafeMalloc(replySize);
+      reply = (HgfsReplySearchCloseV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
 
       search = &request->search;
       reply->reserved = 0;
-      replySize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
    } else {
+      HgfsReplySearchClose *reply;
       HgfsRequestSearchClose *request = (HgfsRequestSearchClose *)packetIn;
-      HgfsReplySearchClose *reply = (HgfsReplySearchClose *)packetOut;
-      search = &request->search;
+
       replySize = sizeof *reply;
+      packetOut = Util_SafeMalloc(replySize);
+      reply = (HgfsReplySearchClose *)packetOut;
+
+      search = &request->search;
    }
 
-   LOG(4, ("HgfsServerSearchClose: close search #%u\n", *search));
+   LOG(4, ("%s: close search #%u\n", __FUNCTION__, *search));
 
-   if (!HgfsRemoveSearch(*search)) {
+   if (!HgfsRemoveSearch(*search, session)) {
       /* Invalid handle */
-      LOG(4, ("HgfsServerSearchClose: invalid handle %u\n", *search));
-      return HGFS_INTERNAL_STATUS_ERROR;
+      LOG(4, ("%s: invalid handle %u\n", __FUNCTION__, *search));
+      status = HGFS_INTERNAL_STATUS_ERROR;
+      goto error;
    }
 
-   *packetSize = replySize;
+   ((HgfsReply *)packetOut)->id = header->id;
+   ((HgfsReply *)packetOut)->status = HgfsConvertFromInternalStatus(status);
+   if (!HgfsPacketSend(packetOut, replySize, session, 0)) {
+      goto error;
+   }
+
    return 0;
+
+error:
+   free(packetOut);
+
+   return status;
 }
+
 
 #define HGFS_SIZEOF_OP(type) (sizeof (type) + sizeof (HgfsRequest))
 
 /* Opcode handlers, indexed by opcode */
 static struct {
    HgfsInternalStatus
-   (*handler)(char const *packetIn,
-              char *packetOut,
-              size_t *packetSize);
+   (*handler)(const char *packetIn,
+              size_t packetSize,
+              HgfsSessionInfo *session);
 
    /* Minimal size of the request packet */
    unsigned int minReqSize;
@@ -2207,26 +2649,182 @@ static struct {
    { HgfsServerQueryVolume,      HGFS_SIZEOF_OP(HgfsRequestQueryVolumeV3)      },
    { HgfsServerSymlinkCreate,    HGFS_SIZEOF_OP(HgfsRequestSymlinkCreateV3)    },
    { HgfsServerServerLockChange, sizeof (HgfsRequestServerLockChange)          },
+   { HgfsServerWriteWin32Stream, HGFS_SIZEOF_OP(HgfsRequestWriteWin32StreamV3) },
 
 };
-
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsServer_DispatchPacket --
+ * HgfsServerSessionReceive --
  *
  *    Dispatch an incoming packet (in packetIn) to a handler function.
  *
- *    The handler function should place a reply packet in
- *    packetOut. packetSize contains the size of the incoming
- *    packet initially, and the handler function should reset it to
- *    the size of the outgoing packet before returning. The same
- *    buffer can be used for both packetIn and packetOut.
- *
  *    This function cannot fail; if something goes wrong, it returns
  *    a packet containing only a reply header with error code.
+ *
+ *    The handler function can send the reply packet either using HgfsPacketSend
+ *    or HgfsPackAndSendPacket helper functions. This function would return error
+ *    as a reply if the op handler do not return HGFS_STATUS_SUCCESS.
+ *
+ *    NOTE: If any op handler needs to keep packetIn around for sending replies
+ *    at a later point (possibly in a different thread context), it should
+ *    make a copy of it. The validity of packetIn for the HGFS server is only
+ *    within the scope of this function.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+HgfsServerSessionReceive(char const *packetIn,    // IN: incoming packet
+                          size_t packetSize,       // IN: size of packet
+                          void *clientData,        // IN: session info
+                          HgfsReceiveFlags flags)  // IN: flags to indicate processing
+{
+   HgfsSessionInfo *session = (HgfsSessionInfo *)clientData;
+   HgfsRequest *request = (HgfsRequest *)packetIn;
+   HgfsHandle id;
+   HgfsOp op;
+   HgfsStatus status;
+
+   ASSERT(session);
+   ASSERT(request);
+
+   if (session->state == HGFS_SESSION_STATE_CLOSED) {
+      LOG(4, ("%s: %d: Received packet after disconnected.\n", __FUNCTION__,
+              __LINE__));
+
+      return;
+   }
+
+   /* Increment the session's reference count until we send the reply. */
+   HgfsServerSessionGet(session);
+
+   id = request->id;
+   op = request->op;
+
+   /* Error out if less than HgfsRequest size. */
+   if (packetSize < sizeof *request) {
+      status = HGFS_STATUS_PROTOCOL_ERROR;
+      goto err;
+   }
+
+   HGFS_ASSERT_MINIMUM_OP(op);
+   if (op < sizeof handlers / sizeof handlers[0]) {
+      if (packetSize >= handlers[op].minReqSize) {
+         HgfsInternalStatus internalStatus;
+         internalStatus = (*handlers[op].handler)(packetIn, packetSize,
+                                                  session);
+         status = HgfsConvertFromInternalStatus(internalStatus);
+      } else {
+         /*
+          * The input packet is smaller than the minimal size needed for the
+          * operation.
+          */
+
+         status = HGFS_STATUS_PROTOCOL_ERROR;
+         LOG(4, ("%s: %d: Possible BUG! Smaller packet.\n", __FUNCTION__,
+                 __LINE__));
+      }
+   } else {
+      /* Unknown opcode */
+      status = HGFS_STATUS_PROTOCOL_ERROR;
+      LOG(4, ("%s: %d: Possible BUG! Invalid opcode.\n", __FUNCTION__,
+              __LINE__));
+   }
+   HGFS_ASSERT_CLIENT(op);
+
+err:
+   /* Send error if we fail to process the op. */
+   if (status != HGFS_STATUS_SUCCESS) {
+      HgfsReply *reply;
+
+      reply = Util_SafeMalloc(sizeof *reply);
+      reply->id = id;
+      reply->status = status;
+
+      if (!HgfsPacketSend((char *)reply, sizeof *reply, session, 0)) {
+         /* Send failed. Drop the reply. */
+         free(reply);
+      }
+   }
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServer_InitState --
+ *
+ *    Initialize the global server state
+ *
+ * Results:
+ *    TRUE if succeeded, FALSE if failed.
+ *
+ * Side effects:
+ *    Memory allocation.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+HgfsServer_InitState(HgfsServerSessionCallbacks **callbackTable,  // IN/OUT: our callbacks
+                     HgfsServerStateLogger *serverMgrData)        // IN: mgr callback
+{
+   ASSERT(callbackTable);
+
+   /* Save any server manager data for logging state updates.*/
+   hgfsMgrData = serverMgrData;
+
+   maxCachedOpenNodes = Config_GetLong(MAX_CACHED_FILENODES,
+                                       "hgfs.fdCache.maxNodes");
+
+#ifndef VMX86_TOOLS
+   if (Config_GetBool(FALSE, "hgfs.alwaysUseHostTime")) {
+      alwaysUseHostTime = TRUE;
+   }
+#endif
+
+
+#ifdef VMX86_TOOLS
+   hgfsStaticSession.session = NULL;
+   hgfsStaticSession.bufferOut = NULL;
+   hgfsStaticSession.bufferOutLen = 0;
+#endif
+
+   if (HgfsNotify_Init() == 0) {
+      hgfsChangeNotificationSupported = TRUE;
+   }
+
+   if (!HgfsServerPlatformInit()) {
+      LOG(4, ("Could not initialize server platform specific \n"));
+
+      return FALSE;
+   }
+
+   *callbackTable = &hgfsServerSessionCBTable;
+
+   return TRUE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServer_ExitState --
+ *
+ *    Cleanup the global server state.
+ *
+ *    This function should be called when all other HGFS threads stopped
+ *    running. Otherwise we'll be in trouble because this is where we delete
+ *    the node array lock.
  *
  * Results:
  *    None
@@ -2238,76 +2836,509 @@ static struct {
  */
 
 void
-HgfsServer_DispatchPacket(char const *packetIn, // IN:     Incoming request packet
-                          char *packetOut,      // OUT:    Outgoing reply packet
-                          size_t *packetSize)   // IN/OUT: Size of packet
+HgfsServer_ExitState(void)
 {
-   HgfsRequest *request;
-   HgfsReply *reply;
-   HgfsHandle id;
-   HgfsOp op;
-   HgfsStatus status;
 
-   request = (HgfsRequest *)packetIn;
-   ASSERT(request);
-   reply = (HgfsReply *)packetOut;
-   ASSERT(reply);
-   ASSERT(packetSize);
+#ifdef VMX86_TOOLS
+   if (hgfsStaticSession.session != NULL) {
+      HgfsServerSessionPut(hgfsStaticSession.session);
+   }
+#endif
 
-   if (*packetSize < sizeof *request) {
-      /*
-       * The input packet is smaller than a request. Because we can't read the
-       * request ID, we can't send a reply. We can only drop the request on the
-       * floor.
-       */
-      *packetSize = 0;
-      return;
+   if (hgfsChangeNotificationSupported) {
+      HgfsNotify_Shutdown();
    }
 
-   id = request->id;
-   op = request->op;
-
-   HGFS_ASSERT_MINIMUM_OP(op);
-   if (op < sizeof handlers / sizeof handlers[0]) {
-      if (*packetSize >= handlers[op].minReqSize) {
-         HgfsInternalStatus internalStatus;
-         internalStatus = (*handlers[op].handler)(packetIn,
-                                                  packetOut,
-                                                  packetSize);
-         status = HgfsConvertFromInternalStatus(internalStatus);
-      } else {
-         /*
-          * The input packet is smaller than the minimal size needed for the
-          * operation.
-          */
-         status = HGFS_STATUS_PROTOCOL_ERROR;
-      }
-   } else {
-      /* Unknown opcode */
-      status = HGFS_STATUS_PROTOCOL_ERROR;
-   }
-   HGFS_ASSERT_CLIENT(op);
-
-   /*
-    * If the status isn't success, set the packetSize to the
-    * size of the reply struct. This saves handler functions
-    * from having to bother setting packetSize on error paths,
-    * and minimizes the number of bytes copied in error cases.
-    */
-   if (status != HGFS_STATUS_SUCCESS) {
-      *packetSize = sizeof *reply;
-   }
-
-   ASSERT(*packetSize >= sizeof *reply && *packetSize <= HGFS_LARGE_PACKET_MAX);
-   reply->id = id;
-   reply->status = status;
+   HgfsServerPlatformDestroy();
 }
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsServer_InvalidateObjects --
+ * HgfsServerSessionConnect --
+ *
+ *    Initialize a new client session.
+ *
+ *    Allocate HgfsSessionInfo and initialize it. Create the nodeArray and
+ *    searchArray for the session.
+ *
+ * Results:
+ *    TRUE on success, FALSE otherwise.
+ *
+ * Side effects:
+ *    Allocates and initializes new session info.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+HgfsServerSessionConnect(void *transportData,        // IN: transport session context
+                         HgfsSessionSendFunc *send,  // IN: send reply callback
+                         void **sessionData)         // OUT: server session context
+{
+   int i;
+   HgfsSessionInfo *session = Util_SafeMalloc(sizeof *session);
+
+   ASSERT(sessionData);
+
+   LOG(4, ("%s: initting.\n", __FUNCTION__));
+
+   /*
+    * Initialize all our locks first as these can fail.
+    */
+
+   if (!SyncMutex_Init(&session->fileIOLock, NULL)) {
+      free(session);
+      LOG(4, ("%s: Could not create node array sync mutex.\n", __FUNCTION__));
+
+      return FALSE;
+   }
+   if (!SyncMutex_Init(&session->nodeArrayLock, NULL)) {
+      SyncMutex_Destroy(&session->fileIOLock);
+      free(session);
+      LOG(4, ("%s: Could not create node array sync mutex.\n", __FUNCTION__));
+
+      return FALSE;
+   }
+   if (!SyncMutex_Init(&session->searchArrayLock, NULL)) {
+      SyncMutex_Destroy(&session->fileIOLock);
+      SyncMutex_Destroy(&session->nodeArrayLock);
+      free(session);
+      LOG(4, ("%s: Could not create search array sync mutex.\n", __FUNCTION__));
+
+      return FALSE;
+   }
+
+   /*
+    * Initialize the node handling components.
+    */
+
+   DblLnkLst_Init(&session->nodeFreeList);
+   DblLnkLst_Init(&session->nodeCachedList);
+
+   /* Allocate array of FileNodes and add them to free list. */
+   session->numNodes = NUM_FILE_NODES;
+   session->nodeArray = Util_SafeCalloc(session->numNodes, sizeof (HgfsFileNode));
+   session->numCachedOpenNodes = 0;
+   session->numCachedLockedNodes = 0;
+
+   for (i = 0; i < session->numNodes; i++) {
+      DblLnkLst_Init(&session->nodeArray[i].links);
+      /* Append at the end of the list. */
+      DblLnkLst_LinkLast(&session->nodeFreeList, &session->nodeArray[i].links);
+   }
+
+   /*
+    * Initialize the search handling components.
+    */
+
+   /* Initialize search freelist. */
+   DblLnkLst_Init(&session->searchFreeList);
+
+   /* Allocate array of searches and add them to free list. */
+   session->numSearches = NUM_SEARCHES;
+   session->searchArray = Util_SafeCalloc(session->numSearches, sizeof (HgfsSearch));
+
+   for (i = 0; i < session->numSearches; i++) {
+      DblLnkLst_Init(&session->searchArray[i].links);
+      /* Append at the end of the list. */
+      DblLnkLst_LinkLast(&session->searchFreeList,
+                         &session->searchArray[i].links);
+   }
+
+   /*
+    * Initialize the general session stuff.
+    */
+
+   session->type = HGFS_SESSION_TYPE_REGULAR;
+   session->state = HGFS_SESSION_STATE_OPEN;
+   session->transportData = transportData;
+   session->send = send;
+   Atomic_Write(&session->refCount, 0);
+
+   /* Give our session a reference to hold while we are open. */
+   HgfsServerSessionGet(session);
+   *sessionData = session;
+
+   return TRUE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServerSessionDisconnect --
+ *
+ *    Disconnect a client session.
+ *
+ *    Mark the session as closed as we are in the process of teardown
+ *    of the session. No more new requests should be processed. We would
+ *    start draining any outstanding pending operations at this point.
+ *
+ * Results:
+ *    None.
+ *
+ * Side effects:
+ *    None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+HgfsServerSessionDisconnect(void *clientData)    // IN: session context
+{
+   HgfsSessionInfo *session = (HgfsSessionInfo *)clientData;
+
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+   ASSERT(session->searchArray);
+
+   session->state = HGFS_SESSION_STATE_CLOSED;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServerSessionClose --
+ *
+ *    Closes a client session.
+ *
+ *    Remvoing the final reference will free the session's nodeArray
+ *    and seachArrary, and finally free the session object.
+ *
+ * Results:
+ *    None.
+ *
+ * Side effects:
+ *    None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+HgfsServerSessionClose(void *clientData)    // IN: session context
+{
+   HgfsSessionInfo *session = (HgfsSessionInfo *)clientData;
+
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+   ASSERT(session->searchArray);
+
+   ASSERT(session->state == HGFS_SESSION_STATE_CLOSED);
+
+   /* Remove, typically, the last reference, will teardown everything. */
+   HgfsServerSessionPut(session);
+
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServerExitSessionInternal --
+ *
+ *    Destroys a session.
+ *
+ *    Free the session's nodeArray and seachArrary. Free the session.
+ *
+ *    The caller must have previously acquired the global sessions lock.
+ *
+ * Results:
+ *    TRUE on success, FALSE otherwise.
+ *
+ * Side effects:
+ *    Allocates new session info.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+HgfsServerExitSessionInternal(HgfsSessionInfo *session)    // IN: session context
+{
+   int i;
+
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+   ASSERT(session->searchArray);
+
+   SyncMutex_Lock(&session->nodeArrayLock);
+
+   LOG(4, ("%s: exiting.\n", __FUNCTION__));
+   /* Recycle all nodes that are still in use, then destroy the node pool. */
+   for (i = 0; i < session->numNodes; i++) {
+      HgfsHandle handle;
+
+      if (session->nodeArray[i].state == FILENODE_STATE_UNUSED) {
+         continue;
+      }
+
+      handle = HgfsFileNode2Handle(&session->nodeArray[i]);
+      HgfsRemoveFromCacheInternal(handle, session);
+      HgfsFreeFileNodeInternal(handle, session);
+   }
+   free(session->nodeArray);
+   session->nodeArray = NULL;
+
+   SyncMutex_Unlock(&session->nodeArrayLock);
+
+   /* Recycle all searches that are still in use, then destroy the search pool. */
+   SyncMutex_Lock(&session->searchArrayLock);
+
+   for (i = 0; i < session->numSearches; i++) {
+      if (DblLnkLst_IsLinked(&session->searchArray[i].links)) {
+         continue;
+      }
+      HgfsRemoveSearchInternal(&session->searchArray[i], session);
+   }
+   free(session->searchArray);
+   session->searchArray = NULL;
+
+   SyncMutex_Unlock(&session->searchArrayLock);
+
+   /* Teardown the locks for the sessions and destroy itself. */
+   SyncMutex_Destroy(&session->nodeArrayLock);
+   SyncMutex_Destroy(&session->searchArrayLock);
+   SyncMutex_Destroy(&session->fileIOLock);
+   free(session);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServer_GetHandleCounter --
+ *
+ *    Return file handle counter. This is used by the checkpointing code to
+ *    checkpoint this value so we avoid the risk of handle collision.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+uint32
+HgfsServer_GetHandleCounter(void)
+{
+   return HgfsServerGetHandleCounter();
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsServer_SetHandleCounter --
+ *
+ *    Set the file handle counter. This is used by the checkpointing code to
+ *    restore this value so we avoid the risk of handle collision.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+HgfsServer_SetHandleCounter(uint32 newHandleCounter)
+{
+   HgfsServerInitHandleCounter(newHandleCounter);
+}
+
+
+#ifdef VMX86_TOOLS
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsServer_ProcessPacket --
+ *
+ *    Process packet not associated with any session.
+ *
+ *    This function is used in the HGFS server inside Tools.
+ *
+ *    Create an internal session if not already created, and process the packet.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *----------------------------------------------------------------------------
+ */
+
+void
+HgfsServer_ProcessPacket(char const *packetIn,   // IN: incoming packet
+                         char *packetOut,        // OUT: outgoing packet
+                         size_t *packetLen,      // IN/OUT: packet length
+                         HgfsReceiveFlags flags) // IN: flags
+{
+   ASSERT(packetIn);
+   ASSERT(packetOut);
+   ASSERT(packetLen);
+
+   if (*packetLen == 0) {
+      return;
+   }
+
+   /*
+    * Create the session if not already created.
+    * This session is destroyed in HgfsServer_ExitState.
+    */
+
+   if (hgfsStaticSession.session == NULL) {
+      if (!HgfsServerSessionConnect(NULL, NULL,
+                                    (void **)&hgfsStaticSession.session)) {
+         *packetLen = 0;
+
+         return;
+      }
+
+      /* Mark the session as internal. */
+      hgfsStaticSession.session->type = HGFS_SESSION_TYPE_INTERNAL;
+   }
+
+   HgfsServerSessionReceive(packetIn, *packetLen, hgfsStaticSession.session, 0);
+
+   /*
+    * At this point, all the HGFS ops send reply synchronously. So
+    * we should have the reply by now.
+    * XXX This should change if any async replies are expected.
+    */
+
+   ASSERT(hgfsStaticSession.bufferOut);
+
+   memcpy(packetOut, hgfsStaticSession.bufferOut,
+          hgfsStaticSession.bufferOutLen);
+   *packetLen = hgfsStaticSession.bufferOutLen;
+
+   HgfsServerSessionSendComplete(hgfsStaticSession.session,
+                           hgfsStaticSession.bufferOut);
+   hgfsStaticSession.bufferOut = NULL;
+}
+#endif
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsServerSessionSendComplete --
+ *
+ *    This is called by the Transport when it is done sending the packet.
+ *    Free the buffer. If we allocate buffers per session we have the session
+ *    that the buffer belongs too.
+ *
+ * Results:
+ *    None.
+ *
+ * Side effects:
+ *    Frees the packet buffer.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+void
+HgfsServerSessionSendComplete(void *clientData, // IN: session currently unused
+                              char *buffer)     // IN: sent buffer
+{
+   free(buffer);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsPacketSend --
+ *
+ *    Send the packet.
+ *
+ * Results:
+ *    TRUE on success, FALSE on error.
+ *
+ * Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+HgfsPacketSend(char *packet,                // IN: packet buffer
+               size_t packetSize,           // IN: packet size
+               HgfsSessionInfo *session,    // IN: session info
+               HgfsSendFlags flags)         // IN: flags for how to process
+{
+   Bool result = FALSE;
+
+   ASSERT(packet);
+   ASSERT(session);
+
+   if (session->state == HGFS_SESSION_STATE_OPEN) {
+#ifndef VMX86_TOOLS
+      ASSERT(session->type == HGFS_SESSION_TYPE_REGULAR);
+      result = session->send(session->transportData, packet, packetSize, flags);
+#else
+      /* This is internal session. */
+      ASSERT(session->type == HGFS_SESSION_TYPE_INTERNAL);
+      hgfsStaticSession.bufferOut = packet;
+      hgfsStaticSession.bufferOutLen = packetSize;
+      result = TRUE;
+#endif
+   }
+
+   HgfsServerSessionPut(session);
+
+   return result;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsPackAndSendPacket --
+ *
+ *      Packs up the reply with id and status and sends the packet.
+ *
+ * Results:
+ *      TRUE on success, FALSE otherwise.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+HgfsPackAndSendPacket(char *packet,               // IN: packet to send
+                      size_t packetSize,          // IN: packet size
+                      HgfsInternalStatus status,  // IN: status
+                      HgfsHandle id,              // IN: id of the request packet
+                      HgfsSessionInfo *session,   // IN: session info
+                      HgfsSendFlags flags)        // IN: flags how to send
+{
+   HgfsReply *reply = (HgfsReply *)packet;
+
+   ASSERT(packet);
+   ASSERT(session);
+   ASSERT(packetSize <= HGFS_LARGE_PACKET_MAX);
+
+   reply->id = id;
+   reply->status = HgfsConvertFromInternalStatus(status);
+
+   return HgfsPacketSend(packet, packetSize, session, flags);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HgfsInvalidateSessionObjects --
  *
  *      Iterates over all nodes and searches, invalidating and removing those
  *      that are no longer within a share.
@@ -2321,30 +3352,36 @@ HgfsServer_DispatchPacket(char const *packetIn, // IN:     Incoming request pack
  *-----------------------------------------------------------------------------
  */
 
-void
-HgfsServer_InvalidateObjects(DblLnkLst_Links *shares) // IN: List of new shares
+static void
+HgfsInvalidateSessionObjects(DblLnkLst_Links *shares,  // IN: List of new shares
+                             HgfsSessionInfo *session) // IN: Session info
 {
    unsigned int i;
 
    ASSERT(shares);
-   LOG(4, ("HgfsServer_InvalidateObjects: Beginning\n"));
+   ASSERT(session);
+   ASSERT(session->nodeArray);
+   ASSERT(session->searchArray);
+   LOG(4, ("%s: Beginning\n", __FUNCTION__));
+
+
+   SyncMutex_Lock(&session->nodeArrayLock);
 
    /*
     * Iterate over each node, skipping those that are unused. For each node,
     * if its filename is no longer within a share, remove it.
     */
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   for (i = 0; i < numNodes; i++) {
+   for (i = 0; i < session->numNodes; i++) {
       HgfsHandle handle;
       DblLnkLst_Links *l;
 
-      if (nodeArray[i].state == FILENODE_STATE_UNUSED) {
+      if (session->nodeArray[i].state == FILENODE_STATE_UNUSED) {
          continue;
       }
 
-      handle = HgfsFileNode2Handle(&nodeArray[i]);
-      LOG(4, ("HgfsServer_InvalidateObjects: Examining node with fd %d (%s)\n",
-              handle, nodeArray[i].utf8Name));
+      handle = HgfsFileNode2Handle(&session->nodeArray[i]);
+      LOG(4, ("%s: Examining node with fd %d (%s)\n", __FUNCTION__,
+              handle, session->nodeArray[i].utf8Name));
 
       /* For each share, is the node within the share? */
       for (l = shares->next; l != shares; l = l->next) {
@@ -2352,43 +3389,43 @@ HgfsServer_InvalidateObjects(DblLnkLst_Links *shares) // IN: List of new shares
 
          share = DblLnkLst_Container(l, HgfsSharedFolder, links);
          ASSERT(share);
-	 if (HgfsServerCheckPathPrefix(nodeArray[i].utf8Name,
-				       share->path,
-				       share->pathLen)) {
-            LOG(4, ("HgfsServer_InvalidateObjects: Node is still valid\n"));
+         if (strcmp(session->nodeArray[i].shareInfo.rootDir, share->path) == 0) {
+            LOG(4, ("%s: Node is still valid\n", __FUNCTION__));
             break;
          }
       }
 
       /* If the node wasn't found in any share, remove it. */
       if (l == shares) {
-         LOG(4, ("HgfsServer_InvalidateObjects: Node is invalid, removing\n"));
-         if (!HgfsRemoveFromCacheInternal(handle)) {
-            LOG(4, ("HgfsServer_InvalidateObjects: Could not remove node with "
-                    "fh %d from the cache.\n", handle));
+         LOG(4, ("%s: Node is invalid, removing\n", __FUNCTION__));
+         if (!HgfsRemoveFromCacheInternal(handle, session)) {
+            LOG(4, ("%s: Could not remove node with "
+                    "fh %d from the cache.\n", __FUNCTION__, handle));
          } else {
-            HgfsFreeFileNodeInternal(handle);
+            HgfsFreeFileNodeInternal(handle, session);
          }
       }
    }
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+
+   SyncMutex_Unlock(&session->nodeArrayLock);
+
+   SyncMutex_Lock(&session->searchArrayLock);
 
    /*
     * Iterate over each search, skipping those that are on the free list. For
     * each search, if its base name is no longer within a share, remove it.
     */
-   SyncMutex_Lock(&hgfsSearchArrayLock);
-   for (i = 0; i < numSearches; i++) {
+   for (i = 0; i < session->numSearches; i++) {
       HgfsHandle handle;
       DblLnkLst_Links *l;
 
-      if (DblLnkLst_IsLinked(&searchArray[i].links)) {
+      if (DblLnkLst_IsLinked(&session->searchArray[i].links)) {
          continue;
       }
 
-      handle = HgfsSearch2SearchHandle(&searchArray[i]);
-      LOG(4, ("HgfsServer_InvalidateObjects: Examining search (%s)\n",
-              searchArray[i].utf8Dir));
+      handle = HgfsSearch2SearchHandle(&session->searchArray[i]);
+      LOG(4, ("%s: Examining search (%s)\n", __FUNCTION__,
+              session->searchArray[i].utf8Dir));
 
       /* For each share, is the search within the share? */
       for (l = shares->next; l != shares; l = l->next) {
@@ -2396,38 +3433,38 @@ HgfsServer_InvalidateObjects(DblLnkLst_Links *shares) // IN: List of new shares
 
          share = DblLnkLst_Container(l, HgfsSharedFolder, links);
          ASSERT(share);
-         if (HgfsServerCheckPathPrefix(searchArray[i].utf8Dir,
-				       share->path,
-				       share->pathLen)) {
-            LOG(4, ("HgfsServer_InvalidateObjects: Search is still valid\n"));
+         if (strcmp(session->searchArray[i].shareInfo.rootDir, share->path) == 0) {
+            LOG(4, ("%s: Search is still valid\n", __FUNCTION__));
             break;
          }
       }
 
       /* If the node wasn't found in any share, remove it. */
       if (l == shares) {
-         LOG(4, ("HgfsServer_InvalidateObjects: Search is invalid, removing"
-                 "\n"));
-         HgfsRemoveSearchInternal(&searchArray[i]);
+         LOG(4, ("%s: Search is invalid, removing\n", __FUNCTION__));
+         HgfsRemoveSearchInternal(&session->searchArray[i], session);
       }
    }
-   SyncMutex_Unlock(&hgfsSearchArrayLock);
 
-   LOG(4, ("HgfsServer_InvalidateObjects: Ending\n"));
+   SyncMutex_Unlock(&session->searchArrayLock);
+
+   LOG(4, ("%s: Ending\n", __FUNCTION__));
 }
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsServerCheckPathPrefix --
+ * HgfsServerSessionInvalidateObjects --
  *
- *      Given a path and a Hgfs host share path, check to see if the given
- *      share is a prefix of the path.
+ *      Iterates over all sessions and invalidate session objects for the shares
+ *      removed.
+ *
+ *      Caller guarantees that the sessions won't go away under us, so no locks
+ *      needed.
  *
  * Results:
- *      TRUE if share is a prefix of path.
- *      FALSE otherwise.
+ *      None
  *
  * Side effects:
  *      None
@@ -2435,45 +3472,19 @@ HgfsServer_InvalidateObjects(DblLnkLst_Links *shares) // IN: List of new shares
  *-----------------------------------------------------------------------------
  */
 
-static Bool
-HgfsServerCheckPathPrefix(const char *path,  // IN: Path to check
-                          const char *share, // IN: Prefix of path
-                          size_t shareLen)   // IN: Length of share
+void
+HgfsServerSessionInvalidateObjects(void *clientData,         // IN:
+                                    DblLnkLst_Links *shares)  // IN: List of new shares
 {
-   ASSERT(path);
-   ASSERT(share);
+   HgfsSessionInfo *session = (HgfsSessionInfo *)clientData;
 
-   /* First make sure that share is a prefix of path. */
-   if (strncmp(path, share, shareLen) != 0) {
-      return FALSE;
+   HgfsInvalidateSessionObjects(shares, session);
+
+#ifdef VMX86_TOOLS
+   if (hgfsStaticSession.session != NULL) {
+      HgfsInvalidateSessionObjects(shares, hgfsStaticSession.session);
    }
-
-   /*
-    * Special case. The root share on Linux or Apple ("/") will not be followed
-    * by a second path separator. In this case, no additional checks besides the
-    * initial prefix check are needed. Just return success.
-    */
-   if (shareLen == 1 && *share == DIRSEPC) {
-      return TRUE;
-   }
-
-   /*
-    * Now check to prevent false positives. In particular, consider the case
-    * where we have two shares: shareName and shareName1.
-    * Given the path /shareName1/test, the above check will allow through both
-    * shareName and shareName1. Check to make sure that the given share is
-    * a full path component.
-    */
-
-   if (*(path + shareLen) == DIRSEPC) {
-      return TRUE;
-   }
-
-   if (*(path + shareLen) == '\0') {
-      return TRUE;
-   }
-
-   return FALSE;
+#endif
 }
 
 
@@ -2518,7 +3529,8 @@ HgfsServerStatFs(const char *pathName, // IN: Path we're interested in
     * work.
     */
    if (pathLength < 0 || pathLength >= sizeof p.mountPoint) {
-      LOG(4, ("HgfsServerStatFs: could not get the volume name\n"));
+      LOG(4, ("%s: could not get the volume name\n", __FUNCTION__));
+
       return FALSE;
    }
 
@@ -2526,8 +3538,8 @@ HgfsServerStatFs(const char *pathName, // IN: Path we're interested in
    Str_Strcpy(p.mountPoint, pathName, sizeof p.mountPoint);
    wiperError = WiperSinglePartition_GetSpace(&p, freeBytes, totalBytes);
    if (strlen(wiperError) > 0) {
-      LOG(4, ("HgfsServerQueryVolume: error using wiper lib: %s\n",
-              wiperError));
+      LOG(4, ("%s: error using wiper lib: %s\n", __FUNCTION__, wiperError));
+
       return FALSE;
    }
 
@@ -2538,16 +3550,15 @@ HgfsServerStatFs(const char *pathName, // IN: Path we're interested in
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsServerGetAccess --
+ * HgfsServerGetShareInfo --
  *
- *    Test a name for access permission and construct its local name
- *    if access is allowed. The name returned is allocated and must be
- *    freed by the caller.
+ *    Construct local name based on the crossplatform CPName for the file.
+ *    The name returned is allocated and must be freed by the caller.
  *
  *    outLen can be NULL, in which case the length is not returned.
  *
  * Results:
- *    A status code indicating either success (access is allowed) or
+ *    A status code indicating either success (correspondent share exists) or
  *    a failure status.
  *
  * Side effects:
@@ -2557,22 +3568,20 @@ HgfsServerStatFs(const char *pathName, // IN: Path we're interested in
  */
 
 HgfsNameStatus
-HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filename to check
-                    size_t cpNameSize,             // IN:  Size of name cpName
-                    HgfsOpenMode mode,             // IN:  Requested access mode
-                    uint32 caseFlags,              // IN:  Case-sensitivity flags
-                    char **bufOut,                 // OUT: File name in local fs
-                    size_t *outLen)                // OUT: Length of name out
+HgfsServerGetShareInfo(char *cpName,            // IN:  Cross-platform filename to check
+                       size_t cpNameSize,       // IN:  Size of name cpName
+                       uint32 caseFlags,        // IN:  Case-sensitivity flags
+                       HgfsShareInfo *shareInfo,// OUT: properties of the shared folder
+                       char **bufOut,           // OUT: File name in local fs
+                       size_t *outLen)          // OUT: Length of name out
 {
    HgfsNameStatus nameStatus;
-   char const *sharePath;
    char const *inEnd;
    char *next;
    char *myBufOut;
    char *convertedMyBufOut;
    char *out;
    size_t outSize;
-   size_t sharePathLen; /* Length of share's path */
    size_t myBufOutLen;
    size_t convertedMyBufOutLen;
    int len;
@@ -2580,7 +3589,6 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
    char tempBuf[HGFS_PATH_MAX];
    size_t tempSize;
    char *tempPtr;
-   HgfsInternalStatus result;
    uint32 startIndex = 0;
    HgfsShareOptions shareOptions;
 
@@ -2594,7 +3602,8 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
     */
    len = CPName_GetComponent(cpName, inEnd, (char const **) &next);
    if (len < 0) {
-      LOG(4, ("HgfsServerGetAccess: get first component failed\n"));
+      LOG(4, ("%s: get first component failed\n", __FUNCTION__));
+
       return HGFS_NAME_STATUS_FAILURE;
    }
 
@@ -2604,21 +3613,22 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
    }
 
    /* Check permission on the share and get the share path */
-   nameStatus = HgfsServerPolicy_GetSharePath(cpName,
-                                              len,
-                                              mode,
-                                              &sharePathLen,
-                                              &sharePath);
+   nameStatus = HgfsServerPolicy_ProcessCPName(cpName,
+                                               len,
+                                               &shareInfo->readPermissions,
+                                               &shareInfo->writePermissions,
+                                               &shareInfo->rootDir);
    if (nameStatus != HGFS_NAME_STATUS_COMPLETE) {
-      LOG(4, ("HgfsServerGetAccess: No such share (%s) or access denied\n",
-              cpName));
+      LOG(4, ("%s: No such share (%s)\n", __FUNCTION__, cpName));
       return nameStatus;
    }
+   shareInfo->rootDirLen = strlen(shareInfo->rootDir);
 
    /* Get the config options. */
    nameStatus = HgfsServerPolicy_GetShareOptions(cpName, len, &shareOptions);
    if (nameStatus != HGFS_NAME_STATUS_COMPLETE) {
-      LOG(4, ("HgfsServerGetAccess: no matching share: %s.\n", cpName));
+      LOG(4, ("%s: no matching share: %s.\n", __FUNCTION__, cpName));
+
       return nameStatus;
    }
 
@@ -2629,10 +3639,12 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
    /*
     * Allocate space for the string. We trim the unused space later.
     */
+
    outSize = HGFS_PATH_MAX;
-   myBufOut = (char *)malloc(outSize * sizeof *myBufOut);
+   myBufOut = (char *) malloc(outSize * sizeof *myBufOut);
    if (!myBufOut) {
-      LOG(4, ("HgfsServerGetAccess: out of memory allocating string\n"));
+      LOG(4, ("%s: out of memory allocating string\n", __FUNCTION__));
+
       return HGFS_NAME_STATUS_OUT_OF_MEMORY;
    }
 
@@ -2641,7 +3653,7 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
    /*
     * See if we are dealing with a "root" share or regular share
     */
-   if (strlen(sharePath) == 0) {
+   if (shareInfo->rootDirLen == 0) {
       size_t prefixLen;
 
       /*
@@ -2653,11 +3665,9 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
       tempSize = sizeof tempBuf;
       tempPtr = tempBuf;
       nameStatus = CPName_ConvertFromRoot((char const **) &cpName,
-                                          &cpNameSize,
-                                          &tempSize,
-                                          &tempPtr);
+                                          &cpNameSize, &tempSize, &tempPtr);
       if (nameStatus != HGFS_NAME_STATUS_COMPLETE) {
-         LOG(4, ("HgfsServerGetAccess: ConvertFromRoot not complete\n"));
+         LOG(4, ("%s: ConvertFromRoot not complete\n", __FUNCTION__));
          goto error;
       }
 
@@ -2665,7 +3675,7 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
 
       /* Copy the UTF8 prefix to the output buffer. */
       if (prefixLen >= HGFS_PATH_MAX) {
-         Log("HgfsServerGetAccess: error: prefix too long\n");
+         Log("%s: error: prefix too long\n", __FUNCTION__);
          nameStatus = HGFS_NAME_STATUS_TOO_LONG;
          goto error;
       }
@@ -2678,15 +3688,15 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
       /*
        * This is a regular share. Append the path to the out buffer.
        */
-      if (outSize < sharePathLen + 1) {
-         LOG(4, ("HgfsServerGetAccess: share path too big\n"));
+      if (outSize < shareInfo->rootDirLen + 1) {
+         LOG(4, ("%s: share path too big\n", __FUNCTION__));
          nameStatus = HGFS_NAME_STATUS_TOO_LONG;
          goto error;
       }
 
-      memcpy(out, sharePath, sharePathLen + 1);
-      out += sharePathLen;
-      outSize -= sharePathLen;
+      memcpy(out, shareInfo->rootDir, shareInfo->rootDirLen + 1);
+      out += shareInfo->rootDirLen;
+      outSize -= shareInfo->rootDirLen;
    }
 
    /* Convert the rest of the input name (if any) to a local name */
@@ -2694,11 +3704,9 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
    tempPtr = tempBuf;
 
 
-   if (CPName_ConvertFrom((char const **) &cpName,
-                          &cpNameSize,
-                          &tempSize,
+   if (CPName_ConvertFrom((char const **) &cpName, &cpNameSize, &tempSize,
                           &tempPtr) < 0) {
-      LOG(4, ("HgfsServerGetAccess: CP name conversion failed\n"));
+      LOG(4, ("%s: CP name conversion failed\n", __FUNCTION__));
       nameStatus = HGFS_NAME_STATUS_FAILURE;
       goto error;
    }
@@ -2708,16 +3716,15 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
     * separator and since our remaining paths start with a separator, we
     * will skip over the second separator for this case. Bug 166755.
     */
-   if ((out != myBufOut) &&
-       (*(out - 1) == DIRSEPC) &&
-       (tempBuf[0] == DIRSEPC)) {
+
+   if ((out != myBufOut) && (*(out - 1) == DIRSEPC) && (tempBuf[0] == DIRSEPC)) {
       startIndex++;
    }
    pathNameLen = tempPtr - &tempBuf[startIndex];
 
    /* Copy UTF8 to the output buffer. */
    if (pathNameLen >= outSize) {
-      LOG(4, ("HgfsServerGetAccess: pathname too long\n"));
+      LOG(4, ("%s: pathname too long\n", __FUNCTION__));
       nameStatus = HGFS_NAME_STATUS_TOO_LONG;
       goto error;
    }
@@ -2736,17 +3743,16 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
        * so there is a need to convert the incoming name from HGFS clients
        * which is assumed to be in the normalized form C (precomposed).
        */
-      if (!CodeSet_Utf8FormCToUtf8FormD(myBufOut,
-                                        myBufOutLen,
-                                        &tempPtr,
+
+      if (!CodeSet_Utf8FormCToUtf8FormD(myBufOut, myBufOutLen, &tempPtr,
                                         &nameLen)) {
-         LOG(4, ("HgfsServerGetAccess: unicode conversion to form D failed.\n"));
+         LOG(4, ("%s: unicode conversion to form D failed.\n", __FUNCTION__));
          nameStatus = HGFS_NAME_STATUS_FAILURE;
          goto error;
       }
 
       free(myBufOut);
-      LOG(4, ("HgfsServerGetAccess: name is \"%s\"\n", myBufOut));
+      LOG(4, ("%s: name is \"%s\"\n", __FUNCTION__, myBufOut));
 
       /* Save returned pointers, update buffer length. */
       myBufOut = tempPtr;
@@ -2759,18 +3765,21 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
     * Convert file name to proper case if host default config option is not set
     * and case conversion is required for this platform.
     */
-   if (!HgfsServerPolicy_IsShareOptionSet(shareOptions, HGFS_SHARE_HOST_DEFAULT_CASE) &&
+
+   if (!HgfsServerPolicy_IsShareOptionSet(shareOptions,
+                                          HGFS_SHARE_HOST_DEFAULT_CASE) &&
        HgfsServerCaseConversionRequired()) {
-      result = HgfsServerConvertCase(sharePath, sharePathLen, myBufOut,
-                                     myBufOutLen, caseFlags,
-                                     &convertedMyBufOut, &convertedMyBufOutLen);
+      nameStatus = HgfsServerConvertCase(shareInfo->rootDir, shareInfo->rootDirLen,
+                                         myBufOut, myBufOutLen, caseFlags,
+                                         &convertedMyBufOut,
+                                         &convertedMyBufOutLen);
 
       /*
        * On success, use the converted file names for further operations.
        */
-      if (result != 0) {
-         LOG(4, ("HgfsServerGetAccess: HgfsServerConvertCase failed.\n"));
-         nameStatus  = HGFS_NAME_STATUS_FAILURE;
+
+      if (nameStatus != HGFS_NAME_STATUS_COMPLETE) {
+         LOG(4, ("%s: HgfsServerConvertCase failed.\n", __FUNCTION__));
          goto error;
       }
 
@@ -2781,20 +3790,22 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
    }
 
    /* Check for symlinks if the followSymlinks option is not set. */
-   if (!HgfsServerPolicy_IsShareOptionSet(shareOptions, HGFS_SHARE_FOLLOW_SYMLINKS)) {
+   if (!HgfsServerPolicy_IsShareOptionSet(shareOptions,
+                                          HGFS_SHARE_FOLLOW_SYMLINKS)) {
       /*
        * Verify that either the path is same as share path or the path until the
        * parent directory is within the share.
        *
-       * XXX: Symlink check could become susceptible to TOCTOU (time-of-check, time-of-use)
-       * attack when we move to asynchrounous HGFS operations. We should use the resolved
-       * file path for further file system operations, instead of using the one passed
-       * from the client.
+       * XXX: Symlink check could become susceptible to TOCTOU (time-of-check,
+       * time-of-use) attack when we move to asynchrounous HGFS operations.
+       * We should use the resolved file path for further file system
+       * operations, instead of using the one passed from the client.
        */
-      result = HgfsServerHasSymlink(myBufOut, myBufOutLen, sharePath, sharePathLen);
-      if (result != 0) {
-         LOG(4, ("HgfsServerGetAccess: parent path contains a symlink\n"));
-         nameStatus = HGFS_NAME_STATUS_FAILURE;
+      nameStatus = HgfsServerHasSymlink(myBufOut, myBufOutLen, shareInfo->rootDir,
+                                        shareInfo->rootDirLen);
+      if (nameStatus != HGFS_NAME_STATUS_COMPLETE) {
+         LOG(4, ("%s: parent path failed to be resolved: %d\n",
+                 __FUNCTION__, nameStatus));
          goto error;
       }
    }
@@ -2807,7 +3818,7 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
       /* Enough space for resulting string + NUL termination */
       p = realloc(myBufOut, (myBufOutLen + 1) * sizeof *p);
       if (!p) {
-         LOG(4, ("HgfsServerGetAccess: failed to trim memory\n"));
+         LOG(4, ("%s: failed to trim memory\n", __FUNCTION__));
       } else {
          myBufOut = p;
       }
@@ -2817,13 +3828,15 @@ HgfsServerGetAccess(char *cpName,                  // IN:  Cross-platform filena
       }
    }
 
-   LOG(4, ("HgfsServerGetAccess: name is \"%s\"\n", myBufOut));
+   LOG(4, ("%s: name is \"%s\"\n", __FUNCTION__, myBufOut));
 
    *bufOut = myBufOut;
+
    return HGFS_NAME_STATUS_COMPLETE;
 
 error:
    free(myBufOut);
+
    return nameStatus;
 }
 
@@ -2837,7 +3850,7 @@ error:
  *
  *    This function assumes that CPName_GetComponent() will always succeed
  *    with a size greater than 0, so it must ONLY be called after a call to
- *    HgfsServerGetAccess() that returns HGFS_NAME_STATUS_COMPLETE.
+ *    HgfsServerGetShareInfo() that returns HGFS_NAME_STATUS_COMPLETE.
  *
  * Results:
  *    True if it is a shared folder only, otherwise false
@@ -2862,6 +3875,7 @@ HgfsServerIsSharedFolderOnly(char const *cpName,// IN:  Cross-platform filename 
 
    len = CPName_GetComponent(cpName, inEnd, &next);
    ASSERT(len > 0);
+
    return (next == inEnd);
 }
 
@@ -2883,23 +3897,25 @@ HgfsServerIsSharedFolderOnly(char const *cpName,// IN:  Cross-platform filename 
  */
 
 void
-HgfsServerDumpDents(HgfsHandle searchHandle) // IN: Handle to dump dents from
+HgfsServerDumpDents(HgfsHandle searchHandle,  // IN: Handle to dump dents from
+                    HgfsSessionInfo *session) // IN: Session info
 {
 #ifdef VMX86_LOG
    unsigned int i;
    HgfsSearch *search;
 
-   SyncMutex_Lock(&hgfsSearchArrayLock);
-   search = HgfsSearchHandle2Search(searchHandle);
+   SyncMutex_Lock(&session->searchArrayLock);
+   search = HgfsSearchHandle2Search(searchHandle, session);
    if (search != NULL) {
-      Log("HgfsServerDumpDents: %u dents in \"%s\"\n",
-          search->numDents, search->utf8Dir);
+      Log("%s: %u dents in \"%s\"\n", __FUNCTION__, search->numDents,
+          search->utf8Dir);
+
       Log("Dumping dents:\n");
       for (i = 0; i < search->numDents; i++) {
          Log("\"%s\"\n", search->dents[i]->d_name);
       }
    }
-   SyncMutex_Unlock(&hgfsSearchArrayLock);
+   SyncMutex_Unlock(&session->searchArrayLock);
 #endif
 }
 
@@ -2936,7 +3952,7 @@ HgfsServerGetDents(HgfsGetNameFunc getName,     // IN: Function to get name
 
    state = initName();
    if (!state) {
-      LOG(4, ("HgfsServerGetDents: Couldn't init state\n"));
+      LOG(4, ("%s: Couldn't init state\n", __FUNCTION__));
       goto error_free;
    }
 
@@ -2957,13 +3973,13 @@ HgfsServerGetDents(HgfsGetNameFunc getName,     // IN: Function to get name
          len = 2;
       } else {
          if (!getName(state, &name, &len, &done)) {
-            LOG(4, ("HgfsServerGetDents: Couldn't get next name\n"));
+            LOG(4, ("%s: Couldn't get next name\n", __FUNCTION__));
             goto error;
          }
       }
 
       if (done) {
-         LOG(4, ("HgfsServerGetDents: No more names\n"));
+         LOG(4, ("%s: No more names\n", __FUNCTION__));
          break;
       }
 
@@ -2979,7 +3995,7 @@ HgfsServerGetDents(HgfsGetNameFunc getName,     // IN: Function to get name
       maxLen = sizeof pDirEntry->d_name;
 #endif
       if (len >= maxLen) {
-         Log("HgfsServerGetDents: Error: Name \"%s\" is too long.\n", name);
+         Log("%s: Error: Name \"%s\" is too long.\n", __FUNCTION__, name);
          continue;
       }
 
@@ -2994,25 +4010,25 @@ HgfsServerGetDents(HgfsGetNameFunc getName,     // IN: Function to get name
          }
          p = realloc(myDents, totalDents * sizeof *myDents);
          if (!p) {
-            LOG(4, ("HgfsServerGetDents: Couldn't reallocate array memory\n"));
+            LOG(4, ("%s: Couldn't reallocate array memory\n", __FUNCTION__));
             goto error;
          }
          myDents = (DirectoryEntry **)p;
       }
 
       /* This file/directory can be added to the list. */
-      LOG(4, ("HgfsServerGetDents: Nextfilename = \"%s\"\n", name));
+      LOG(4, ("%s: Nextfilename = \"%s\"\n", __FUNCTION__, name));
 
       /*
        * Start with the size of the DirectoryEntry struct, subtract the static
-       * length of the d_name buffer (256 in Linux, 1 in Solaris, etc) and add back
-       * just enough space for the UTF-8 name and nul terminator.
+       * length of the d_name buffer (256 in Linux, 1 in Solaris, etc) and add
+       * back just enough space for the UTF-8 name and nul terminator.
        */
-      newDirEntryLen =
-         sizeof *pDirEntry - sizeof pDirEntry->d_name + len + 1;
+
+      newDirEntryLen = sizeof *pDirEntry - sizeof pDirEntry->d_name + len + 1;
       pDirEntry = (DirectoryEntry *)malloc(newDirEntryLen);
       if (!pDirEntry) {
-         LOG(4, ("HgfsServerGetDents: Couldn't allocate dentry memory\n"));
+         LOG(4, ("%s: Couldn't allocate dentry memory\n", __FUNCTION__));
          goto error;
       }
       pDirEntry->d_reclen = (unsigned short)newDirEntryLen;
@@ -3025,7 +4041,7 @@ HgfsServerGetDents(HgfsGetNameFunc getName,     // IN: Function to get name
 
    /* We are done; cleanup the state */
    if (!cleanupName(state)) {
-      LOG(4, ("HgfsServerGetDents: Non-error cleanup failed\n"));
+      LOG(4, ("%s: Non-error cleanup failed\n", __FUNCTION__));
       goto error_free;
    }
 
@@ -3035,7 +4051,7 @@ HgfsServerGetDents(HgfsGetNameFunc getName,     // IN: Function to get name
 
       p = realloc(myDents, numDents * sizeof *myDents);
       if (!p) {
-         LOG(4, ("HgfsServerGetDents: Couldn't realloc less array memory\n"));
+         LOG(4, ("%s: Couldn't realloc less array memory\n", __FUNCTION__));
          *dents = myDents;
       } else {
          *dents = (DirectoryEntry **)p;
@@ -3047,7 +4063,7 @@ HgfsServerGetDents(HgfsGetNameFunc getName,     // IN: Function to get name
 error:
    /* Cleanup the callback state */
    if (!cleanupName(state)) {
-      LOG(4, ("HgfsServerGetDents: Error cleanup failed\n"));
+      LOG(4, ("%s: Error cleanup failed\n", __FUNCTION__));
    }
 
 error_free:
@@ -3093,8 +4109,9 @@ error_free:
 HgfsInternalStatus
 HgfsServerSearchRealDir(char const *baseDir,      // IN: Directory to search
                         size_t baseDirLen,        // IN: Length of directory
-                        DirectorySearchType type, // IN: Kind of search
                         char const *shareName,    // IN: Share name containing the directory
+                        char const *rootDir,      // IN: Shared folder root directory
+                        HgfsSessionInfo *session, // IN: Session info
                         HgfsHandle *handle)       // OUT: Search handle
 {
    HgfsSearch *search = NULL;
@@ -3106,13 +4123,13 @@ HgfsServerSearchRealDir(char const *baseDir,      // IN: Directory to search
 
    ASSERT(baseDir);
    ASSERT(handle);
-   ASSERT(type == DIRECTORY_SEARCH_TYPE_DIR);
    ASSERT(shareName);
 
-   SyncMutex_Lock(&hgfsSearchArrayLock);
-   search = HgfsAddNewSearch(baseDir, type, shareName);
+   SyncMutex_Lock(&session->searchArrayLock);
+   search = HgfsAddNewSearch(baseDir, DIRECTORY_SEARCH_TYPE_DIR, shareName,
+                             rootDir, session);
    if (!search) {
-      LOG(4, ("HgfsServerSearchRealDir: failed to get new search\n"));
+      LOG(4, ("%s: failed to get new search\n", __FUNCTION__));
       status = HGFS_INTERNAL_STATUS_ERROR;
       goto out;
    }
@@ -3121,9 +4138,9 @@ HgfsServerSearchRealDir(char const *baseDir,      // IN: Directory to search
    nameStatus = HgfsServerPolicy_GetShareOptions(shareName, strlen(shareName),
                                                  &configOptions);
    if (nameStatus != HGFS_NAME_STATUS_COMPLETE) {
-      LOG(4, ("HgfsServerSearchRealDir: no matching share: %s.\n", shareName));
+      LOG(4, ("%s: no matching share: %s.\n", __FUNCTION__, shareName));
       status = HGFS_INTERNAL_STATUS_ERROR;
-      HgfsRemoveSearchInternal(search);
+      HgfsRemoveSearchInternal(search, session);
       goto out;
    }
 
@@ -3133,15 +4150,17 @@ HgfsServerSearchRealDir(char const *baseDir,      // IN: Directory to search
    status = HgfsServerScandir(baseDir, baseDirLen, followSymlinks,
                               &search->dents, &numDents);
    if (status != 0) {
-      LOG(4, ("HgfsServerSearchRealDir: couldn't scandir\n"));
-      HgfsRemoveSearchInternal(search);
+      LOG(4, ("%s: couldn't scandir\n", __FUNCTION__));
+      HgfsRemoveSearchInternal(search, session);
       goto out;
    }
 
    search->numDents = numDents;
    *handle = HgfsSearch2SearchHandle(search);
+
   out:
-   SyncMutex_Unlock(&hgfsSearchArrayLock);
+   SyncMutex_Unlock(&session->searchArrayLock);
+
    return status;
 }
 
@@ -3171,6 +4190,7 @@ HgfsServerSearchVirtualDir(HgfsGetNameFunc *getName,     // IN: Name enumerator
                            HgfsInitFunc *initName,       // IN: Init function
                            HgfsCleanupFunc *cleanupName, // IN: Cleanup function
                            DirectorySearchType type,     // IN: Kind of search
+                           HgfsSessionInfo *session,     // IN: Session info
                            HgfsHandle *handle)           // OUT: Search handle
 {
    HgfsInternalStatus status = 0;
@@ -3182,29 +4202,28 @@ HgfsServerSearchVirtualDir(HgfsGetNameFunc *getName,     // IN: Name enumerator
    ASSERT(cleanupName);
    ASSERT(handle);
 
-   SyncMutex_Lock(&hgfsSearchArrayLock);
-   search = HgfsAddNewSearch("", type, "");
+   SyncMutex_Lock(&session->searchArrayLock);
+   search = HgfsAddNewSearch("", type, "", "", session);
    if (!search) {
-      LOG(4, ("HgfsServerSearchVirtualDir: failed to get new search\n"));
+      LOG(4, ("%s: failed to get new search\n", __FUNCTION__));
       status = HGFS_INTERNAL_STATUS_ERROR;
       goto out;
    }
 
-   result = HgfsServerGetDents(getName,
-                               initName,
-                               cleanupName,
-                               &search->dents);
+   result = HgfsServerGetDents(getName, initName, cleanupName, &search->dents);
    if (result < 0) {
-      LOG(4, ("HgfsServerSearchVirtualDir: couldn't get dents\n"));
-      HgfsRemoveSearchInternal(search);
+      LOG(4, ("%s: couldn't get dents\n", __FUNCTION__));
+      HgfsRemoveSearchInternal(search, session);
       status = HGFS_INTERNAL_STATUS_ERROR;
       goto out;
    }
 
    search->numDents = result;
    *handle = HgfsSearch2SearchHandle(search);
+
   out:
-   SyncMutex_Unlock(&hgfsSearchArrayLock);
+   SyncMutex_Unlock(&session->searchArrayLock);
+
    return status;
 }
 
@@ -3229,12 +4248,14 @@ HgfsServerSearchVirtualDir(HgfsGetNameFunc *getName,     // IN: Name enumerator
  */
 
 Bool
-HgfsRemoveFromCache(HgfsHandle handle)	// IN: Hgfs handle to the node
+HgfsRemoveFromCache(HgfsHandle handle,	      // IN: Hgfs handle to the node
+                    HgfsSessionInfo *session) // IN: Session info
 {
    Bool removed = FALSE;
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   removed = HgfsRemoveFromCacheInternal(handle);
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+
+   SyncMutex_Lock(&session->nodeArrayLock);
+   removed = HgfsRemoveFromCacheInternal(handle, session);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    return removed;
 }
@@ -3258,13 +4279,14 @@ HgfsRemoveFromCache(HgfsHandle handle)	// IN: Hgfs handle to the node
  */
 
 Bool
-HgfsIsCached(HgfsHandle handle) // IN: Structure representing file node
+HgfsIsCached(HgfsHandle handle,         // IN: Structure representing file node
+             HgfsSessionInfo *session)  // IN: Session info
 {
    Bool cached = FALSE;
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   cached = HgfsIsCachedInternal(handle);
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   cached = HgfsIsCachedInternal(handle, session);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    return cached;
 }
@@ -3286,7 +4308,8 @@ HgfsIsCached(HgfsHandle handle) // IN: Structure representing file node
  *
  *    Assumes that there is at least one node in the cache.
  *
- *    hgfsNodeArrayLock should be acquired prior to calling this function.
+ *    The session's nodeArrayLock should be acquired prior to calling this
+ *    function.
  *
  * Results:
  *    TRUE on success
@@ -3299,28 +4322,48 @@ HgfsIsCached(HgfsHandle handle) // IN: Structure representing file node
  */
 
 Bool
-HgfsRemoveLruNode(void)
+HgfsRemoveLruNode(HgfsSessionInfo *session)   // IN: session info
 {
    HgfsFileNode *lruNode = NULL;
    HgfsHandle handle;
    Bool found = FALSE;
 
-   ASSERT(numCachedOpenNodes > 0);
-   /* Remove the first item from the list that does not have a server lock. */
+   ASSERT(session);
+   ASSERT(session->numCachedOpenNodes > 0);
+
+   /*
+    * Remove the first item from the list that does not have a server lock,
+    * file context or is open in sequential mode.
+    */
    while (!found) {
-      lruNode = DblLnkLst_Container(nodeCachedList.next, HgfsFileNode, links);
+      lruNode = DblLnkLst_Container(session->nodeCachedList.next,
+                                    HgfsFileNode, links);
+
       ASSERT(lruNode->state == FILENODE_STATE_IN_USE_CACHED);
-      if (lruNode->serverLock != HGFS_LOCK_NONE) {
-         /* Move this node with the server lock to the beginning of the list. */
+      if (lruNode->serverLock != HGFS_LOCK_NONE || lruNode->fileCtx != NULL
+          || (lruNode->flags & HGFS_FILE_NODE_SEQUENTIAL_FL) != 0) {
+         /*
+	  * Move this node with the server lock to the beginning of the list.
+	  * Also, prevent files opened in HGFS_FILE_NODE_SEQUENTIAL_FL mode
+	  * from being closed. -- On some platforms, this mode does not
+	  * allow files to be closed/re-opened (eg: When restoring a file
+	  * into a Windows guest you cannot use BackupWrite, then close and
+	  * re-open the file and continue to use BackupWrite.
+	  */
          DblLnkLst_Unlink1(&lruNode->links);
-         DblLnkLst_LinkLast(&nodeCachedList, &lruNode->links);
+         DblLnkLst_LinkLast(&session->nodeCachedList, &lruNode->links);
       } else {
          found = TRUE;
       }
    }
-   handle = HgfsFileNode2Handle(lruNode);
-   if (!HgfsRemoveFromCacheInternal(handle)) {
-      LOG(4, ("HgfsRemoveLruNode: Could not remove the node from cache.\n"));
+   if (found) {
+      handle = HgfsFileNode2Handle(lruNode);
+      if (!HgfsRemoveFromCacheInternal(handle, session)) {
+         LOG(4, ("%s: Could not remove the node from cache.\n", __FUNCTION__));
+         return FALSE;
+      }
+   } else {
+      LOG(4, ("%s: Could not find a node to remove from cache.\n", __FUNCTION__));
       return FALSE;
    }
 
@@ -3346,12 +4389,15 @@ HgfsRemoveLruNode(void)
  */
 
 Bool
-HgfsAddToCache(HgfsHandle handle) // IN: HGFS file handle
+HgfsAddToCache(HgfsHandle handle,        // IN: HGFS file handle
+               HgfsSessionInfo *session) // IN: Session info
 {
    Bool added = FALSE;
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   added = HgfsAddToCacheInternal(handle);
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+
+   SyncMutex_Lock(&session->nodeArrayLock);
+   added = HgfsAddToCacheInternal(handle, session);
+   SyncMutex_Unlock(&session->nodeArrayLock);
+
    return added;
 }
 
@@ -3377,26 +4423,30 @@ Bool
 HgfsCreateAndCacheFileNode(HgfsFileOpenInfo *openInfo, // IN: Open info struct
                            HgfsLocalId const *localId, // IN: Local unique file ID
                            fileDesc fileDesc,          // IN: Handle to the fileopenInfo,
-                           Bool append)                // IN: flag to append
+                           Bool append,                // IN: flag to append
+                           HgfsSessionInfo *session)   // IN: session info
 {
    HgfsHandle handle;
    HgfsFileNode *node = NULL;
    char const *inEnd;
    char const *next;
-   uint32 len;
+   int len;
    Bool sharedFolderOpen = FALSE;
 
    ASSERT(openInfo);
    ASSERT(localId);
+   ASSERT(session);
 
    inEnd = openInfo->cpName + openInfo->cpNameSize;
 
    /*
     * Get first component.
     */
+
    len = CPName_GetComponent(openInfo->cpName, inEnd, &next);
    if (len < 0) {
-      LOG(4, ("HgfsServerGetAccess: get first component failed\n"));
+      LOG(4, ("%s: get first component failed\n", __FUNCTION__));
+
       return FALSE;
    }
 
@@ -3409,27 +4459,25 @@ HgfsCreateAndCacheFileNode(HgfsFileOpenInfo *openInfo, // IN: Open info struct
       sharedFolderOpen = TRUE;
    }
 
-   SyncMutex_Lock(&hgfsNodeArrayLock);
-   node = HgfsAddNewFileNode(openInfo,
-                             localId,
-                             fileDesc,
-                             append,
-                             len,
-                             openInfo->cpName,
-                             sharedFolderOpen);
+   SyncMutex_Lock(&session->nodeArrayLock);
+   node = HgfsAddNewFileNode(openInfo, localId, fileDesc, append, len,
+                             openInfo->cpName, sharedFolderOpen, session);
+
    if (node == NULL) {
-      LOG(4, ("HgfsCreateAndCacheFileNode: Failed to add new node.\n"));
-      SyncMutex_Unlock(&hgfsNodeArrayLock);
+      LOG(4, ("%s: Failed to add new node.\n", __FUNCTION__));
+      SyncMutex_Unlock(&session->nodeArrayLock);
+
       return FALSE;
    }
    handle = HgfsFileNode2Handle(node);
 
-   if (!HgfsAddToCacheInternal(handle)) {
-      LOG(4, ("HgfsCreateAndCacheFileNode: Failed to add node to the cache.\n"));
-      SyncMutex_Unlock(&hgfsNodeArrayLock);
+   if (!HgfsAddToCacheInternal(handle, session)) {
+      LOG(4, ("%s: Failed to add node to the cache.\n", __FUNCTION__));
+      SyncMutex_Unlock(&session->nodeArrayLock);
+
       return FALSE;
    }
-   SyncMutex_Unlock(&hgfsNodeArrayLock);
+   SyncMutex_Unlock(&session->nodeArrayLock);
 
    /* Only after everything is successful, save the handle in the open info. */
    openInfo->file = handle;
@@ -3476,7 +4524,7 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
       {
          HgfsRequestOpenV3 *requestV3 =
 	                   (HgfsRequestOpenV3 *)HGFS_REQ_GET_PAYLOAD_V3(packetIn);
-         LOG(4, ("HgfsUnpackOpenRequest: HGFS_OP_OPEN_V3\n"));
+         LOG(4, ("%s: HGFS_OP_OPEN_V3\n", __FUNCTION__));
 
 
          /* Enforced by the dispatch function. */
@@ -3494,6 +4542,7 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
           */
          if (requestV3->fileName.length > extra) {
             /* The input packet is smaller than the request. */
+
             return FALSE;
          }
 
@@ -3506,7 +4555,7 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
          openInfo->mode = requestV3->mode;
          openInfo->cpName = requestV3->fileName.name;
          openInfo->cpNameSize = requestV3->fileName.length;
-	 openInfo->caseFlags = requestV3->fileName.caseType;
+         openInfo->caseFlags = requestV3->fileName.caseType;
          openInfo->flags = requestV3->flags;
          openInfo->specialPerms = requestV3->specialPerms;
          openInfo->ownerPerms = requestV3->ownerPerms;
@@ -3530,6 +4579,7 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
 
          if (!(requestV2->mask & HGFS_OPEN_VALID_FILE_NAME)) {
             /* We do not support open requests without a valid file name. */
+
             return FALSE;
          }
 
@@ -3547,6 +4597,7 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
           * garbage, but it's simpler to copy everything now and check the
           * valid bits before reading later.
           */
+
          openInfo->mask = requestV2->mask;
          openInfo->mode = requestV2->mode;
          openInfo->cpName = requestV2->fileName.name;
@@ -3565,8 +4616,7 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
       }
    case HGFS_OP_OPEN:
       {
-         HgfsRequestOpen *requestV1 =
-            (HgfsRequestOpen *)packetIn;
+         HgfsRequestOpen *requestV1 = (HgfsRequestOpen *)packetIn;
 
          /* Enforced by the dispatch function. */
          ASSERT(packetSize >= sizeof *requestV1);
@@ -3579,14 +4629,15 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
 
          if (requestV1->fileName.length > extra) {
             /* The input packet is smaller than the request. */
+
             return FALSE;
          }
 
          /* For OpenV1 requests, we know exactly what fields we expect. */
          openInfo->mask = HGFS_OPEN_VALID_MODE |
-            HGFS_OPEN_VALID_FLAGS |
-            HGFS_OPEN_VALID_OWNER_PERMS |
-            HGFS_OPEN_VALID_FILE_NAME;
+                          HGFS_OPEN_VALID_FLAGS |
+                          HGFS_OPEN_VALID_OWNER_PERMS |
+                          HGFS_OPEN_VALID_FILE_NAME;
          openInfo->mode = requestV1->mode;
          openInfo->cpName = requestV1->fileName.name;
          openInfo->cpNameSize = requestV1->fileName.length;
@@ -3619,38 +4670,67 @@ HgfsUnpackOpenRequest(char const *packetIn,        // IN: request packet
  */
 
 Bool
-HgfsPackOpenReply(HgfsFileOpenInfo *openInfo,   // IN: open info struct
-                  char *packetOut,              // IN/OUT: outgoing packet
-                  size_t *packetSize)           // IN/OUT: size of packet
+HgfsPackOpenReply(char const *packetIn,         // IN: incoming packet
+                  HgfsInternalStatus status,    // IN: reply status
+                  HgfsFileOpenInfo *openInfo,   // IN: open info struct
+                  char **packetOut,             // OUT: outgoing packet
+                  size_t *packetSize)           // OUT: size of packet
 {
-   ASSERT(packetOut);
-   ASSERT(packetSize);
+   HgfsHandle id;
+
+   ASSERT(packetIn);
    ASSERT(openInfo);
+   ASSERT(packetSize);
+
+   *packetOut = NULL;
+   *packetSize = 0;
+   id = ((HgfsRequest *)packetIn)->id;
 
    switch (openInfo->requestType) {
    case HGFS_OP_OPEN_V3: {
-      HgfsReplyOpenV3 *reply = (HgfsReplyOpenV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
+      HgfsReply *replyHeader;
+      HgfsReplyOpenV3 *reply;
+
+      *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      replyHeader = (HgfsReply *)(*packetOut);
+      replyHeader->status = HgfsConvertFromInternalStatus(status);
+      replyHeader->id = id;
+
+      reply = (HgfsReplyOpenV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
       reply->file = openInfo->file;
       if (openInfo->mask & HGFS_OPEN_VALID_SERVER_LOCK) {
          reply->acquiredLock = openInfo->acquiredLock;
       }
       reply->reserved = 0;
-      *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
       break;
    }
    case HGFS_OP_OPEN_V2: {
-      HgfsReplyOpenV2 *reply = (HgfsReplyOpenV2 *)packetOut;
+      HgfsReplyOpenV2 *reply;
+
+      *packetSize = sizeof *reply;
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      reply = (HgfsReplyOpenV2 *)*packetOut;
+      reply->header.status = HgfsConvertFromInternalStatus(status);
+      reply->header.id = id;
       reply->file = openInfo->file;
       if (openInfo->mask & HGFS_OPEN_VALID_SERVER_LOCK) {
          reply->acquiredLock = openInfo->acquiredLock;
       }
-      *packetSize = sizeof *reply;
       break;
    }
    case HGFS_OP_OPEN: {
-      HgfsReplyOpen *reply = (HgfsReplyOpen *)packetOut;
-      reply->file = openInfo->file;
+      HgfsReplyOpen *reply;
+
       *packetSize = sizeof *reply;
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      reply = (HgfsReplyOpen *)*packetOut;
+      reply->file = openInfo->file;
+      reply->header.status = HgfsConvertFromInternalStatus(status);
+      reply->header.id = id;
       break;
    }
    default:
@@ -3712,8 +4792,8 @@ HgfsUnpackDeleteRequest(char const *packetIn,        // IN: request packet
    case HGFS_OP_DELETE_DIR_V3: {
       HgfsRequestDeleteV3 *requestV3;
 
-      requestV3 = (HgfsRequestDeleteV3 *)HGFS_REQ_GET_PAYLOAD_V3(packetIn);
-      LOG(4, ("HgfsUnpackDeleteRequest: HGFS_OP_DELETE_DIR_V3\n"));
+      requestV3 = (HgfsRequestDeleteV3 *) HGFS_REQ_GET_PAYLOAD_V3(packetIn);
+      LOG(4, ("%s: HGFS_OP_DELETE_DIR_V3\n", __FUNCTION__));
 
       /* Enforced by the dispatch function. */
       ASSERT(packetSize >= HGFS_REQ_PAYLOAD_SIZE_V3(requestV3));
@@ -3739,11 +4819,12 @@ HgfsUnpackDeleteRequest(char const *packetIn,        // IN: request packet
           */
          if (requestV3->fileName.length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
          *cpName = requestV3->fileName.name;
          *cpNameSize = requestV3->fileName.length;
-	 *caseFlags = requestV3->fileName.caseType;
+         *caseFlags = requestV3->fileName.caseType;
       }
       break;
    }
@@ -3762,6 +4843,7 @@ HgfsUnpackDeleteRequest(char const *packetIn,        // IN: request packet
        * If we've been asked to reuse a handle, we don't need to look at, let
        * alone test the filename or its length.
        */
+
       if (*hints & HGFS_DELETE_HINT_USE_FILE_DESC) {
          *file = requestV2->file;
          *cpName = NULL;
@@ -3775,6 +4857,7 @@ HgfsUnpackDeleteRequest(char const *packetIn,        // IN: request packet
           */
          if (requestV2->fileName.length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
          *cpName = requestV2->fileName.name;
@@ -3793,12 +4876,13 @@ HgfsUnpackDeleteRequest(char const *packetIn,        // IN: request packet
       extra = packetSize - sizeof *requestV1;
 
       /*
-       * request->fileName.length is user-provided, so this test must be carefully
-       * written to prevent wraparounds.
+       * request->fileName.length is user-provided, so this test must be
+       * carefully written to prevent wraparounds.
        */
 
       if (requestV1->fileName.length > extra) {
          /* The input packet is smaller than the request. */
+
          return FALSE;
       }
       *cpName = requestV1->fileName.name;
@@ -3835,21 +4919,31 @@ HgfsUnpackDeleteRequest(char const *packetIn,        // IN: request packet
  */
 
 Bool
-HgfsPackDeleteReply(HgfsOp deleteOp,           // IN: delete operation version
-                    char *packetOut,           // IN/OUT: outgoing packet
-                    size_t *packetSize)        // IN/OUT: size of packet
-
+HgfsPackDeleteReply(char const *packetIn,      // IN: incoming packet
+                    HgfsInternalStatus status, // IN: reply status
+                    char **packetOut,          // OUT: outgoing packet
+                    size_t *packetSize)        // OUT: size of packet
 {
+   HgfsRequest *header = (HgfsRequest *)packetIn;
    Bool result = TRUE;
-   ASSERT(packetOut);
+
+   ASSERT(packetIn);
    ASSERT(packetSize);
 
-   switch (deleteOp) {
+   *packetOut = NULL;
+   *packetSize = 0;
+
+   switch (header->op) {
    case HGFS_OP_DELETE_FILE_V3:
    case HGFS_OP_DELETE_DIR_V3: {
-      HgfsReplyDeleteV3 *reply = (HgfsReplyDeleteV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
-      reply->reserved = 0;
+      HgfsReplyDeleteV3 *reply;
+
       *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = header->id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
+      reply = (HgfsReplyDeleteV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
+      reply->reserved = 0;
       break;
    }
    case HGFS_OP_DELETE_FILE_V2:
@@ -3857,10 +4951,12 @@ HgfsPackDeleteReply(HgfsOp deleteOp,           // IN: delete operation version
    case HGFS_OP_DELETE_DIR_V2:
    case HGFS_OP_DELETE_DIR:
       *packetSize = sizeof(HgfsReplyDelete);
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = header->id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
       break;
    default:
-      LOG(4, ("HgfsPackDeleteReply: invalid op code %d\n",
-              deleteOp));
+      LOG(4, ("%s: invalid op code %d\n", __FUNCTION__, header->op));
       result = FALSE;
       break;
    }
@@ -3938,7 +5034,7 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
       HgfsFileNameV3 *newName;
 
       requestV3 = (HgfsRequestRenameV3 *)HGFS_REQ_GET_PAYLOAD_V3(packetIn);
-      LOG(4, ("HgfsUnpackRenameRequest: HGFS_OP_RENAME_V3\n"));
+      LOG(4, ("%s: HGFS_OP_RENAME_V3\n", __FUNCTION__));
 
       /* Enforced by the dispatch function. */
       ASSERT(packetSize >= HGFS_REQ_PAYLOAD_SIZE_V3(requestV3));
@@ -3966,6 +5062,7 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
           */
          if (requestV3->oldName.length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
 
@@ -3973,7 +5070,8 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
          *cpOldName = requestV3->oldName.name;
          *cpOldNameLen = requestV3->oldName.length;
          *oldCaseFlags = requestV3->oldName.caseType;
-         newName = (HgfsFileNameV3 *)(requestV3->oldName.name + 1 + *cpOldNameLen);
+         newName = (HgfsFileNameV3 *)(requestV3->oldName.name + 1 +
+                                                             *cpOldNameLen);
       }
       extra -= *cpOldNameLen;
 
@@ -3986,6 +5084,7 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
       } else {
          if (newName->length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
 
@@ -4014,6 +5113,7 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
        * alone test the filename or its length. This applies to the source
        * and the target.
        */
+
       if (*hints & HGFS_RENAME_HINT_USE_SRCFILE_DESC) {
          *srcFile = requestV2->srcFile;
          *cpOldName = NULL;
@@ -4024,8 +5124,10 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
           * request->fileName.length is user-provided, so this test must be
           * carefully written to prevent wraparounds.
           */
+
          if (requestV2->oldName.length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
 
@@ -4045,6 +5147,7 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
                                        + *cpOldNameLen);
          if (newName->length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
 
@@ -4067,11 +5170,13 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
       extra = packetSize - sizeof *requestV1;
 
       /*
-       * request->fileName.length is user-provided, so this test must be carefully
-       * written to prevent wraparounds.
+       * request->fileName.length is user-provided, so this test must be
+       * carefully written to prevent wraparounds.
        */
+
       if (requestV1->oldName.length > extra) {
          /* The input packet is smaller than the request. */
+
          return FALSE;
       }
 
@@ -4086,8 +5191,10 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
        * newName->length is user-provided, so this test must be carefully
        * written to prevent wraparounds.
        */
+
       if (newName->length > extra) {
          /* The input packet is smaller than the request. */
+
          return FALSE;
       }
 
@@ -4127,29 +5234,42 @@ HgfsUnpackRenameRequest(char const *packetIn,       // IN: request packet
  */
 
 Bool
-HgfsPackRenameReply(HgfsOp renameOp,           // IN: rename operation version
-                    char *packetOut,           // IN/OUT: outgoing packet
-                    size_t *packetSize)        // IN/OUT: size of packet
+HgfsPackRenameReply(char const *packetIn,      // IN: incoming packet
+                    HgfsInternalStatus status, // IN: reply status
+                    char **packetOut,          // OUT: outgoing packet
+                    size_t *packetSize)        // OUT: size of packet
 
 {
+   HgfsRequest *header = (HgfsRequest *)packetIn;
    Bool result = TRUE;
-   ASSERT(packetOut);
-   ASSERT(packetSize);
 
-   switch (renameOp) {
+   ASSERT(packetIn);
+
+   *packetOut = NULL;
+   *packetSize = 0;
+
+   switch (header->op) {
    case HGFS_OP_RENAME_V3: {
-      HgfsReplyRenameV3 *reply = (HgfsReplyRenameV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
-      reply->reserved = 0;
+      HgfsReplyRenameV3 *reply;
+
       *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = header->id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
+
+      reply = (HgfsReplyRenameV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
+      reply->reserved = 0;
       break;
    }
    case HGFS_OP_RENAME_V2:
    case HGFS_OP_RENAME:
-      *packetSize = sizeof(HgfsReplyRename);
+      *packetSize = sizeof (HgfsReplyRename);
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = header->id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
       break;
    default:
-      LOG(4, ("HgfsPackRenameReply: invalid op code %d\n",
-              renameOp));
+      LOG(4, ("%s: invalid op code %d\n", __FUNCTION__, header->op));
       result = FALSE;
       break;
    }
@@ -4221,6 +5341,7 @@ HgfsUnpackGetattrRequest(char const *packetIn,       // IN: request packet
        * If we've been asked to reuse a handle, we don't need to look at, let
        * alone test the filename or its length.
        */
+
       *hints = requestV3->hints;
       if (requestV3->fileName.flags & HGFS_FILE_NAME_USE_FILE_DESC) {
          *file = requestV3->fileName.fid;
@@ -4234,15 +5355,17 @@ HgfsUnpackGetattrRequest(char const *packetIn,       // IN: request packet
           * request->fileName.length is user-provided, so this test must be
           * carefully written to prevent wraparounds.
           */
+
          if (requestV3->fileName.length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
          *cpName = requestV3->fileName.name;
          *cpNameSize = requestV3->fileName.length;
          *caseType = requestV3->fileName.caseType;
       }
-      LOG(4, ("HgfsUnpackGetattrRequest: HGFS_OP_GETATTR_V3: %u\n", *caseType));
+      LOG(4, ("%s: HGFS_OP_GETATTR_V3: %u\n", __FUNCTION__, *caseType));
       break;
    }
 
@@ -4257,6 +5380,7 @@ HgfsUnpackGetattrRequest(char const *packetIn,       // IN: request packet
        * If we've been asked to reuse a handle, we don't need to look at, let
        * alone test the filename or its length.
        */
+
       *hints = requestV2->hints;
       if (*hints & HGFS_ATTR_HINT_USE_FILE_DESC) {
          *file = requestV2->file;
@@ -4269,8 +5393,10 @@ HgfsUnpackGetattrRequest(char const *packetIn,       // IN: request packet
           * request->fileName.length is user-provided, so this test must be
           * carefully written to prevent wraparounds.
           */
+
          if (requestV2->fileName.length > extra) {
             /* The input packet is smaller than the request */
+
             return FALSE;
          }
          *cpName = requestV2->fileName.name;
@@ -4288,12 +5414,13 @@ HgfsUnpackGetattrRequest(char const *packetIn,       // IN: request packet
       extra = packetSize - sizeof *requestV1;
 
       /*
-       * request->fileName.length is user-provided, so this test must be carefully
-       * written to prevent wraparounds.
+       * request->fileName.length is user-provided, so this test must be
+       * carefully written to prevent wraparounds.
        */
 
       if (requestV1->fileName.length > extra) {
          /* The input packet is smaller than the request. */
+
          return FALSE;
       }
       *cpName = requestV1->fileName.name;
@@ -4323,6 +5450,7 @@ HgfsUnpackGetattrRequest(char const *packetIn,       // IN: request packet
    attrInfo->userId = 0;
    attrInfo->groupId = 0;
    attrInfo->hostFileId = 0;
+
    return TRUE;
 }
 
@@ -4346,23 +5474,36 @@ HgfsUnpackGetattrRequest(char const *packetIn,       // IN: request packet
  */
 
 Bool
-HgfsPackGetattrReply(HgfsFileAttrInfo *attr,     // IN: attr stucture
+HgfsPackGetattrReply(char const *packetIn,       // IN: incoming packet
+                     HgfsInternalStatus status,  // IN: reply status
+                     HgfsFileAttrInfo *attr,     // IN: attr stucture
                      const char *utf8TargetName, // IN: optional target name
                      uint32 utf8TargetNameLen,   // IN: file name length
-                     char *packetOut,            // IN/OUT: outgoing packet
-                     size_t *packetSize)         // IN/OUT: size of packet
+                     char **packetOut,           // OUT: outgoing packet
+                     size_t *packetSize)         // OUT: size of packet
 {
-   ASSERT(packetOut);
-   ASSERT(packetSize);
+   HgfsHandle id;
+
+   ASSERT(packetIn);
    ASSERT(attr);
+
+   *packetOut = NULL;
+   *packetSize = 0;
+   id = ((HgfsRequest *)packetIn)->id;
 
    switch (attr->requestType) {
    case HGFS_OP_GETATTR_V3: {
-      HgfsReplyGetattrV3 *reply =
-                         (HgfsReplyGetattrV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
+      HgfsReplyGetattrV3 *reply;
+
+      *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply) + utf8TargetNameLen;
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
+
+      reply = (HgfsReplyGetattrV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
       reply->attr.mask = attr->mask;
       reply->attr.type = attr->type;
-      LOG(4, ("HgfsPackGetattrReply: attr type: %u\n", reply->attr.type));
+      LOG(4, ("%s: attr type: %u\n", __FUNCTION__, reply->attr.type));
 
       /*
        * Is there enough space in the request packet for the utf8 name?
@@ -4373,9 +5514,11 @@ HgfsPackGetattrReply(HgfsFileAttrInfo *attr,     // IN: attr stucture
        * Also keep in mind that sizeof *reply already contains one character,
        * which we'll consider the nul terminator.
        */
+
       if (utf8TargetNameLen > HGFS_PACKET_MAX - HGFS_REP_PAYLOAD_SIZE_V3(reply)) {
          return FALSE;
       }
+
       if (utf8TargetName) {
          memcpy(reply->symlinkTarget.name, utf8TargetName, utf8TargetNameLen);
          CPNameLite_ConvertTo(reply->symlinkTarget.name, utf8TargetNameLen,
@@ -4404,13 +5547,20 @@ HgfsPackGetattrReply(HgfsFileAttrInfo *attr,     // IN: attr stucture
       reply->attr.groupId = attr->groupId;
       reply->attr.hostFileId = attr->hostFileId;
       reply->attr.volumeId = attr->volumeId;
+      reply->attr.effectivePerms = attr->effectivePerms;
       reply->reserved = 0;
-      *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply) + utf8TargetNameLen;
       break;
    }
 
    case HGFS_OP_GETATTR_V2: {
-      HgfsReplyGetattrV2 *reply = (HgfsReplyGetattrV2 *)packetOut;
+      HgfsReplyGetattrV2 *reply;
+
+      *packetSize = sizeof *reply + utf8TargetNameLen;
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      reply = (HgfsReplyGetattrV2 *)*packetOut;
+      reply->header.id = id;
+      reply->header.status = HgfsConvertFromInternalStatus(status);
       reply->attr.mask = attr->mask;
       reply->attr.type = attr->type;
 
@@ -4423,6 +5573,7 @@ HgfsPackGetattrReply(HgfsFileAttrInfo *attr,     // IN: attr stucture
        * Also keep in mind that sizeof *reply already contains one character,
        * which we'll consider the nul terminator.
        */
+
       if (utf8TargetNameLen > HGFS_PACKET_MAX - sizeof *reply) {
          return FALSE;
       }
@@ -4451,12 +5602,18 @@ HgfsPackGetattrReply(HgfsFileAttrInfo *attr,     // IN: attr stucture
       reply->attr.groupId = attr->groupId;
       reply->attr.hostFileId = attr->hostFileId;
       reply->attr.volumeId = attr->volumeId;
-      *packetSize = sizeof *reply + utf8TargetNameLen;
       break;
    }
 
    case HGFS_OP_GETATTR: {
-      HgfsReplyGetattr *reply = (HgfsReplyGetattr *)packetOut;
+      HgfsReplyGetattr *reply;
+
+      *packetSize = sizeof *reply;
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      reply = (HgfsReplyGetattr *)*packetOut;
+      reply->header.id = id;
+      reply->header.status = HgfsConvertFromInternalStatus(status);
 
       /* In GetattrV1, symlinks are treated as regular files. */
       if (attr->type == HGFS_FILE_TYPE_SYMLINK) {
@@ -4471,12 +5628,12 @@ HgfsPackGetattrReply(HgfsFileAttrInfo *attr,     // IN: attr stucture
       reply->attr.writeTime =  attr->writeTime;
       reply->attr.attrChangeTime = attr->attrChangeTime;
       reply->attr.permissions = attr->ownerPerms;
-      *packetSize = sizeof *reply;
       break;
    }
 
    default:
-      LOG(4, ("HgfsPackGetattrReply: Invalid GetAttr op.\n"));
+      LOG(4, ("%s: Invalid GetAttr op.\n", __FUNCTION__));
+
       return FALSE;
    }
 
@@ -4531,7 +5688,7 @@ HgfsUnpackSearchReadRequest(const char *packetIn,         // IN: request packet
       *hgfsSearchHandle = request->search;
       *offset = request->offset;
 
-      LOG(4, ("HgfsUnpackSearchReadRequest: HGFS_OP_SEARCH_READ_V3\n"));
+      LOG(4, ("%s: HGFS_OP_SEARCH_READ_V3\n", __FUNCTION__));
    } else {
       HgfsRequestSearchRead *request;
 
@@ -4584,17 +5741,38 @@ HgfsUnpackSearchReadRequest(const char *packetIn,         // IN: request packet
  */
 
 Bool
-HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
+HgfsPackSearchReadReply(char const *packetIn,      // IN: incoming packet
+                        HgfsInternalStatus status, // IN: reply status
+                        const char *utf8Name,      // IN: file name
                         size_t utf8NameLen,        // IN: file name length
                         HgfsFileAttrInfo *attr,    // IN: file attr struct
-                        char *packetOut,           // IN/OUT: outgoing packet
-                        size_t *packetSize)        // IN/OUT: size of packet
+                        char **packetOut,          // OUT: outgoing packet
+                        size_t *packetSize)        // OUT: size of packet
 {
+   HgfsHandle id;
+
+   ASSERT(packetIn);
+
+   *packetOut = NULL;
+   *packetSize = 0;
+   id = ((HgfsRequest *)packetIn)->id;
+
    switch (attr->requestType) {
    case HGFS_OP_SEARCH_READ_V3: {
-      HgfsReplySearchReadV3 *reply =
-                            (HgfsReplySearchReadV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
-      HgfsDirEntry *dirent = (HgfsDirEntry *)reply->payload;
+      HgfsReply *replyHeader;
+      HgfsReplySearchReadV3 *reply;
+      HgfsDirEntry *dirent;
+
+      *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply) + utf8NameLen +
+                                                               sizeof *dirent;
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      replyHeader = (HgfsReply *)(*packetOut);
+      replyHeader->status = HgfsConvertFromInternalStatus(status);
+      replyHeader->id = id;
+
+      reply = (HgfsReplySearchReadV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
+      dirent = (HgfsDirEntry *)reply->payload;
 
       /*
        * Is there enough space in the request packet for the utf8 name?
@@ -4605,12 +5783,12 @@ HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
        * Also keep in mind that sizeof *reply already contains one character,
        * which we'll consider the nul terminator.
        */
+
       if (utf8NameLen > HGFS_PACKET_MAX - HGFS_REP_PAYLOAD_SIZE_V3(reply) -
-                                          sizeof(struct HgfsDirEntry)) {
+                                          sizeof *dirent) {
          return FALSE;
       }
 
-      *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply) + utf8NameLen + sizeof *dirent;
       reply->count = 1;
       reply->reserved = 0;
       dirent->fileName.length = (uint32)utf8NameLen;
@@ -4621,6 +5799,7 @@ HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
 
       if (utf8NameLen == 0) {
          /* No entry. */
+
          return TRUE;
       }
 
@@ -4647,7 +5826,14 @@ HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
    }
 
    case HGFS_OP_SEARCH_READ_V2: {
-      HgfsReplySearchReadV2 *reply = (HgfsReplySearchReadV2 *)packetOut;
+      HgfsReplySearchReadV2 *reply;
+
+      *packetSize = sizeof *reply + utf8NameLen;
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      reply = (HgfsReplySearchReadV2 *)*packetOut;
+      reply->header.id = id;
+      reply->header.status = HgfsConvertFromInternalStatus(status);
 
       /*
        * Is there enough space in the request packet for the utf8 name?
@@ -4658,15 +5844,16 @@ HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
        * Also keep in mind that sizeof *reply already contains one character,
        * which we'll consider the nul terminator.
        */
+
       if (utf8NameLen > HGFS_PACKET_MAX - sizeof *reply) {
          return FALSE;
       }
 
-      *packetSize = sizeof *reply + utf8NameLen;
       reply->fileName.length = (uint32)utf8NameLen;
 
       if (utf8NameLen == 0) {
          /* No entry. */
+
          return TRUE;
       }
 
@@ -4693,7 +5880,14 @@ HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
    }
 
    case HGFS_OP_SEARCH_READ: {
-      HgfsReplySearchRead *reply = (HgfsReplySearchRead *)packetOut;
+      HgfsReplySearchRead *reply;
+
+      *packetSize = sizeof *reply + utf8NameLen;
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      reply = (HgfsReplySearchRead *)*packetOut;
+      reply->header.id = id;
+      reply->header.status = HgfsConvertFromInternalStatus(status);
 
       /*
        * Is there enough space in the request packet for the utf8 name?
@@ -4704,15 +5898,16 @@ HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
        * Also keep in mind that sizeof *reply already contains one character,
        * which we'll consider the nul terminator.
        */
+
       if (utf8NameLen > HGFS_PACKET_MAX - sizeof *reply) {
          return FALSE;
       }
 
-      *packetSize = sizeof *reply + utf8NameLen;
       reply->fileName.length = (uint32)utf8NameLen;
 
       if (utf8NameLen == 0) {
          /* No entry. */
+
          return TRUE;
       }
       memcpy(reply->fileName.name, utf8Name, utf8NameLen);
@@ -4734,7 +5929,8 @@ HgfsPackSearchReadReply(const char *utf8Name,      // IN: file name
    }
 
    default: {
-      LOG(4, ("HgfsPackSearchReadReply: Invalid SearchRead Op."));
+      LOG(4, ("%s: Invalid SearchRead Op.", __FUNCTION__));
+
       return FALSE;
    }
    }
@@ -4819,6 +6015,7 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
           * If we've been asked to reuse a handle, we don't need to look at,
           * let alone test the filename or its length.
           */
+
          if (requestV3->fileName.flags & HGFS_FILE_NAME_USE_FILE_DESC) {
             *file = requestV3->fileName.fid;
             *cpName = NULL;
@@ -4830,6 +6027,7 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
 
             if (requestV3->fileName.length > extra) {
                /* The input packet is smaller than the request. */
+
                return FALSE;
             }
             /* It is now safe to read the file name. */
@@ -4837,7 +6035,8 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
             *cpNameSize = requestV3->fileName.length;
             *caseType = requestV3->fileName.caseType;
          }
-         LOG(4, ("HgfsUnpackSetattrRequest: unpacking HGFS_OP_SETATTR_V3, %u\n", *caseType));
+         LOG(4, ("%s: unpacking HGFS_OP_SETATTR_V3, %u\n", __FUNCTION__,
+                 *caseType));
          break;
       }
 
@@ -4872,6 +6071,7 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
           * If we've been asked to reuse a handle, we don't need to look at,
           * let alone test the filename or its length.
           */
+
          if (*hints & HGFS_ATTR_HINT_USE_FILE_DESC) {
             *file = requestV2->file;
             *cpName = NULL;
@@ -4881,13 +6081,14 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
 
             if (requestV2->fileName.length > extra) {
                /* The input packet is smaller than the request. */
+
                return FALSE;
             }
             /* It is now safe to read the file name. */
             *cpName = requestV2->fileName.name;
             *cpNameSize = requestV2->fileName.length;
          }
-         LOG(4, ("HgfsUnpackSetattrRequest: unpacking HGFS_OP_SETATTR_V2\n"));
+         LOG(4, ("%s: unpacking HGFS_OP_SETATTR_V2\n", __FUNCTION__));
          break;
       }
    case HGFS_OP_SETATTR:
@@ -4906,6 +6107,7 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
 
          if (requestV1->fileName.length > extra) {
             /* The input packet is smaller than the request. */
+
             return FALSE;
          }
 
@@ -4914,40 +6116,29 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
          *cpNameSize = requestV1->fileName.length;
 
          attr->mask = 0;
-         attr->mask |=
-            requestV1->update & HGFS_ATTR_SIZE ?
-            HGFS_ATTR_VALID_SIZE :
-            0;
-         attr->mask |=
-            requestV1->update & HGFS_ATTR_CREATE_TIME ?
-            HGFS_ATTR_VALID_CREATE_TIME :
-            0;
-         attr->mask |=
-            requestV1->update & HGFS_ATTR_ACCESS_TIME ?
-            HGFS_ATTR_VALID_ACCESS_TIME :
-            0;
-         attr->mask |=
-            requestV1->update & HGFS_ATTR_WRITE_TIME ?
-            HGFS_ATTR_VALID_WRITE_TIME :
-            0;
-         attr->mask |=
-            requestV1->update & HGFS_ATTR_CHANGE_TIME ?
-            HGFS_ATTR_VALID_CHANGE_TIME :
-            0;
-         attr->mask |=
-            requestV1->update & HGFS_ATTR_PERMISSIONS ?
-            HGFS_ATTR_VALID_OWNER_PERMS :
-            0;
-
-         *hints     |=
-            requestV1->update & HGFS_ATTR_ACCESS_TIME_SET ?
-            HGFS_ATTR_HINT_SET_ACCESS_TIME :
-            0;
-
-         *hints     |=
-            requestV1->update & HGFS_ATTR_WRITE_TIME_SET ?
-            HGFS_ATTR_HINT_SET_WRITE_TIME :
-            0;
+         attr->mask |= requestV1->update & HGFS_ATTR_SIZE ?
+                                                  HGFS_ATTR_VALID_SIZE : 0;
+         attr->mask |= requestV1->update & HGFS_ATTR_CREATE_TIME ?
+                                                  HGFS_ATTR_VALID_CREATE_TIME :
+                                                  0;
+         attr->mask |= requestV1->update & HGFS_ATTR_ACCESS_TIME ?
+                                                  HGFS_ATTR_VALID_ACCESS_TIME :
+                                                  0;
+         attr->mask |= requestV1->update & HGFS_ATTR_WRITE_TIME ?
+                                                  HGFS_ATTR_VALID_WRITE_TIME :
+                                                  0;
+         attr->mask |= requestV1->update & HGFS_ATTR_CHANGE_TIME ?
+                                                  HGFS_ATTR_VALID_CHANGE_TIME :
+                                                  0;
+         attr->mask |= requestV1->update & HGFS_ATTR_PERMISSIONS ?
+                                                  HGFS_ATTR_VALID_OWNER_PERMS :
+                                                  0;
+         *hints     |= requestV1->update & HGFS_ATTR_ACCESS_TIME_SET ?
+                                                 HGFS_ATTR_HINT_SET_ACCESS_TIME :
+                                                 0;
+         *hints     |= requestV1->update & HGFS_ATTR_WRITE_TIME_SET ?
+                                               HGFS_ATTR_HINT_SET_WRITE_TIME :
+                                               0;
 
          attr->type = requestV1->attr.type;
          attr->size = requestV1->attr.size;
@@ -4956,7 +6147,7 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
          attr->writeTime = requestV1->attr.writeTime;
          attr->attrChangeTime = requestV1->attr.attrChangeTime;
          attr->ownerPerms = requestV1->attr.permissions;
-         LOG(4, ("HgfsUnpackSetattrRequest: unpacking HGFS_OP_SETATTR\n"));
+         LOG(4, ("%s: unpacking HGFS_OP_SETATTR\n", __FUNCTION__));
          break;
       }
    default:
@@ -4988,36 +6179,55 @@ HgfsUnpackSetattrRequest(char const *packetIn,       // IN: request packet
  */
 
 Bool
-HgfsPackSetattrReply(HgfsOp setattrOp,          // IN: setattr operation version
-                     char *packetOut,           // IN/OUT: outgoing packet
-                     size_t *packetSize)        // IN/OUT: size of packet
-
+HgfsPackSetattrReply(char const *packetIn,      // IN: incoming packet
+                     HgfsInternalStatus status, // IN: reply status
+                     char **packetOut,          // OUT: outgoing packet
+                     size_t *packetSize)        // OUT: size of packet
 {
+   HgfsRequest *header = (HgfsRequest *)packetIn;
    Bool result = TRUE;
 
-   ASSERT(packetOut);
-   ASSERT(packetSize);
+   ASSERT(packetIn);
 
-   switch (setattrOp) {
+   *packetOut = NULL;
+   *packetSize = 0;
+
+   switch (header->op) {
    case HGFS_OP_SETATTR_V3: {
-      HgfsReplySetattrV3 *reply =
-                         (HgfsReplySetattrV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
-      reply->reserved = 0;
+      HgfsReplySetattrV3 *reply;
+      HgfsReply *replyHeader;
+
       *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      replyHeader = (HgfsReply *)*packetOut;
+      replyHeader->id = header->id;
+      replyHeader->status = HgfsConvertFromInternalStatus(status);
+
+      reply = (HgfsReplySetattrV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
+      reply->reserved = 0;
       break;
    }
    case HGFS_OP_SETATTR_V2:
-   case HGFS_OP_SETATTR:
+   case HGFS_OP_SETATTR: {
+      HgfsReply *replyHeader;
+
       *packetSize = sizeof(HgfsReplySetattr);
+      *packetOut = Util_SafeMalloc(*packetSize);
+
+      replyHeader = (HgfsReply *)*packetOut;
+      replyHeader->id = header->id;
+      replyHeader->status = HgfsConvertFromInternalStatus(status);
       break;
+   }
    default:
       result = FALSE;
-      LOG(4, ("HgfsPackSetattrReply: invalid op code %d\n",
-              setattrOp));
+      LOG(4, ("%s: invalid op code %d\n", __FUNCTION__, header->op));
       break;
    }
 
    ASSERT(result);
+
    return result;
 }
 
@@ -5068,6 +6278,7 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
 
          if (!(requestV3->mask & HGFS_CREATE_DIR_VALID_FILE_NAME)) {
             /* We do not support requests without a valid file name. */
+
             return FALSE;
          }
 
@@ -5075,8 +6286,10 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
           * requestV3->fileName.length is user-provided, so this test must be
           * carefully written to prevent wraparounds.
           */
+
          if (requestV3->fileName.length > extra) {
             /* The input packet is smaller than the request. */
+
             return FALSE;
          }
 
@@ -5085,15 +6298,17 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
           * garbage, but it's simpler to copy everything now and check the
           * valid bits before reading later.
           */
+
          info->mask = requestV3->mask;
          info->cpName = requestV3->fileName.name;
          info->cpNameSize = requestV3->fileName.length;
-	 info->caseFlags = requestV3->fileName.caseType;
+         info->caseFlags = requestV3->fileName.caseType;
          info->specialPerms = requestV3->specialPerms;
+         info->fileAttr = requestV3->fileAttr;
          info->ownerPerms = requestV3->ownerPerms;
          info->groupPerms = requestV3->groupPerms;
          info->otherPerms = requestV3->otherPerms;
-         LOG(4, ("HgfsUnpackCreateDirRequest: HGFS_OP_CREATE_DIR_V3\n"));
+         LOG(4, ("%s: HGFS_OP_CREATE_DIR_V3\n", __FUNCTION__));
          break;
       }
    case HGFS_OP_CREATE_DIR_V2:
@@ -5107,6 +6322,7 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
 
          if (!(requestV2->mask & HGFS_CREATE_DIR_VALID_FILE_NAME)) {
             /* We do not support requests without a valid file name. */
+
             return FALSE;
          }
 
@@ -5114,8 +6330,10 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
           * requestV2->fileName.length is user-provided, so this test must be
           * carefully written to prevent wraparounds.
           */
+
          if (requestV2->fileName.length > extra) {
             /* The input packet is smaller than the request. */
+
             return FALSE;
          }
 
@@ -5124,6 +6342,7 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
           * garbage, but it's simpler to copy everything now and check the
           * valid bits before reading later.
           */
+
          info->mask = requestV2->mask;
          info->cpName = requestV2->fileName.name;
          info->cpNameSize = requestV2->fileName.length;
@@ -5131,6 +6350,7 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
          info->ownerPerms = requestV2->ownerPerms;
          info->groupPerms = requestV2->groupPerms;
          info->otherPerms = requestV2->otherPerms;
+         info->fileAttr = 0;
          break;
       }
    case HGFS_OP_CREATE_DIR:
@@ -5149,16 +6369,17 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
 
          if (requestV1->fileName.length > extra) {
             /* The input packet is smaller than the request. */
+
             return FALSE;
          }
 
          /* For CreateDirV1 requests, we know exactly what fields we expect. */
-         info->mask =
-            HGFS_CREATE_DIR_VALID_OWNER_PERMS |
-            HGFS_CREATE_DIR_VALID_FILE_NAME;
+         info->mask = HGFS_CREATE_DIR_VALID_OWNER_PERMS |
+                      HGFS_CREATE_DIR_VALID_FILE_NAME;
          info->cpName = requestV1->fileName.name;
          info->cpNameSize = requestV1->fileName.length;
          info->ownerPerms = requestV1->permissions;
+         info->fileAttr = 0;
          break;
       }
    default:
@@ -5190,31 +6411,41 @@ HgfsUnpackCreateDirRequest(char const *packetIn,    // IN: incoming packet
  */
 
 Bool
-HgfsPackCreateDirReply(HgfsOp createdirOp,        // IN: create dir operation version
-                       char *packetOut,           // IN/OUT: outgoing packet
-                       size_t *packetSize)        // IN/OUT: size of packet
-
+HgfsPackCreateDirReply(char const *packetIn,      // IN: create dir operation version
+                       HgfsInternalStatus status, // IN: reply status
+                       char **packetOut,          // OUT: outgoing packet
+                       size_t *packetSize)        // OUT: size of packet
 {
+   HgfsRequest *header = (HgfsRequest *)packetIn;
    Bool result = TRUE;
 
-   ASSERT(packetOut);
-   ASSERT(packetSize);
+   ASSERT(packetIn);
 
-   switch (createdirOp) {
+   *packetOut = NULL;
+   *packetSize = 0;
+
+   switch (header->op) {
    case HGFS_OP_CREATE_DIR_V3: {
-      HgfsReplyCreateDirV3 *reply =
-                           (HgfsReplyCreateDirV3 *)HGFS_REP_GET_PAYLOAD_V3(packetOut);
-      reply->reserved = 0;
+      HgfsReplyCreateDirV3 *reply;
+
       *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = header->id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
+
+      reply = (HgfsReplyCreateDirV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
+      reply->reserved = 0;
       break;
    }
    case HGFS_OP_CREATE_DIR_V2:
    case HGFS_OP_CREATE_DIR:
-      *packetSize = sizeof(HgfsReplyCreateDir);
+      *packetSize = sizeof (HgfsReplyCreateDir);
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = header->id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
       break;
    default:
-      LOG(4, ("HgfsPackCreateDirReply: invalid op code %d\n",
-              createdirOp));
+      LOG(4, ("%s: invalid op code %d\n", __FUNCTION__, header->op));
       result = FALSE;
       break;
    }
@@ -5228,117 +6459,88 @@ HgfsPackCreateDirReply(HgfsOp createdirOp,        // IN: create dir operation ve
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsServer_InitState --
+ * HgfsUnpackWriteWin32StreamRequest --
  *
- *    Initialize the global server state
+ *    Unpack hgfs SendFileUsingReader request. Returns file to write to, data
+ *    and whether to restore the security stream.
  *
  * Results:
- *    TRUE if succeeded, FALSE if failed.
+ *    TRUE on success.
+ *    FALSE on failure.
  *
  * Side effects:
- *    Memory allocation.
+ *    None
  *
  *-----------------------------------------------------------------------------
  */
 
 Bool
-HgfsServer_InitState(void)
+HgfsUnpackWriteWin32StreamRequest(char const *packetIn, // IN: incoming packet
+				  size_t packetSize,    // IN: size of packet
+				  HgfsHandle *file,     // OUT: file to write to
+				  char **payload,       // OUT: data to write
+				  size_t *requiredSize, // OUT: size of data
+				  Bool *doSecurity)     // OUT: restore sec.str.
 {
-   unsigned int i;
+   HgfsRequest *request;
+   size_t extra;
 
-   /* Initialize filenode freelist */
-   DblLnkLst_Init(&nodeFreeList);
+   ASSERT(packetIn);
+   ASSERT(file);
+   ASSERT(payload);
+   ASSERT(requiredSize);
+   ASSERT(doSecurity);
 
-   /* Initialize filenode cachelist. */
-   DblLnkLst_Init(&nodeCachedList);
+   request = (HgfsRequest *)packetIn;
 
-   maxCachedOpenNodes = Config_GetLong(MAX_CACHED_FILENODES,
-                                       "hgfs.fdCache.maxNodes");
+   switch (request->op) {
+   case HGFS_OP_WRITE_WIN32_STREAM_V3:
+      {
+         HgfsRequestWriteWin32StreamV3 *requestV3 =
+	    (HgfsRequestWriteWin32StreamV3 *)HGFS_REQ_GET_PAYLOAD_V3(packetIn);
 
-   /* Allocate array of FileNodes and add them to free list */
-   numNodes = NUM_FILE_NODES;
-   ASSERT(nodeArray == NULL);
-   nodeArray = (HgfsFileNode *)calloc(numNodes, sizeof(HgfsFileNode));
-   if (!nodeArray) {
-      LOG(4, ("No memory allocating file nodes\n"));
-      goto error;
-   }
+	 /* Enforced by the dispatch function */
+	 ASSERT(packetSize >= HGFS_REQ_PAYLOAD_SIZE_V3(request) - 1);
+	 extra = packetSize - HGFS_REQ_PAYLOAD_SIZE_V3(request) + 1;
 
-   for (i = 0; i < numNodes; i++) {
-      DblLnkLst_Init(&nodeArray[i].links);
-      /* Append at the end of the list */
-      DblLnkLst_LinkLast(&nodeFreeList, &nodeArray[i].links);
-   }
+	 *file = requestV3->file;
+	 *payload = requestV3->payload;
+	 *requiredSize = requestV3->requiredSize;
+	 *doSecurity = (requestV3->flags & HGFS_WIN32_STREAM_IGNORE_SECURITY) == 0;
 
-   /* Initialize search freelist */
-   DblLnkLst_Init(&searchFreeList);
+         /*
+	  * requiredSize is user-provided, so this test must be carefully
+	  * written to prevent wraparounds.
+	  */
+	 if (*requiredSize > extra) {
+	    /*
+	     * The driver wants to write more bytes than there is in its payload.
+	     * Truncate the request.
+	     */
+	    
+	    *requiredSize = extra;
+	 }
 
-   /* Allocate array of searches and add them to free list */
-   numSearches = NUM_SEARCHES;
-   ASSERT(searchArray == NULL);
-   searchArray = (HgfsSearch *)calloc(numSearches, sizeof(HgfsSearch));
-   if (!searchArray) {
-      LOG(4, ("No memory allocating searches\n"));
-      goto error;
-   }
-
-   for (i = 0; i < numSearches; i++) {
-      DblLnkLst_Init(&searchArray[i].links);
-      /* Append at the end of the list */
-      DblLnkLst_LinkLast(&searchFreeList, &searchArray[i].links);
-   }
-
-#ifndef VMX86_TOOLS
-   if (Config_GetBool(FALSE, "hgfs.alwaysUseHostTime")) {
-      alwaysUseHostTime = TRUE;
-   }
-#endif  // !defined(VMX86_TOOLS)
-
-   if (!SyncMutex_Init(&hgfsNodeArrayLock, NULL)) {
-      LOG(4, ("Could not create mutex for node array\n"));
-      goto error;
-   }
-   if (!SyncMutex_Init(&hgfsSearchArrayLock, NULL)) {
-      LOG(4, ("Could not create mutex for search array\n"));
-      SyncMutex_Destroy(&hgfsNodeArrayLock);
-      goto error;
-   }
-   if (!SyncMutex_Init(&hgfsIOLock, NULL)) {
-      LOG(4, ("Could not create mutex for IO protection\n"));
-      SyncMutex_Destroy(&hgfsNodeArrayLock);
-      SyncMutex_Destroy(&hgfsSearchArrayLock);
-      goto error;
-   }
-
-   if (!HgfsServerPlatformInit()) {
-      LOG(4, ("Could not initialize server platform specific \n"));
-      SyncMutex_Destroy(&hgfsIOLock);
-      SyncMutex_Destroy(&hgfsNodeArrayLock);
-      SyncMutex_Destroy(&hgfsSearchArrayLock);
-      goto error;
+	 break;
+      }
+   default:
+      return FALSE;
    }
 
    return TRUE;
-
-  error:
-   free(searchArray);
-   free(nodeArray);
-   return FALSE;
 }
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsServer_ExitState --
+ * HgfsPackWriteWin32StreamReply --
  *
- *    Cleanup the global server state.
- *    This function should be called when all other HGFS threads stopped
- *    running. Otherwise we'll be in trouble because this is where we delete
- *    the node array lock.
+ *    Pack hgfs SendFileUsingReader reply.
+ *    Returns the actual amount of data written in the reply.
  *
  * Results:
- *    None
+ *    TRUE if valid op and reply set, FALSE otherwise.
  *
  * Side effects:
  *    None
@@ -5346,41 +6548,43 @@ HgfsServer_InitState(void)
  *-----------------------------------------------------------------------------
  */
 
-void
-HgfsServer_ExitState(void)
+Bool
+HgfsPackWriteWin32StreamReply(char const *packetIn,      // IN: incoming packet
+			      HgfsInternalStatus status, // IN: reply status
+			      uint32 actualSize,         // IN: amount written
+			      char **packetOut,          // OUT: outgoing packet
+			      size_t *packetSize)        // OUT: size of packet
 {
-   unsigned int i;
+   HgfsRequest *header = (HgfsRequest *)packetIn;
 
-   /* Recycle all objects that are still in use, then destroy object pools */
-   for (i = 0; i < numNodes; i++) {
-      HgfsHandle handle;
+   ASSERT(packetIn);
+   ASSERT(packetOut);
+   ASSERT(packetSize);
 
-      if (nodeArray[i].state == FILENODE_STATE_UNUSED) {
-         continue;
-      }
+   *packetOut = NULL;
+   *packetSize = 0;
 
-      handle = HgfsFileNode2Handle(&nodeArray[i]);
-      HgfsRemoveFromCacheInternal(handle);
-      HgfsFreeFileNodeInternal(handle);
+   switch (header->op) {
+   case HGFS_OP_WRITE_WIN32_STREAM_V3: {
+      HgfsReplyWriteWin32StreamV3 *reply;
+
+      *packetSize = HGFS_REP_PAYLOAD_SIZE_V3(reply);
+      *packetOut = Util_SafeMalloc(*packetSize);
+      ((HgfsReply *)*packetOut)->id = header->id;
+      ((HgfsReply *)*packetOut)->status = HgfsConvertFromInternalStatus(status);
+
+      reply = (HgfsReplyWriteWin32StreamV3 *)HGFS_REP_GET_PAYLOAD_V3(*packetOut);
+      reply->actualSize = actualSize;
+      reply->reserved = 0;
+      break;
    }
-   free(nodeArray);
-   nodeArray = NULL;
-
-   for (i = 0; i < numSearches; i++) {
-      if (DblLnkLst_IsLinked(&searchArray[i].links)) {
-         continue;
-      }
-      HgfsRemoveSearchInternal(&searchArray[i]);
+   default:
+      return FALSE;
    }
-   free(searchArray);
-   searchArray = NULL;
 
-   SyncMutex_Destroy(&hgfsIOLock);
-   SyncMutex_Destroy(&hgfsSearchArrayLock);
-   SyncMutex_Destroy(&hgfsNodeArrayLock);
-
-   HgfsServerPlatformDestroy();
+   return TRUE;
 }
+
 
 
 /*
@@ -5388,9 +6592,9 @@ HgfsServer_ExitState(void)
  *
  * HgfsBuildRelativePath --
  *
- *    Generates relative file path which need to be used a symbolic link target which
- *    would generate target name defined in "target" if the path to symbolic link
- *    file defined in the "source".
+ *    Generates relative file path which need to be used a symbolic link
+ *    target which would generate target name defined in "target" if the path
+ *    to symbolic link file defined in the "source".
  *    Both source and target parameters represent absolute paths.
  *
  * Results:
@@ -5415,7 +6619,12 @@ HgfsBuildRelativePath(const char* source,    // IN: source file name
    size_t targetSize;
    char *result;
    char *currentPosition;
-    /*  First remove the part of the path which is common between source and target */
+
+   /*
+    * First remove the part of the path which is common between source and
+    * target
+    */
+
    while (*relativeSource != '\0' && *relativeTarget != '\0') {
       sourceSep = strchr(relativeSource, DIRSEPC);
       targetSep = strchr(relativeTarget, DIRSEPC);
@@ -5425,15 +6634,17 @@ HgfsBuildRelativePath(const char* source,    // IN: source file name
       if ((sourceSep - relativeSource) != (targetSep - relativeTarget)) {
          break;
       }
-      if (strncmp(relativeSource, relativeTarget, (targetSep - relativeTarget)) != 0) {
+      if (strncmp(relativeSource, relativeTarget,
+                  (targetSep - relativeTarget)) != 0) {
          break;
       }
       relativeSource = sourceSep + 1;
       relativeTarget = targetSep + 1;
    };
+
    /*
-    *  Find out how many directories deep the source file is from the common part of the
-    *  path.
+    * Find out how many directories deep the source file is from the common
+    * part of the  path.
     */
    while(*relativeSource != '\0') {
       sourceSep = strchr(relativeSource, DIRSEPC);
@@ -5457,6 +6668,7 @@ HgfsBuildRelativePath(const char* source,    // IN: source file name
     * Consruct relative path by adding level number of "../"
     * to the relative target path.
     */
+
    targetSize = level * HGFS_PARENT_DIR_LEN + strlen(relativeTarget) + sizeof '\0';
    result = malloc(targetSize);
    currentPosition = result;
@@ -5469,6 +6681,42 @@ HgfsBuildRelativePath(const char* source,    // IN: source file name
       memcpy(currentPosition, relativeTarget, strlen(relativeTarget) + sizeof '\0');
    }
    return result;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Hgfs_NotificationCallback --
+ *
+ *    Callback which is called by directory notification package when in response
+ *    to a event.
+ *
+ *    XXX:
+ *    The function must build directory notification packet and send it to the
+ *    client. At the moment it just logs a message, actual logic will be
+ *    implemented later when required infrastructure is ready.
+ *
+ * Results:
+ *    None.
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+Hgfs_NotificationCallback(SharedFolderHandle sharedFolder,
+                          SubscriberHandle subscriber,
+                          char* name,
+                          char* newName,
+                          uint32 mask)
+{
+    LOG(4, ("%s: notification for folder: %d index: %d file name %s "
+            "(new name %s) mask %x\n", __FUNCTION__, sharedFolder,
+            (int)subscriber, name, (newName == NULL) ? "" : newName,
+            mask));
 }
 
 #ifdef HGFS_OPLOCKS
@@ -5552,7 +6800,7 @@ HgfsServerOplockBreak(ServerLockData *lockData)
    HgfsRequestServerLockChange *request;
    HgfsServerLock lock;
 
-   LOG(4, ("HgfsServerOplockBreak: entered\n"));
+   LOG(4, ("%s: entered\n", __FUNCTION__));
 
    /*
     * XXX: Just because the file in not in the cache on the server,
@@ -5566,18 +6814,19 @@ HgfsServerOplockBreak(ServerLockData *lockData)
     * cache, or it had no lock, chances are someone else (maybe the VCPU
     * thread) broke the oplock and/or closed the file.
     */
+
    if (!HgfsFileDesc2Handle(lockData->fileDesc, &hgfsHandle)) {
-      LOG(4, ("HgfsServerOplockBreak: file is not in the cache\n"));
+      LOG(4, ("%s: file is not in the cache\n", __FUNCTION__));
       goto free_and_exit;
    }
 
    if (!HgfsHandle2ServerLock(hgfsHandle, &lock)) {
-      LOG(4, ("HgfsServerOplockBreak: could not retrieve node's lock info.\n"));
+      LOG(4, ("%s: could not retrieve node's lock info.\n", __FUNCTION__));
       goto free_and_exit;
    }
 
    if (lock == HGFS_LOCK_NONE) {
-      LOG(4, ("HgfsServerOplockBreak: the file does not have a server lock.\n"));
+      LOG(4, ("%s: the file does not have a server lock.\n", __FUNCTION__));
       goto free_and_exit;
    }
 
@@ -5588,9 +6837,10 @@ HgfsServerOplockBreak(ServerLockData *lockData)
     * XXX: This should probably go into a common allocation function that
     * other out-of-band requests can use.
     */
+
    requestBuffer = malloc(sizeof *request + HGFS_CLIENT_CMD_LEN);
    if (requestBuffer == NULL) {
-      LOG(4, ("HgfsServerOplockBreak: could not allocate memory.\n"));
+      LOG(4, ("%s: could not allocate memory.\n", __FUNCTION__));
       goto ack_and_exit;
    }
 
@@ -5609,17 +6859,18 @@ HgfsServerOplockBreak(ServerLockData *lockData)
     * If for some reason we fail, we'll acknowledge the oplock break
     * immediately.
     */
-   if (HgfsServerManager_SendRequest(requestBuffer,
-                                     sizeof *request,
-                                     HgfsServerOplockBreakReply,
-                                     lockData)) {
+
+   if (HgfsServerManager_SendRequest(requestBuffer, sizeof *request,
+                                     HgfsServerOplockBreakReply, lockData)) {
       return;
    }
    free(requestBuffer);
 
   ack_and_exit:
    HgfsAckOplockBreak(lockData, HGFS_LOCK_NONE);
+
    return;
+
   free_and_exit:
    free(lockData);
 }
@@ -5636,7 +6887,7 @@ TestNodeFreeList(void)
    HgfsFileNode *node;
    unsigned int i;
 
-   printf("TestNodeFreeList: begin >>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
+   printf("%s: begin >>>>>>>>>>>>>>>>>>>>>>>>>>>\n", __FUNCTION__);
 
    for (i = 0; i < sizeof array / sizeof array[0]; i++) {
       char tempName[20];
@@ -5660,7 +6911,7 @@ TestNodeFreeList(void)
    }
 
    HgfsDumpAllNodes();
-   printf("TestNodeFreeList: end <<<<<<<<<<<<<<<<<<<<<<<<<< \n");
+   printf("%s: end <<<<<<<<<<<<<<<<<<<<<<<<<< \n", __FUNCTION__);
 }
 
 
@@ -5671,7 +6922,7 @@ TestSearchFreeList(void)
    HgfsSearch *search;
    unsigned int i;
 
-   printf("TestSearchFreeList: begin >>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
+   printf("%s: begin >>>>>>>>>>>>>>>>>>>>>>>>>>>\n", __FUNCTION__);
 
    for (i = 0; i < sizeof array / sizeof array[0]; i++) {
       char tempName[20];
@@ -5692,6 +6943,6 @@ TestSearchFreeList(void)
    }
 
    HgfsDumpAllSearches();
-   printf("TestSearchFreeList: end <<<<<<<<<<<<<<<<<<<<<<<<<< \n");
+   printf("%s: end <<<<<<<<<<<<<<<<<<<<<<<<<< \n", __FUNCTION__);
 }
 #endif

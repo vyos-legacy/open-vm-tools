@@ -40,7 +40,8 @@ struct FoundryWorkerThread;
 typedef void (*FoundryThreadProc)(struct FoundryWorkerThread *threadState);
 
 struct FoundryWorkerThread *FoundryThreads_StartThread(FoundryThreadProc proc,
-                                                       void *threadParam);
+                                                       void *threadParam,
+                                                       const char *threadName);
 void FoundryThreads_StopThread(struct FoundryWorkerThread *threadState);
 void FoundryThreads_Free(struct FoundryWorkerThread *threadState);
 Bool FoundryThreads_IsCurrentThread(struct FoundryWorkerThread *threadState);
@@ -61,11 +62,13 @@ typedef struct FoundryWorkerThread {
    Bool                    stopThread;
 
    void                    *threadParam;
+   const char              *threadName;
 } FoundryWorkerThread;
+   
+#define VIX_ENABLE_EXTERNAL_THREAD_INTERFACE \
+  "vix.enableExternalThreadInterface"
 
-
-
-
+void VixThreadConfig(Bool enableExternalThreadInterface);
 
 #ifdef __cplusplus
 } // extern "C" {

@@ -62,12 +62,11 @@
 #include "imageUtil.h"
 #include "strutil.h"
 #include <paths.h>
-#include <mntent.h>
 #include "vm_atomic.h"
+#include "mntinfo.h"
 #include "ghIntegration.h"
 #include "ghIntegrationInt.h"
 #include "guest_msg_def.h"
-#include "guestCaps.h"
 #include "Uri.h"
 #define URI_TEXTRANGE_EQUAL(textrange, str) \
    (((textrange).afterLast - (textrange).first) == strlen((str))        \
@@ -148,7 +147,9 @@ struct _GHIPlatform {
 
    int nextMenuHandle;
    GHashTable *menuHandles;
-   GHashTable *vmwareEnv;
+
+   /** Pre-wrapper script environment.  See @ref System_GetNativeEnviron. */
+   const char **nativeEnviron;
 };
 
 #ifdef GTK2
@@ -167,8 +168,9 @@ typedef struct {
  * Represents a "start menu folder" so to speak.
  */
 typedef struct {
-   const char *dirname; // The .desktop category that this object represents
-   GPtrArray *items;    // Array of pointers to GHIMenuItems
+   const char *dirname;         // The .desktop category that this object represents
+   const char *prettyDirname;   // (optional) A prettier version of dirname.
+   GPtrArray *items;            // Array of pointers to GHIMenuItems
 } GHIMenuDirectory;
 
 /*
@@ -193,8 +195,6 @@ typedef struct {
 static void GHIPlatformSetMenuTracking(GHIPlatform *ghip,
                                        Bool isEnabled);
 static char *GHIPlatformUriPathToString(UriPathSegmentA *path);
-static Bool GHIRestoreVMwareEnviron(GHIPlatform *ghip);
-static Bool GHISetVMwareEnviron(GHIPlatform *ghip);
 
 
 /*
@@ -335,10 +335,12 @@ GHIPlatform *
 GHIPlatformInit(VMU_ControllerCB *vmuControllerCB,  // IN
                 void *ctx)                          // IN
 {
+   extern const char **environ;
    GHIPlatform *ghip;
 
    ghip = Util_SafeCalloc(1, sizeof *ghip);
    ghip->directoriesTracked = g_array_new(FALSE, FALSE, sizeof(GHIDirectoryWatch));
+   ghip->nativeEnviron = System_GetNativeEnviron(environ);
    AppUtil_Init();
 
    return ghip;
@@ -431,35 +433,6 @@ GHIPlatformFreeValue(gpointer key,       // IN
 
    return TRUE;
 }
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * GHIPlatformFreeKeyAndValue --
- *
- *      Frees a hash table entry. Typically called from a g_hashtable
- *      iterator. Both the key, and the value are freed.
- *
- * Results:
- *      TRUE always.
- *
- * Side effects:
- *      The specified value will no longer be valid.
- *
- *-----------------------------------------------------------------------------
- */
-
-static gboolean
-GHIPlatformFreeKeyAndValue(gpointer key,       // IN
-                           gpointer value,     // IN
-                           gpointer user_data) // IN
-{
-   g_free(key);
-   g_free(value);
-
-   return TRUE;
-}
 #endif // GTK2
 
 
@@ -526,10 +499,9 @@ GHIPlatformCleanup(GHIPlatform *ghip) // IN
    GHIPlatformSetMenuTracking(ghip, FALSE);
    g_array_free(ghip->directoriesTracked, TRUE);
    ghip->directoriesTracked = NULL;
-   if (ghip->vmwareEnv) {
-      g_hash_table_foreach_remove(ghip->vmwareEnv, GHIPlatformFreeKeyAndValue, NULL);
-      g_hash_table_destroy(ghip->vmwareEnv);
-      ghip->vmwareEnv = NULL;
+   if (ghip->nativeEnviron) {
+      System_FreeNativeEnviron(ghip->nativeEnviron);
+      ghip->nativeEnviron = NULL;
    }
    free(ghip);
 }
@@ -590,9 +562,9 @@ GHIPlatformCollectIconInfo(GHIPlatform *ghip,        // IN
          totalIconBytes += thisIconBytes;
       } else if (pixbufs->len == 1) {
          GdkPixbuf *newIcon;
-         double newWidth;
-         double newHeight;
-         double scaleFactor;
+         volatile double newWidth;
+         volatile double newHeight;
+         volatile double scaleFactor;
 
          newWidth = gdk_pixbuf_get_width(pixbuf);
          newHeight = gdk_pixbuf_get_height(pixbuf);
@@ -934,7 +906,15 @@ GHIPlatformGetDesktopName(void)
    Window temp2;        // throwaway
    Window *children = NULL;
    unsigned int nchildren;
-   const char *retval = NULL;
+   static const char *desktopEnvironment = NULL;
+
+   /*
+    * NB: While window managers may change during vmware-user's execution, TTBOMK
+    * desktop environments cannot, so this is safe.
+    */
+   if (desktopEnvironment) {
+      return desktopEnvironment;
+   }
 
    display = gdk_x11_get_default_xdisplay();
    rootWindow = DefaultRootWindow(display);
@@ -943,26 +923,45 @@ GHIPlatformGetDesktopName(void)
       return NULL;
    }
 
-   for (i = 0; i < nchildren && !retval; i++) {
-      char *name = NULL;
+   for (i = 0; i < nchildren && !desktopEnvironment; i++) {
+      XClassHint wmClass = { 0, 0 };
       int j;
 
-      if ((XFetchName(display, children[i], &name) == 0) ||
-          name == NULL) {
-         continue;
-      }
+      /*
+       * Try WM_CLASS first, then try WM_NAME.
+       */
 
-      for (j = 0; j < ARRAYSIZE(clientMappings) && !retval; j++) {
-         if (!strcmp(clientMappings[j][0], name)) {
-            retval = clientMappings[j][1];
+      if (XGetClassHint(display, children[i], &wmClass) != 0) {
+         for (j = 0; j < ARRAYSIZE(clientMappings) && !desktopEnvironment; j++) {
+            if ((strcasecmp(clientMappings[j][0], wmClass.res_name) == 0) ||
+                (strcasecmp(clientMappings[j][0], wmClass.res_class) == 0)) {
+               desktopEnvironment = clientMappings[j][1];
+            }
          }
+         XFree(wmClass.res_name);
+         XFree(wmClass.res_class);
       }
 
-      XFree(name);
+      if (!desktopEnvironment) {
+         char *name = NULL;
+
+         if ((XFetchName(display, children[i], &name) == 0) ||
+             name == NULL) {
+            continue;
+         }
+
+         for (j = 0; j < ARRAYSIZE(clientMappings) && !desktopEnvironment; j++) {
+            if (!strcmp(clientMappings[j][0], name)) {
+               desktopEnvironment = clientMappings[j][1];
+            }
+         }
+
+         XFree(name);
+      }
    }
 
    XFree(children);
-   return retval;
+   return desktopEnvironment;
 }
 
 
@@ -996,9 +995,9 @@ GHIPlatformIsMenuItemAllowed(GHIPlatform *ghip, // IN:
     * Examine the "NoDisplay" and "Hidden" properties.
     */
    if (g_key_file_get_boolean(keyfile,
-			      G_KEY_FILE_DESKTOP_GROUP,
-			      G_KEY_FILE_DESKTOP_KEY_NO_DISPLAY,
-			      NULL) ||
+                              G_KEY_FILE_DESKTOP_GROUP,
+                              G_KEY_FILE_DESKTOP_KEY_NO_DISPLAY,
+                              NULL) ||
        g_key_file_get_boolean(keyfile,
                               G_KEY_FILE_DESKTOP_GROUP,
                               G_KEY_FILE_DESKTOP_KEY_HIDDEN,
@@ -1223,19 +1222,35 @@ GHIPlatformAddMenuItem(GHIPlatform *ghip,       // IN:
     * determine an appropriate category.  This is "safe" as long as menu-spec doesn't
     * register it, and I don't expect that to happen any time soon.  It is -extremely-
     * important that "Other" be the final entry in this list.
+    *
+    * XXX See desktop-entry-spec and make use of .directory files.
     */
-   static const char *validCategories[] = {
-     "AudioVideo",
-     "Development",
-     "Education",
-     "Game",
-     "Graphics",
-     "Network",
-     "Office",
-     "Settings",
-     "System",
-     "Utility",
-     "Other"
+   static const char *validCategories[][2] = {
+      /*
+       * Bug 372348:
+       * menu-spec category     pretty string
+       */
+      { "AudioVideo",           "Sound & Video" },
+      { "Development",          0 },
+      { "Education",            0 },
+      { "Game",                 "Games" },
+      { "Graphics",             0 },
+      { "Network",              0 },
+      { "Office",               0 },
+      { "Settings",             0 },
+      { "System",               0 },
+      { "Utility",              0 },
+      { "Other",                0 }
+   };
+
+   /*
+    * Applications belonging to certain categories should never show up
+    * in our launch menus.  List taken from
+    * http://standards.freedesktop.org/menu-spec/latest/apa.html table 2.
+    */
+   static const char *invalidCategories[] = {
+      "Screensaver",
+      "Shell",
    };
 
    GHIMenuDirectory *gmd;
@@ -1245,6 +1260,7 @@ GHIPlatformAddMenuItem(GHIPlatform *ghip,       // IN:
    gsize numcats;
    int kfIndex;                 // keyfile categories index/iterator
    int vIndex;                  // validCategories index/iterator
+   int iIndex;                  // invalidCategories index/iterator
 
    /*
     * Figure out if this .desktop file is in a category we want to put on our menus,
@@ -1256,11 +1272,23 @@ GHIPlatformAddMenuItem(GHIPlatform *ghip,       // IN:
    if (categories) {
       for (kfIndex = 0; kfIndex < numcats && !foundIt; kfIndex++) {
          /*
+          * If any of this app's categories are in our blacklist, we'll just
+          * return prematurely.
+          */
+         for (iIndex = 0; iIndex < ARRAYSIZE(invalidCategories); iIndex++) {
+            if (!strcasecmp(categories[kfIndex], invalidCategories[iIndex])) {
+               g_debug("Ignoring app %s because it's a member of category %s.\n",
+                       keyfilePath, categories[kfIndex]);
+               return;
+            }
+         }
+
+         /*
           * NB:  See validCategories' comment re: "Other" being the final, default
           * category.  It explains why we condition on ARRAYSIZE() - 1.
           */
          for (vIndex = 0; vIndex < ARRAYSIZE(validCategories) - 1; vIndex++) {
-            if (!strcasecmp(categories[kfIndex], validCategories[vIndex])) {
+            if (!strcasecmp(categories[kfIndex], validCategories[vIndex][0])) {
                foundIt = TRUE;
                break;
             }
@@ -1284,7 +1312,7 @@ GHIPlatformAddMenuItem(GHIPlatform *ghip,       // IN:
    gmi->keyfile = keyfile;
    gmi->exepath = exePath;
 
-   gmd = g_tree_lookup(ghip->apps, validCategories[vIndex]);
+   gmd = g_tree_lookup(ghip->apps, validCategories[vIndex][0]);
 
    if (!gmd) {
       /*
@@ -1292,9 +1320,10 @@ GHIPlatformAddMenuItem(GHIPlatform *ghip,       // IN:
        * that this .desktop is in, so create that object.
        */
       gmd = g_new0(GHIMenuDirectory, 1);
-      gmd->dirname = validCategories[vIndex];
+      gmd->dirname = validCategories[vIndex][0];
+      gmd->prettyDirname = validCategories[vIndex][1];
       gmd->items = g_ptr_array_new();
-      g_tree_insert(ghip->apps, (gpointer)validCategories[vIndex], gmd);
+      g_tree_insert(ghip->apps, (gpointer)validCategories[vIndex][0], gmd);
       Debug("Created new category '%s'\n", gmd->dirname);
    }
 
@@ -1408,7 +1437,7 @@ GHIPlatformReadApplicationsDir(GHIPlatform *ghip, // IN
       if (!strcmp(dent->d_name, ".") ||
           !strcmp(dent->d_name, "..") ||
           !strcmp(dent->d_name, ".hidden")) {
-	continue;
+         continue;
       }
 
       subpathLen = Str_Sprintf(subpath, sizeof subpath, "%s/%s", dir, dent->d_name);
@@ -1429,8 +1458,8 @@ GHIPlatformReadApplicationsDir(GHIPlatform *ghip, // IN
       } else if ((dent->d_type == DT_REG ||
                   (dent->d_type == DT_UNKNOWN
                    && S_ISREG(sbuf.st_mode)))
-		 && StrUtil_EndsWith(dent->d_name, ".desktop")) {
-	 GHIPlatformReadDesktopFile(ghip, subpath);
+                 && StrUtil_EndsWith(dent->d_name, ".desktop")) {
+         GHIPlatformReadDesktopFile(ghip, subpath);
       }
    }
 
@@ -1470,7 +1499,7 @@ GHIPlatformReadAllApplications(GHIPlatform *ghip) // IN
 
       for (i = 0; i < ARRAYSIZE(desktopDirs); i++) {
          if (StrUtil_StartsWith(desktopDirs[i], "~/")) {
-	    char cbuf[PATH_MAX];
+            char cbuf[PATH_MAX];
 
             Str_Sprintf(cbuf, sizeof cbuf, "%s/%s",
                         g_get_home_dir(), desktopDirs[i] + 2);
@@ -1510,6 +1539,7 @@ GHIPlatformReadAllApplications(GHIPlatform *ghip) // IN
 Bool
 GHIPlatformOpenStartMenuTree(GHIPlatform *ghip,        // IN: platform-specific state
                              const char *rootUtf8,     // IN: root of the tree
+                             uint32 flags,             // IN: flags
                              DynBuf *buf)              // OUT: number of items
 {
 #ifdef GTK2
@@ -1768,7 +1798,9 @@ GHIPlatformGetStartMenuItem(GHIPlatform *ghip, // IN: platform-specific state
          itemName = g_strdup_printf("%s/%s", UNITY_START_MENU_LAUNCH_FOLDER,
                                     traverseData.gmd->dirname);
          freeItemName = TRUE;
-         localizedItemName = (char *)traverseData.gmd->dirname;
+         localizedItemName = traverseData.gmd->prettyDirname ?
+            (char *)traverseData.gmd->prettyDirname :
+            (char *)traverseData.gmd->dirname;
       }
       break;
    case FIXED_FOLDER:
@@ -2388,13 +2420,20 @@ GHIPlatformShellOpen(GHIPlatform *ghip,    // IN
 
    if (GHIPlatformCombineArgs(ghip, fileUtf8, &fullArgv, &fullArgc) &&
        fullArgc > 0) {
-      GHIRestoreVMwareEnviron(ghip);
-      retval = g_spawn_async(NULL, fullArgv, NULL,
+      retval = g_spawn_async(NULL, fullArgv,
+                            /*
+                             * XXX  Please don't hate me for casting off the qualifier
+                             * here.  Glib does -not- modify the environment, at
+                             * least not in the parent process, but their prototype
+                             * does not specify this argument as being const.
+                             *
+                             * Comment stolen from GuestAppX11OpenUrl.
+                             */
+                             (char **)ghip->nativeEnviron,
                              G_SPAWN_SEARCH_PATH |
                              G_SPAWN_STDOUT_TO_DEV_NULL |
                              G_SPAWN_STDERR_TO_DEV_NULL,
                              NULL, NULL, NULL, NULL);
-      GHISetVMwareEnviron(ghip);
    }
 
    g_strfreev(fullArgv);
@@ -2460,8 +2499,8 @@ GHIPlatformShellAction(GHIPlatform *ghip,       // IN: platform-specific state
 
 Bool
 GHIPlatformShellUrlOpen(GHIPlatform *ghip,      // IN: platform-specific state
-			const char *fileUtf8,   // IN: command/file
-			const char *actionUtf8) // IN: action
+                        const char *fileUtf8,   // IN: command/file
+                        const char *actionUtf8) // IN: action
 {
 #ifdef GTK2
    char **fileArgv = NULL;
@@ -2646,156 +2685,191 @@ GHIPlatformGetProtocolHandlers(GHIPlatform *ghip,                           // U
 
 
 /*
- *-----------------------------------------------------------------------------
+ *----------------------------------------------------------------------------
  *
- * GHISetVMwareVariable --
+ * GHIPlatformSetOutlookTempFolder --
  *
- *      Sets the environment variable passed in to the value passed in. 
+ *    Set the temporary folder used by Microsoft Outlook to store attachments
+ *    opened by the user.
+ *
+ *    XXX While we probably won't ever need to implement this for Linux, we
+ *        still the definition of this function in the X11 back-end.
  *
  * Results:
- *      None.
+ *    TRUE if successful, FALSE otherwise.
  *
  * Side effects:
- *      The specified environment variable is set. 
+ *    None
  *
- *-----------------------------------------------------------------------------
+ *----------------------------------------------------------------------------
  */
 
-static void
-GHISetVMwareVariable(gpointer key,       // IN
-                     gpointer value,     // IN
-                     gpointer user_data) // IN (unused)
+Bool
+GHIPlatformSetOutlookTempFolder(GHIPlatform *ghip,  // IN: platform-specific state
+                                const XDR *xdrs)    // IN: XDR Serialized arguments
 {
-   if (value) {
-      System_SetEnv(TRUE, key, value);
-   } else {
-      System_UnsetEnv(key);
-   }
+   ASSERT(ghip);
+   ASSERT(xdrs);
+
+   return FALSE;
 }
 
 
 /*
- *------------------------------------------------------------------------------
+ *----------------------------------------------------------------------------
  *
- * GHIRestoreVMwareEnviron --
+ * GHIPlatformRestoreOutlookTempFolder --
  *
- *     For each VMWARE_FOO in the environment, putenv its value as FOO
- *     and save off the previous value of FOO for later restore (iff this
- *     is the first time we are called, e.g., the hash table was not yet
- *     created.) This is called by GHIPlatformShellOpen on Linux only to 
- *     undo what the vmwareuser wrapper script did to the environment,
- *     before we fork and exec.
+ *    Set the temporary folder used by Microsoft Outlook to store attachments
+ *    opened by the user.
  *
  * Results:
- *     TRUE on success
- *     FALSE on error
+ *    TRUE if successful, FALSE otherwise.
  *
  * Side effects:
- *     None
+ *    None
  *
- *------------------------------------------------------------------------------
+ *----------------------------------------------------------------------------
  */
 
-static Bool
-GHIRestoreVMwareEnviron(GHIPlatform *ghip) // IN
+Bool
+GHIPlatformRestoreOutlookTempFolder(GHIPlatform *ghip)  // IN: platform-specific state
 {
-   extern char **environ;
-   char **p;
-   Bool addToHash = FALSE;
+   ASSERT(ghip);
 
-   if (!ghip->vmwareEnv) {
-      ghip->vmwareEnv = g_hash_table_new(g_str_hash, g_str_equal);
-      addToHash = TRUE;
-   }
-
-   if (!ghip->vmwareEnv) {
-      return FALSE;
-   }
-
-   for (p = environ; p && *p; p++) {
-      char *lhs;
-      char *rhs;
-      unsigned int index;
-
-      if (!StrUtil_StartsWith(*p, "VMWARE_")) {
-         continue;
-      }
-
-      /*
-       * So we have a variable that starts with VMWARE_. This variable
-       * was created by the wrapper script that launches us, for each 
-       * variable in the parent environment it modified. For example, if
-       * the variable it changes is LD_LIBRARY_PATH, then the variable
-       * VMWARE_LD_LIBRARY_PATH will hold the value before the wrapper
-       * script modified it. In Unix, we get this variable in the 
-       * environ extern as VMWARE_LD_LIBRARY_PATH=value. So, we want to
-       * get the lhs of the "=", skip past the VMWARE_ prefix to get to
-       * the variable name, and extract the rhs of the "=" to get the
-       * value.
-       */
-      index = 0;
-      lhs = StrUtil_GetNextToken(&index, *p, "=");
-      if (lhs) {
-         index++;
-         rhs = StrUtil_GetNextToken(&index, *p, "");
-         if (rhs && *rhs) {
-            char *q;
-            q = lhs + sizeof "VMWARE_" - 1;
-            if (*q) {
-               Debug("%s: restoring %s\n", __FUNCTION__, q);
-               if (addToHash) {
-                  g_hash_table_insert(ghip->vmwareEnv, g_strdup(q),
-                                      System_GetEnv(TRUE, q));
-               }
-               /*
-                * If the value is "0", the script told us that
-                * there was no corresponding variable in the 
-                * environment. XXX why it was compelled to create
-                * the VMWARE_ counterpart is unclear. It should have
-                * been set with a value like "VMWARE_UNSET_ENV" 
-                * because "0" is conceivably a value that is legit
-                * in some instances. Here, we assume no legit var
-                * had a value of "0". See bug 313450.
-                */
-               if (strcmp(rhs, "0") == 0) {
-                  System_UnsetEnv(q);
-               } else if (*rhs == '1') {
-                  System_SetEnv(TRUE, q, rhs + 1);
-               }
-            }
-         }
-         free(rhs);
-      }
-      free(lhs);
-   }
-   return TRUE;
+   return FALSE;
 }
 
 
-/*
- *------------------------------------------------------------------------------
+/**
+ * @brief Performs an action on the Trash (aka Recycle Bin) folder.
  *
- * GHISetVMwareEnviron --
+ * Performs an action on the Trash (aka Recycle Bin) folder. Currently, the
+ * only supported actions are to open the folder, or empty it.
  *
- *     Restore each environment variable in the hash table to the values
- *     assigned by the wrapper script when vmware-user was executed.
+ * @param[in] ghip Pointer to platform-specific GHI data.
+ * @param[in] xdrs Pointer to XDR serialized arguments.
  *
- * Results:
- *     TRUE on success
- *     FALSE on error
- *
- * Side effects:
- *     None
- *
- *------------------------------------------------------------------------------
+ * @retval TRUE  The action was performed.
+ * @retval FALSE The action couldn't be performed.
  */
 
-static Bool
-GHISetVMwareEnviron(GHIPlatform *ghip)   // IN
+Bool
+GHIPlatformTrashFolderAction(GHIPlatform *ghip,
+                             const XDR   *xdrs)
 {
-   if (!ghip->vmwareEnv) {
-      return FALSE;
-   }
-   g_hash_table_foreach(ghip->vmwareEnv, GHISetVMwareVariable, NULL);
-   return TRUE;
+   ASSERT(ghip);
+   ASSERT(xdrs);
+   return FALSE;
+}
+
+
+/* @brief Returns the icon of the Trash (aka Recycle Bin) folder.
+ *
+ * Gets the icon of the Trash (aka Recycle Bin) folder, and returns it
+ * to the host.
+ *
+ * @param[in]  ghip Pointer to platform-specific GHI data.
+ * @param[out] xdrs Pointer to XDR serialized data to send to the host.
+ *
+ * @retval TRUE  The icon was fetched successfully.
+ * @retval FALSE The icon could not be fetched.
+ */
+
+Bool
+GHIPlatformTrashFolderGetIcon(GHIPlatform *ghip,
+                              XDR         *xdrs)
+{
+   ASSERT(ghip);
+   ASSERT(xdrs);
+   return FALSE;
+}
+
+/* @brief Send a mouse or keyboard event to a tray icon.
+ *
+ * @param[in] ghip Pointer to platform-specific GHI data.
+ *
+ * @retval TRUE Operation Succeeded.
+ * @retval FALSE Operation Failed.
+ */
+
+Bool
+GHIPlatformTrayIconSendEvent(GHIPlatform *ghip,
+                             const XDR   *xdrs)
+{
+   ASSERT(ghip);
+   ASSERT(xdrs);
+   return FALSE;
+}
+
+/* @brief Start sending tray icon updates to the VMX.
+ *
+ * @param[in] ghip Pointer to platform-specific GHI data.
+ *
+ * @retval TRUE Operation Succeeded.
+ * @retval FALSE Operation Failed.
+ */
+
+Bool
+GHIPlatformTrayIconStartUpdates(GHIPlatform *ghip)
+{
+   ASSERT(ghip);
+   return FALSE;
+}
+
+/* @brief Stop sending tray icon updates to the VMX.
+ *
+ * @param[in] ghip Pointer to platform-specific GHI data.
+ *
+ * @retval TRUE Operation Succeeded.
+ * @retval FALSE Operation Failed.
+ */
+
+Bool
+GHIPlatformTrayIconStopUpdates(GHIPlatform *ghip)
+{
+   ASSERT(ghip);
+   return FALSE;
+}
+
+/* @brief Set a window to be focused.
+ *
+ * @param[in] ghip Pointer to platform-specific GHI data.
+ * @param[in] xdrs Pointer to serialized data from the host.
+ *
+ * @retval TRUE Operation Succeeded.
+ * @retval FALSE Operation Failed.
+ */
+
+Bool
+GHIPlatformSetFocusedWindow(GHIPlatform *ghip,
+                            const XDR   *xdrs)
+{
+   ASSERT(ghip);
+   ASSERT(xdrs);
+   return FALSE;
+}
+
+
+/**
+ * @brief Get the hash (or timestamp) of information returned by
+ * GHIPlatformGetBinaryInfo.
+ *
+ * @param[in]  ghip     Pointer to platform-specific GHI data.
+ * @param[in]  request  Request containing which executable to get the hash for.
+ * @param[out] reply    Reply to be filled with the hash.
+ *
+ * @retval TRUE Operation succeeded.
+ * @retval FALSE Operation failed.
+ */
+
+Bool GHIPlatformGetExecInfoHash(GHIPlatform *ghip,
+                                const GHIGetExecInfoHashRequest *request,
+                                GHIGetExecInfoHashReply *reply)
+{
+   ASSERT(ghip);
+   ASSERT(request);
+   ASSERT(reply);
+
+   return FALSE;
 }

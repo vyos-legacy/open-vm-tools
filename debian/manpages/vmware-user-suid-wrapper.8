@@ -1,0 +1,48 @@
+.TH VMWARE\-USER\-SUID\-WRAPPER 8 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmware\-user\-suid\-wrapper \- wrapper programm for \fIvmware\-user\fR(1)
+
+.SH SYNOPSIS
+\fBvmware\-user\-suid\-wrapper\fR
+
+.SH DESCRIPTION
+Operations on the \fIvmblock\fR(9) filesystem are considered privileged, and as such may only be issued on a file descriptor acquired by root. This is accomplished by vmware\-user\-suid\-wrapper, a small setuid wrapper whose only purpose is to acquire a filesystem file descriptor, drop superuser privileges, and then execute \fIvmware\-user\fR(1).
+.
+In particular, prepare the system for vmware-user means that it unmounts the vmblock file system, unloads the vmblock module, then reloads the module, mounts the file system, and opens a file descriptor that vmware-user can use to add and remove blocks.
+
+.SH OPTIONS
+vmware\-user\-suid\-wrapper has no options.
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsync\fR(9)
+.br
+\fIvmxnet\fR(9)
+
+.SH HOMEPAGE
+More information about vmware\-user\-suid\-wrapper and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

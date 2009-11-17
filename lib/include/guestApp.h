@@ -38,9 +38,6 @@ extern "C" {
 #   include "vm_basic_types.h"
 #   include "removable_device.h"
 
-//#define ALLOW_TOOLS_IN_FOREIGN_VM 0
-extern Bool runningInForeignVM;
-
 typedef struct GuestApp_Dict GuestApp_Dict;
 
 uint32
@@ -115,9 +112,6 @@ GuestApp_GetConfPath(void);
 
 char *
 GuestApp_GetLogPath(void);
-
-char *
-GuestApp_GetCmdOutput(const char *cmd); // IN
 
 Bool
 GuestApp_IsHgfsCapable(void);
@@ -207,8 +201,6 @@ void GuestApp_SetSpawnEnviron(const char **spawnEnviron);
 Bool GuestApp_FindProgram(const char *program);
 #endif
 
-Bool
-GuestApp_ControlRecord(int32 command); //  IN
 #ifdef __cplusplus
 }
 #endif

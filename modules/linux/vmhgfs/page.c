@@ -31,9 +31,8 @@
 #include "compat_page-flags.h"
 #include "compat_fs.h"
 #include "compat_kernel.h"
-#ifdef HGFS_ENABLE_WRITEBACK
+#include "compat_pagemap.h"
 #include <linux/writeback.h>
-#endif
 
 #include "cpName.h"
 #include "hgfsProto.h"
@@ -75,12 +74,8 @@ static int HgfsDoWriteEnd(struct file *file,
 /* HGFS address space operations. */
 static int HgfsReadpage(struct file *file,
                         struct page *page);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 52)
 static int HgfsWritepage(struct page *page,
                          struct writeback_control *wbc);
-#else
-static int HgfsWritepage(struct page *page);
-#endif
 
 /*
  * Write aop interface has changed in 2.6.28. Specifically,
@@ -127,9 +122,7 @@ struct address_space_operations HgfsAddressSpaceOperations = {
    .prepare_write = HgfsPrepareWrite,
    .commit_write  = HgfsCommitWrite,
 #endif
-#ifdef HGFS_ENABLE_WRITEBACK
    .set_page_dirty = __set_page_dirty_nobuffers,
-#endif
 };
 
 
@@ -183,7 +176,7 @@ HgfsDoRead(HgfsHandle handle,  // IN:  Handle for this file
    }
 
  retry:
-   opUsed = atomic_read(&hgfsVersionRead);
+   opUsed = hgfsVersionRead;
    if (opUsed == HGFS_OP_READ_V3) {
       HgfsRequest *header;
       HgfsRequestReadV3 *request;
@@ -255,7 +248,7 @@ HgfsDoRead(HgfsHandle handle,  // IN:  Handle for this file
          if (opUsed == HGFS_OP_READ_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsDoRead: Version 3 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionRead, HGFS_OP_READ);
+            hgfsVersionRead = HGFS_OP_READ;
             goto retry;
          }
 	 break;
@@ -328,7 +321,7 @@ HgfsDoWrite(HgfsHandle handle,       // IN: Handle for this file
    }
 
  retry:
-   opUsed = atomic_read(&hgfsVersionWrite);
+   opUsed = hgfsVersionWrite;
    if (opUsed == HGFS_OP_WRITE_V3) {
       HgfsRequest *header;
       HgfsRequestWriteV3 *request;
@@ -390,7 +383,7 @@ HgfsDoWrite(HgfsHandle handle,       // IN: Handle for this file
          if (opUsed == HGFS_OP_WRITE_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsDoWrite: Version 3 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionWrite, HGFS_OP_WRITE);
+            hgfsVersionWrite = HGFS_OP_WRITE;
             goto retry;
          }
          break;
@@ -645,14 +638,9 @@ HgfsReadpage(struct file *file, // IN:     File to read from
  *-----------------------------------------------------------------------------
  */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 52)
 static int
 HgfsWritepage(struct page *page,             // IN: Page to write from
               struct writeback_control *wbc) // IN: Ignored
-#else
-static int
-HgfsWritepage(struct page *page)             // IN: Page to write from
-#endif
 {
    struct inode *inode;
    HgfsHandle handle;
@@ -758,9 +746,13 @@ HgfsDoWriteBegin(struct page *page,         // IN: Page to be written
                  unsigned pageFrom,         // IN: Starting page offset
                  unsigned pageTo)           // IN: Ending page offset
 {
-#ifdef HGFS_ENABLE_WRITEBACK
-   loff_t offset = (loff_t)page->index << PAGE_CACHE_SHIFT;
-   loff_t currentFileSize = compat_i_size_read(page->mapping->host);
+   loff_t offset;
+   loff_t currentFileSize;
+
+   ASSERT(page);
+
+   offset = (loff_t)page->index << PAGE_CACHE_SHIFT;
+   currentFileSize = compat_i_size_read(page->mapping->host);
 
    /*
     * If we are doing a partial write into a new page (beyond end of
@@ -780,7 +772,6 @@ HgfsDoWriteBegin(struct page *page,         // IN: Page to be written
       kunmap_atomic(kaddr, KM_USER0);
       flush_dcache_page(page);
    }
-#endif
 }
 
 
@@ -811,18 +802,6 @@ HgfsPrepareWrite(struct file *file,  // IN: Ignored
 {
    HgfsDoWriteBegin(page, pageFrom, pageTo);
 
-   /*
-    * Prior to 2.4.10, our caller expected to call page_address(page) between
-    * the calls to prepare_write() and commit_write(). This meant filesystems
-    * had to kmap() the page in prepare_write() and kunmap() it in
-    * commit_write(). In 2.4.10, the call to page_address() was replaced with
-    * __copy_to_user(), and while its not clear to me why this is safer,
-    * nfs_prepare_write() dropped the kmap()/kunmap() calls in the same patch,
-    * so the two events must be related.
-    */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 4, 10)
-   kmap(page);
-#endif
    return 0;
 }
 
@@ -863,7 +842,7 @@ HgfsWriteBegin(struct file *file,             // IN: File to be written
    unsigned pageTo = pos + len;
    struct page *page;
 
-   page = grab_cache_page_write_begin(mapping, index, flags);
+   page = compat_grab_cache_page_write_begin(mapping, index, flags);
    if (page == NULL) {
       return -ENOMEM;
    }
@@ -913,11 +892,6 @@ HgfsDoWriteEnd(struct file *file, // IN: File we're writing to
    currentFileSize = compat_i_size_read(inode);
    offset = (loff_t)page->index << PAGE_CACHE_SHIFT;
 
-   /* See comment in HgfsPrepareWrite. */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 4, 10)
-   kunmap(page);
-#endif
-
    if (writeTo > currentFileSize) {
       compat_i_size_write(inode, writeTo);
    }
@@ -927,7 +901,6 @@ HgfsDoWriteEnd(struct file *file, // IN: File we're writing to
       SetPageUptodate(page);
    }
 
-#ifdef HGFS_ENABLE_WRITEBACK
    /*
     * Check if this is a partial write to a new page, which was
     * initialized in HgfsDoWriteBegin.
@@ -945,7 +918,7 @@ HgfsDoWriteEnd(struct file *file, // IN: File we're writing to
       set_page_dirty(page);
       return 0;
    }
-#endif
+
    /*
     * We've recieved a partial write to page that is not uptodate, so
     * do the write now while the page is still locked.  Another
@@ -953,7 +926,7 @@ HgfsDoWriteEnd(struct file *file, // IN: File we're writing to
     * would make it uptodate (ie a complete cached page).
     */
    handle = FILE_GET_FI_P(file)->handle;
-   LOG(6, (KERN_DEBUG "VMware hgfs: %s: writing to handle %u\n", __FUNCTION__,
+   LOG(6, (KERN_DEBUG "VMware hgfs: %s: writing to handle %u\n", __func__,
            handle));
    return HgfsDoWritepage(handle, page, pageFrom, pageTo);
 }

@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 
 /*
  * hgfsUtil.h --
@@ -27,25 +41,25 @@
 #ifndef _HGFSUTIL_H_
 #   define _HGFSUTIL_H_
 
-#   if defined(__linux__) && defined(__KERNEL__)
+#   if defined __linux__ && defined __KERNEL__
 #      include "driver-config.h"
 #      include <linux/time.h> // for time_t and timespec
     /* Include time.h in userspace code, but not in Solaris kernel code. */
-#   elif defined(__FreeBSD__) && defined(_KERNEL)
+#   elif defined __FreeBSD__ && defined _KERNEL
     /* Do nothing. */
-#   elif defined(__APPLE__) && defined(KERNEL)
+#   elif defined __APPLE__ && defined KERNEL
 #      include <sys/time.h>
 #   else
 #      include <time.h>
 #   endif
 #   include "vm_basic_types.h"
-#   if !defined(_STRUCT_TIMESPEC) &&   \
-       !defined(_TIMESPEC_DECLARED) && \
-       !defined(__timespec_defined) && \
-       !defined(sun) && \
-       !defined(__FreeBSD__) && \
+#   if !defined _STRUCT_TIMESPEC &&   \
+       !defined _TIMESPEC_DECLARED && \
+       !defined __timespec_defined && \
+       !defined sun && \
+       !defined __FreeBSD__ && \
        !__APPLE__ && \
-       !defined(_WIN32)
+       !defined _WIN32
 struct timespec {
    time_t tv_sec;
    long   tv_nsec;
@@ -56,10 +70,10 @@ struct timespec {
 
 /* Cross-platform representation of a platform-specific error code. */
 #ifndef _WIN32
-#   if defined(__KERNEL__) || defined(_KERNEL) || defined(KERNEL)
-#      if defined(__linux__)
+#   if defined __KERNEL__ || defined _KERNEL || defined KERNEL
+#      if defined __linux__
 #         include <linux/errno.h>
-#      elif defined(sun) || defined(__FreeBSD__) || defined(__APPLE__)
+#      elif defined sun || defined __FreeBSD__ || defined __APPLE__
 #         include <sys/errno.h>
 #      endif
 #   else
@@ -96,7 +110,7 @@ struct timespec {
 /*
  * FreeBSD (pre-6.0) does not define EPROTO, so we'll define our own error code.
  */
-#if defined(__FreeBSD__) && !defined(EPROTO)
+#if defined __FreeBSD__ && !defined EPROTO
 #define EPROTO (ELAST + 1)
 #endif
 

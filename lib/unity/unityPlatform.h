@@ -16,10 +16,10 @@
  *
  *********************************************************/
 
-/*
- * unityPlatform.h --
+/**
+ * @file unityPlatform.h
  *
- *    Implementation specific functionality
+ * Implementation specific functionality
  */
 
 #ifndef _UNITY_PLATFORM_H_
@@ -28,17 +28,18 @@
 #include "unityWindowTracker.h"
 #include "unity.h"
 
-/*
- * This data structure is used when gathering and sending
- * unity updates.
+
+/**
+ * Container used to store and send Unity updates.
  */
 
 typedef struct {
-   DynBuf updates;
-   size_t cmdSize;
+   DynBuf updates;      ///< See @ref vmtools_unity_uwtGuestRpc.
+   size_t cmdSize;      /**< @brief Size of RpcOut command prefix.
+                             Used as a convenient offset within #updates when
+                             resetting the update buffer. */
    RpcOut *rpcOut;
-   uint32 flags;
-} UnityUpdateThreadData;
+} UnityUpdateChannel;
 
 typedef struct {
    int x;
@@ -55,7 +56,9 @@ typedef struct _UnityPlatform UnityPlatform;
 
 Bool UnityPlatformIsSupported(void);
 UnityPlatform *UnityPlatformInit(UnityWindowTracker *tracker,
-                                 int* blockedWnd);
+                                 UnityUpdateChannel *updateChannel,
+                                 int *blockedWnd,
+                                 DesktopSwitchCallbackManager *desktopSwitchCallbackMgr);
 void UnityPlatformCleanup(UnityPlatform *up);
 void UnityPlatformRegisterCaps(UnityPlatform *up);
 void UnityPlatformUnregisterCaps(UnityPlatform *up);
@@ -65,7 +68,8 @@ void UnityPlatformSaveSystemSettings(UnityPlatform *up);
 void UnityPlatformRestoreSystemSettings(UnityPlatform *up);
 Bool UnityPlatformGetWindowPath(UnityPlatform *up,
                                 UnityWindowId window,
-                                DynBuf *buf);
+                                DynBuf *windowPathUtf8,
+                                DynBuf *execPathUtf8);
 Bool UnityPlatformGetNativeWindowPath(UnityPlatform *up,
                                       UnityWindowId window,
                                       DynBuf *buf);
@@ -76,6 +80,8 @@ Bool UnityPlatformSetTopWindowGroup(UnityPlatform *up,
                                     UnityWindowId *windows,
                                     unsigned int windowCount);
 Bool UnityPlatformCloseWindow(UnityPlatform *up, UnityWindowId window);
+Bool UnityPlatformShowWindow(UnityPlatform *up, UnityWindowId window);
+Bool UnityPlatformHideWindow(UnityPlatform *up, UnityWindowId window);
 Bool UnityPlatformMinimizeWindow(UnityPlatform *up, UnityWindowId window);
 Bool UnityPlatformUnminimizeWindow(UnityPlatform *up, UnityWindowId window);
 Bool UnityPlatformMaximizeWindow(UnityPlatform *up, UnityWindowId window);
@@ -107,6 +113,10 @@ Bool UnityPlatformSetDesktopActive(UnityPlatform *up,
 Bool UnityPlatformSetWindowDesktop(UnityPlatform *up,
                                    UnityWindowId windowId,
                                    UnityDesktopId desktopId);
+Bool UnityPlatformStickWindow(UnityPlatform *up,
+                              UnityWindowId windowId);
+Bool UnityPlatformUnstickWindow(UnityPlatform *up,
+                                UnityWindowId windowId);
 Bool UnityPlatformIsUnityRunning(UnityPlatform *up);
 Bool UnityPlatformStartHelperThreads(UnityPlatform *up);
 void UnityPlatformKillHelperThreads(UnityPlatform *up);
@@ -116,10 +126,12 @@ void UnityPlatformUpdateDnDDetWnd(UnityPlatform *up,
                                   Bool show);
 void UnityPlatformSetActiveDnDDetWnd(UnityPlatform *up, UnityDnD *detWnd);
 
+void UnityPlatformDoUpdate(UnityPlatform *up, Bool incremental);
+
 /* Functions implemented in unity.c for use by the platform-specific code. */
 void UnityGetUpdateCommon(int flags, DynBuf *buf);
-Bool UnityUpdateThreadInit(UnityUpdateThreadData *updateData);
-void UnityUpdateThreadCleanup(UnityUpdateThreadData *updateData);
-Bool UnitySendUpdates(UnityUpdateThreadData *updateData);
+Bool UnityUpdateChannelInit(UnityUpdateChannel *updateChannel);
+void UnityUpdateChannelCleanup(UnityUpdateChannel *updateChannel);
+Bool UnitySendUpdates(UnityUpdateChannel *updateChannel);
 
 #endif

@@ -1,0 +1,58 @@
+.TH VMWARE\-XFERLOGS 1 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmware\-xferlogs \- dump vm\-support output to vmx logfile
+
+.SH SYNOPSIS
+\fBvmware\-xferlogs\fR \fIOPTIONS\fR \fIFILE\fR
+
+.SH DESCRIPTION
+vmware\-xferlogs is a simple console application and can be run as any user. It is based on rpctool to dump the vm\-support output to the vmx log file base64 encoded. It can dump any file supplied on the commandline to the vmx log. It also does the decoding part of it. It can read the vmware.log file decode and write the encoded files in the directory it was invoked.
+.PP
+Example of a transfer found in the vmx log file:
+.PP
+	Aug 24 18:48:09: vcpu-0| Guest: >Logfile Begins : /root/install.log: ver - 1
+	Aug 24 18:48:09: vcpu-0| Guest: >SW5zdGFsbGluZyA0NDEgcGFja2FnZXMKCkluc3RhbGxpbmcgZ2xpYmMtY29tbW9uLTIuMi41LTM0
+	Aug 24 18:48:09: vcpu-0| Guest: >LgpJbnN0YWxsaW5nIGh3ZGF0YS0wLjE0LTEuCkluc3RhbGxpbmcgaW5kZXhodG1sLTcuMy0zLgpJ
+	Aug 24 18:48:09: vcpu-0| Guest: >bnN0YWxsaW5nIG1haWxjYXAtMi4xLjktMi4KSW5zdGFsbGluZyBtYW4tcGFnZXMtMS40OC0yLgpJ
+	....
+	....
+	Aug 24 18:48:10: vcpu-0| Guest: >Mi4K
+	Aug 24 18:48:10: vcpu-0| Guest: >Logfile Ends
+
+.SH OPTIONS
+.IP "enc" 4
+.IP "dec" 4
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsync\fR(9)
+.br
+\fIvmxnet\fR(9)
+
+.SH HOMEPAGE
+More information about vmware\-xferlogs and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

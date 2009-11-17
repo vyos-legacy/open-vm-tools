@@ -30,6 +30,12 @@
 #define INCLUDE_ALLOW_VMKERNEL
 #include "includeCheck.h"
 
+#include "vm_basic_defs.h"
+
+#ifndef VMKERNEL
+#include <string.h>
+#endif
+
 
 /*
  * Message ID macros
@@ -69,6 +75,32 @@
 /*
  *-----------------------------------------------------------------------------
  *
+ * Msg_HasMsgID --
+ *
+ *      Check that a string has a message ID.
+ *	The full "MSG_MAGIC(...)" prefix is required, not just MSG_MAGIC.
+ *
+ * Results:
+ *      True if string has a message ID.
+ *
+ * Side Effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static INLINE Bool
+Msg_HasMsgID(const char *s)
+{
+   return MSG_MAGICAL(s) &&
+          *(s += MSG_MAGIC_LEN) == '(' &&
+          strchr(s + 1, ')') != NULL;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
  * Msg_StripMSGID --
  *
  *      Returns the string that is inside the MSGID() or if it doesn't
@@ -86,11 +118,12 @@
 static INLINE const char *
 Msg_StripMSGID(const char *idString)    // IN
 {
-   if (idString != NULL && MSG_MAGICAL(idString)) {
-      idString += MSG_MAGIC_LEN;
-      idString++;
-      idString = strchr(idString, ')');
-      idString++;
+   const char *s = idString;
+
+   if (MSG_MAGICAL(s) &&
+       *(s += MSG_MAGIC_LEN) == '(' &&
+       (s = strchr(s + 1, ')')) != NULL) {
+      return s + 1;
    }
    return idString;
 }

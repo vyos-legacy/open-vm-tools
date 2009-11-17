@@ -56,6 +56,20 @@ find_networking_script() {
     echo "$script"
 }
 
+save_active_NIC_list() {
+    ifconfig_path=`which ifconfig 2>/dev/null`
+    if [ $? ]; then
+       # Add nic to the list only if it is not already there,
+       # since suspend-vm-default might already create the list.
+       "$ifconfig_path" | grep '^[^[:space:]]' | awk '{ print $1 }' | \
+	  while read nic; do
+	     if ! grep -q "$nic" /var/run/vmware-active-nics 2>/dev/null; then
+	        echo "$nic" >> /var/run/vmware-active-nics
+	     fi
+          done
+    fi
+}
+
 rescue_NIC() {
    niclist="/var/run/vmware-active-nics"
 
@@ -84,16 +98,46 @@ rescue_NIC() {
    fi
 }
 
+
+#
+# wakeNetworkManager --
+#
+#    Wake the NetworkManager daemon (maybe).
+#
+#    See http://projects.gnome.org/NetworkManager/developers/spec.html .
+#
+# Results:
+#    Sleep(false)request is sent to the NetworkManager D-Bus interface.
+#
+# Side effects:
+#    None.
+#
+
+wakeNetworkManager() {
+   # `which' may be a bit noisy, so we'll shush it.
+   dbusSend=`which dbus-send 2>/dev/null`
+   if [ $? -eq 0 ]; then
+      # NetworkManager 0.6
+      $dbusSend --system --dest=org.freedesktop.NetworkManager          \
+         /org/freedesktop/NetworkManager                                \
+         org.freedesktop.NetworkManager.wake
+      # NetworkManager 0.7.0
+      $dbusSend --system --dest=org.freedesktop.NetworkManager          \
+         /org/freedesktop/NetworkManager                                \
+         org.freedesktop.NetworkManager.Sleep boolean:false
+   fi
+}
+
+
 #
 # main
 #
 
-scriptsdir="`dirname $0`/scripts/`basename $0`.d"
-if [ -d "$scriptsdir" ]; then
-    for scriptfile in "$scriptsdir"/*; do
-	[ -x "$scriptfile" ] && "$scriptfile" resume-vm
-    done
-fi
+# Save nic list for later rescue, or we might lose the active nic after
+# calling '/etc/init.d/networking restart'.
+save_active_NIC_list
+
+wakeNetworkManager
 
 network=`find_networking_script`
 if [ "$network" != "error" ]; then
@@ -107,6 +151,13 @@ fi
 
 if [ $status -eq 0 ]; then
     rescue_NIC
+fi
+
+scriptsdir="`dirname $0`/scripts/`basename $0`.d"
+if [ -d "$scriptsdir" ]; then
+    for scriptfile in "$scriptsdir"/*; do
+	[ -x "$scriptfile" ] && "$scriptfile" resume-vm
+    done
 fi
 
 exit "$status"

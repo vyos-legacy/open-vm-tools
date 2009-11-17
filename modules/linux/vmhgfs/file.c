@@ -28,6 +28,7 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/signal.h>
+#include "compat_cred.h"
 #include "compat_fs.h"
 #include "compat_kernel.h"
 #include "compat_slab.h"
@@ -55,7 +56,7 @@ static int HgfsGetOpenFlags(uint32 flags);
 /* HGFS file operations for files. */
 static int HgfsOpen(struct inode *inode,
                     struct file *file);
-#if defined(VMW_USE_AIO)
+#if defined VMW_USE_AIO
 static ssize_t HgfsAioRead(struct kiocb *iocb,
                            const struct iovec *iov,
                            unsigned long numSegs,
@@ -83,13 +84,13 @@ static int HgfsRelease(struct inode *inode,
                        struct file *file);
 
 #ifndef VMW_SENDFILE_NONE
-#if defined(VMW_SENDFILE_OLD)
+#if defined VMW_SENDFILE_OLD
 static ssize_t HgfsSendfile(struct file *file,
                             loff_t *offset,
                             size_t count,
                             read_actor_t actor,
                             void __user *target);
-#else /* defined(VMW_SENDFILE_NEW) */
+#else /* defined VMW_SENDFILE_NEW */
 static ssize_t HgfsSendfile(struct file *file,
                             loff_t *offset,
                             size_t count,
@@ -109,7 +110,7 @@ static ssize_t HgfsSpliceRead(struct file *file,
 struct file_operations HgfsFileFileOperations = {
    .owner      = THIS_MODULE,
    .open       = HgfsOpen,
-#if defined(VMW_USE_AIO)
+#if defined VMW_USE_AIO
    .aio_read   = HgfsAioRead,
    .aio_write  = HgfsAioWrite,
 #else
@@ -563,7 +564,7 @@ HgfsOpen(struct inode *inode,  // IN: Inode of the file to open
     * version exactly once and use the pointers later.
     */
 
-   opUsed = atomic_read(&hgfsVersionOpen);
+   opUsed = hgfsVersionOpen;
    result = HgfsPackOpenRequest(inode, file, opUsed, req);
    if (result != 0) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsOpen: error packing request\n"));
@@ -634,7 +635,7 @@ HgfsOpen(struct inode *inode,  // IN: Inode of the file to open
             iparent = dparent->d_inode;
 
             HgfsSetUidGid(iparent, file->f_dentry,
-                          compat_current_fsuid(), compat_current_fsgid());
+                          current_fsuid(), current_fsgid());
 
             dput(dparent);
          }
@@ -645,7 +646,7 @@ HgfsOpen(struct inode *inode,  // IN: Inode of the file to open
          if (opUsed == HGFS_OP_OPEN_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsOpen: Version 3 not "
                     "supported. Falling back to version 2.\n"));
-            atomic_set(&hgfsVersionOpen, HGFS_OP_OPEN_V2);
+            hgfsVersionOpen = HGFS_OP_OPEN_V2;
             goto retry;
          }
 
@@ -653,7 +654,7 @@ HgfsOpen(struct inode *inode,  // IN: Inode of the file to open
          if (opUsed == HGFS_OP_OPEN_V2) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsOpen: Version 2 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionOpen, HGFS_OP_OPEN);
+            hgfsVersionOpen = HGFS_OP_OPEN;
             goto retry;
          }
 
@@ -699,7 +700,7 @@ out:
 }
 
 
-#if defined(VMW_USE_AIO)
+#if defined VMW_USE_AIO
 /*
  *----------------------------------------------------------------------
  *
@@ -1034,7 +1035,7 @@ HgfsRelease(struct inode *inode,  // IN: Inode that this file points to
    }
 
  retry:
-   opUsed = atomic_read(&hgfsVersionClose);
+   opUsed = hgfsVersionClose;
    if (opUsed == HGFS_OP_CLOSE_V3) {
       HgfsRequest *header;
       HgfsRequestCloseV3 *request;
@@ -1074,7 +1075,7 @@ HgfsRelease(struct inode *inode,  // IN: Inode that this file points to
          if (opUsed == HGFS_OP_CLOSE_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsRelease: Version 3 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionClose, HGFS_OP_CLOSE);
+            hgfsVersionClose = HGFS_OP_CLOSE;
             goto retry;
          }
          break;
@@ -1122,14 +1123,14 @@ out:
  *-----------------------------------------------------------------------------
  */
 
-#if defined(VMW_SENDFILE_OLD)
+#if defined VMW_SENDFILE_OLD
 static ssize_t
 HgfsSendfile(struct file *file,    // IN: File to read from
              loff_t *offset,       // IN/OUT: Where to start reading
              size_t count,         // IN: How much to read
              read_actor_t actor,   // IN: Routine to send a page of data
              void __user *target)  // IN: Destination file/socket
-#elif defined(VMW_SENDFILE_NEW)
+#elif defined VMW_SENDFILE_NEW
 static ssize_t
 HgfsSendfile(struct file *file,    // IN: File to read from
              loff_t *offset,       // IN/OUT: Where to start reading

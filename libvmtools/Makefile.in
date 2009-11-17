@@ -49,13 +49,14 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
+@USE_SLASH_PROC_TRUE@am__append_1 = ../lib/slashProc/libSlashProc.la
 subdir = libvmtools
 DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in COPYING
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/libtool.m4 \
 	$(top_srcdir)/m4/ltoptions.m4 $(top_srcdir)/m4/ltsugar.m4 \
 	$(top_srcdir)/m4/ltversion.m4 $(top_srcdir)/m4/lt~obsolete.m4 \
-	$(top_srcdir)/configure.ac
+	$(top_srcdir)/m4/vmtools.m4 $(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 mkinstalldirs = $(install_sh) -d
@@ -73,14 +74,18 @@ libvmtools_la_DEPENDENCIES = ../lib/backdoor/libBackdoor.la \
 	../lib/conf/libConf.la ../lib/dict/libDict.la \
 	../lib/dynxdr/libDynxdr.la ../lib/err/libErr.la \
 	../lib/file/libFile.la ../lib/guestApp/libGuestApp.la \
-	../lib/guestInfo/libGuestInfoCS.la ../lib/hgfs/libHgfs.la \
+	../lib/guestInfo/libGuestInfo.la \
+	../lib/guestRpc/libGuestRpc.la ../lib/hgfs/libHgfs.la \
 	../lib/message/libMessage.la ../lib/misc/libMisc.la \
-	../lib/panic/libPanic.la ../lib/rpcOut/libRpcOut.la \
-	../lib/string/libString.la ../lib/sync/libSync.la \
+	../lib/netUtil/libNetUtil.la ../lib/panic/libPanic.la \
+	../lib/procMgr/libProcMgr.la \
+	../lib/rpcChannel/libRpcChannel.la ../lib/rpcOut/libRpcOut.la \
+	../lib/rpcVmx/libRpcVmx.la ../lib/string/libString.la \
+	../lib/sync/libSync.la ../lib/syncDriver/libSyncDriver.la \
 	../lib/system/libSystem.la ../lib/stubs/libStubsCS.la \
 	../lib/unicode/libUnicode.la ../lib/user/libUser.la \
 	../lib/vmCheck/libVmCheck.la ../lib/vmSignal/libVmSignal.la \
-	../lib/wiper/libWiper.la
+	../lib/wiper/libWiper.la $(am__append_1)
 am_libvmtools_la_OBJECTS = libvmtools_la-signalSource.lo \
 	libvmtools_la-vmtools.lo libvmtools_la-vmtoolsConfig.lo \
 	libvmtools_la-vmtoolsLog.lo libvmtools_la-rpcin.lo \
@@ -116,6 +121,7 @@ AWK = @AWK@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
+COMMON_PLUGIN_INSTALLDIR = @COMMON_PLUGIN_INSTALLDIR@
 COMMON_XLIBS = @COMMON_XLIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
@@ -126,9 +132,9 @@ CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
-DNET_CONFIG = @DNET_CONFIG@
 DNET_CPPFLAGS = @DNET_CPPFLAGS@
 DNET_LIBS = @DNET_LIBS@
+DOT = @DOT@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -141,13 +147,19 @@ FUSE_CPPFLAGS = @FUSE_CPPFLAGS@
 FUSE_LIBS = @FUSE_LIBS@
 GLIB2_CPPFLAGS = @GLIB2_CPPFLAGS@
 GLIB2_LIBS = @GLIB2_LIBS@
+GMODULE_CPPFLAGS = @GMODULE_CPPFLAGS@
+GMODULE_LIBS = @GMODULE_LIBS@
+GOBJECT_CPPFLAGS = @GOBJECT_CPPFLAGS@
+GOBJECT_LIBS = @GOBJECT_LIBS@
 GREP = @GREP@
+GTHREAD_CPPFLAGS = @GTHREAD_CPPFLAGS@
+GTHREAD_LIBS = @GTHREAD_LIBS@
+GTKMM_CPPFLAGS = @GTKMM_CPPFLAGS@
+GTKMM_LIBS = @GTKMM_LIBS@
 GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
-GUESTD_LDADD = @GUESTD_LDADD@
-HAVE_CXX = @HAVE_CXX@
+HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
-ICU_CONFIG = @ICU_CONFIG@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -159,7 +171,6 @@ KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CONFIG = @LIBPNG_CONFIG@
 LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
 LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
@@ -173,6 +184,7 @@ LIB_MISC_CPPFLAGS = @LIB_MISC_CPPFLAGS@
 LIB_PROC_MGR_CPPFLAGS = @LIB_PROC_MGR_CPPFLAGS@
 LIB_STRING_CPPFLAGS = @LIB_STRING_CPPFLAGS@
 LIB_USER_CPPFLAGS = @LIB_USER_CPPFLAGS@
+LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
 MAKEINFO = @MAKEINFO@
@@ -180,32 +192,49 @@ MKDIR_P = @MKDIR_P@
 MODULES = @MODULES@
 MODULES_DIR = @MODULES_DIR@
 MODULES_OS = @MODULES_OS@
+MSCGEN = @MSCGEN@
+MSCGEN_DIR = @MSCGEN_DIR@
 NM = @NM@
 NMEDIT = @NMEDIT@
 OBJEXT = @OBJEXT@
+OTOOL = @OTOOL@
+OTOOL64 = @OTOOL64@
 PACKAGE = @PACKAGE@
 PACKAGE_BUGREPORT = @PACKAGE_BUGREPORT@
 PACKAGE_NAME = @PACKAGE_NAME@
 PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
+PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
+PLUGIN_LDFLAGS = @PLUGIN_LDFLAGS@
+PROCPS_CPPFLAGS = @PROCPS_CPPFLAGS@
 PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
+RPCGENFLAGS = @RPCGENFLAGS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
+SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
+TOOLS_VERSION = @TOOLS_VERSION@
 URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
 URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
+VIX_LIBADD = @VIX_LIBADD@
+VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
 VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
 VMTOOLS_LIBS = @VMTOOLS_LIBS@
+VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
 VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
 VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
@@ -220,6 +249,7 @@ abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
 ac_ct_CXX = @ac_ct_CXX@
 ac_ct_DUMPBIN = @ac_ct_DUMPBIN@
+ac_vmw_lib_cfg = @ac_vmw_lib_cfg@
 am__include = @am__include@
 am__leading_dot = @am__leading_dot@
 am__quote = @am__quote@
@@ -237,6 +267,9 @@ datarootdir = @datarootdir@
 docdir = @docdir@
 dvidir = @dvidir@
 exec_prefix = @exec_prefix@
+have_cxx = @have_cxx@
+have_doxygen = @have_doxygen@
+have_genmarshal = @have_genmarshal@
 host = @host@
 host_alias = @host_alias@
 host_cpu = @host_cpu@
@@ -270,15 +303,19 @@ libvmtools_la_LIBADD = ../lib/backdoor/libBackdoor.la \
 	../lib/conf/libConf.la ../lib/dict/libDict.la \
 	../lib/dynxdr/libDynxdr.la ../lib/err/libErr.la \
 	../lib/file/libFile.la ../lib/guestApp/libGuestApp.la \
-	../lib/guestInfo/libGuestInfoCS.la ../lib/hgfs/libHgfs.la \
+	../lib/guestInfo/libGuestInfo.la \
+	../lib/guestRpc/libGuestRpc.la ../lib/hgfs/libHgfs.la \
 	../lib/message/libMessage.la ../lib/misc/libMisc.la \
-	../lib/panic/libPanic.la ../lib/rpcOut/libRpcOut.la \
-	../lib/string/libString.la ../lib/sync/libSync.la \
+	../lib/netUtil/libNetUtil.la ../lib/panic/libPanic.la \
+	../lib/procMgr/libProcMgr.la \
+	../lib/rpcChannel/libRpcChannel.la ../lib/rpcOut/libRpcOut.la \
+	../lib/rpcVmx/libRpcVmx.la ../lib/string/libString.la \
+	../lib/sync/libSync.la ../lib/syncDriver/libSyncDriver.la \
 	../lib/system/libSystem.la ../lib/stubs/libStubsCS.la \
 	../lib/unicode/libUnicode.la ../lib/user/libUser.la \
 	../lib/vmCheck/libVmCheck.la ../lib/vmSignal/libVmSignal.la \
 	../lib/wiper/libWiper.la @LIBVMTOOLS_LIBADD@ @GLIB2_LIBS@ \
-	@ICU_LIBS@ $(am__empty)
+	@ICU_LIBS@ $(am__append_1)
 
 # Recompile the rpcIn library with GLIB support.
 

@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * hgfsEscape.c --
  *
@@ -26,17 +40,17 @@
 #ifdef __KERNEL__
 #  include "driver-config.h"
 #  include <linux/string.h>
-#elif defined(__FreeBSD__)
-#   if defined(_KERNEL)
+#elif defined __FreeBSD__
+#   if defined _KERNEL
 #      include <sys/libkern.h>
 #      define strchr(s,c)       index(s,c)
 #   else
 #      include <string.h>
 #   endif
 #   define memmove(s1,s2,n) bcopy(s2,s1,n) 
-#elif defined(__APPLE__) && defined(KERNEL)
+#elif defined __APPLE__ && defined KERNEL
 #  include <string.h>
-#elif !defined(sun)
+#elif !defined sun
 #  include <stdlib.h>
 #  include <string.h>
 #else
@@ -88,7 +102,7 @@ if (!HgfsProcessLastCharacter(b,s,p,c)) \
 /* There is no special processing for the last character on non-Windows platforms. */
 #define PROCESS_LAST_CHARACTER(b,s,p,c)
 
-#if defined(__APPLE__)
+#if defined __APPLE__
 /* These characters are illegal in MAC OS file names. */
 const char* HGFS_ILLEGAL_CHARS = "/:";
 const char* HGFS_SUBSTITUTE_CHARS = "!&";
@@ -704,7 +718,10 @@ HgfsEscape_Do(char const *bufIn, // IN:  Buffer with unescaped input
    }
    while (currentComponent - bufIn < sizeIn) {
       int escapedLength;
-      uint32 componentSize = CPName_GetComponent(currentComponent, end, &next);
+      int componentSize = CPName_GetComponent(currentComponent, end, &next);
+      if (componentSize < 0) {
+         return componentSize;
+      }
 
       escapedLength = HgfsEscapeDoComponent(currentComponent, componentSize,
                                             sizeLeft, outPointer);
@@ -764,7 +781,11 @@ HgfsEscape_GetSize(char const *bufIn,    // IN:  Buffer with unescaped input
       currentComponent++;
    }
    while (currentComponent - bufIn < sizeIn) {
-      uint32 componentSize = CPName_GetComponent(currentComponent, end, &next);
+      int componentSize = CPName_GetComponent(currentComponent, end, &next);
+      if (componentSize < 0) {
+         Log("%s: failed to calculate escapde name size - name is invalid\n", __FUNCTION__);
+         return -1;
+      }
       result += HgfsEscapeGetComponentSize(currentComponent, componentSize);
       currentComponent = next;
    }

@@ -1,0 +1,98 @@
+.TH VMWARE\-HGFSMOUNTER 8 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmware\-hgfsmounter \- program for mounting HGFS shares
+
+.SH SYNOPSIS
+\fBmount.vmhgfs\fR \fISHARE\fR \fIDIRECTORY\fR [ \-o \fIOPTIONS\fR ]
+.br
+\fBvmware\-hgfsmounter\fR \fISHARE\fR \fIDIRECTORY\fR [ \-o \fIOPTIONS\fR ]
+
+.SH DESCRIPTION
+This is a console\-based mount helper application. It mounts the HGFS share, specified by name, to a local directory. Share names must be in host:dir format.
+
+.SH OPTIONS
+.IP "uid=\fIARGUMENT\fR" 4
+mount owner (by uid or username)
+.IP "gid=\fIARGUMENT\fR" 4
+mount group (by gid or groupname)
+.IP "fmask=\fIARGUMENT\fR" 4
+file umask (in octal)
+.IP "dmask=\fIARGUMENT\fR" 4
+directory umask (in octal)
+.IP "ro" 4
+mount read\-only
+.IP "rw" 4
+mount read\-write (default)
+.IP "nosuid" 4
+ignore suid/sgid bits
+.IP "suid" 4
+allow suid/sgid bits (default)
+.IP "nodev" 4
+prevent device node access
+.IP "dev" 4
+allow device node access (default)
+.IP "noexec" 4
+prevent program execution
+.IP "exec" 4
+allow program execution (default)
+.IP "sync" 4
+file writes are synchronous
+.IP "async" 4
+file writes are asynchronous (default)
+.IP "mand" 4
+allow mandatory locks
+.IP "nomand" 4
+prevent mandatory locks (default)
+.IP "noatime" 4
+do not update access times
+.IP "atime" 4
+update access times (default)
+.IP "nodiratime" 4
+do not update directory access times
+.IP "adirtime" 4
+update directory access times (default)
+.IP "ttl=\fIARGUMENT\fR" 4
+time before file attributes must be revalidated (in seconds). Improves performance but decreases coherency. Defaults to 1 if not set.
+
+.SH EXAMPLES
+This command is intended to be run from within /bin/mount by passing the option '\-t vmhgfs'. For example:
+.PP
+	mount \-t vmhgfs .host:/ /mnt/hgfs/
+.br
+	mount \-t vmhgfs .host:/foo /mnt/foo
+.br
+	mount \-t vmhgfs .host:/foo/bar /var/lib/bar
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsync\fR(9)
+.br
+\fIvmxnet\fR(9)
+
+.SH HOMEPAGE
+More information about vmware\-hgfsmounter and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

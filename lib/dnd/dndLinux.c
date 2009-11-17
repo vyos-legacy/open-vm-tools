@@ -40,7 +40,7 @@
 #include "escape.h"
 #include "su.h"
 #if defined(linux) || defined(sun) || defined(__FreeBSD__)
-#include "vmblock.h"
+#include "vmblock_user.h"
 #include "mntinfo.h"
 #endif
 
@@ -159,6 +159,7 @@ DnDUriListGetFile(char const *uriList,  // IN    : text/uri-list string
     * XXX Note that this assumes we only support dropping files, based on the
     * definition of the macro that is used.
     */
+
    nameStart = &uriList[*index];
 
    if (strncmp(nameStart,
@@ -170,8 +171,9 @@ DnDUriListGetFile(char const *uriList,  // IN    : text/uri-list string
                       sizeof DND_URI_LIST_PRE_KDE - 1) == 0) {
       nameStart += sizeof DND_URI_LIST_PRE_KDE - 1;
    } else {
-      Warning("DnDUriListGetFile: the URI list did not begin with %s or %s\n",
+      Warning("%s: the URI list did not begin with %s or %s\n", __func__,
               DND_URI_LIST_PRE, DND_URI_LIST_PRE_KDE);
+
       return NULL;
     }
 
@@ -192,6 +194,7 @@ DnDUriListGetFile(char const *uriList,  // IN    : text/uri-list string
 
    *index = curr - uriList;
    *length = nameEnd - nameStart + 1;
+
    return (char *)nameStart;
 }
 
@@ -244,9 +247,11 @@ DnD_UriListGetNextFile(char const *uriList,  // IN    : text/uri-list string
     * Retrieve an allocated, unescaped name.  This undoes the ' ' -> "%20"
     * escaping as required by RFC 1630 for entries in a uri-list.
     */
+
    unescapedName = Escape_Undo('%', file, fileLength, &unescapedLength);
    if (!unescapedName) {
-      Warning("DnD_UriListGetNextFile: error unescaping filename\n");
+      Warning("%s: error unescaping filename\n", __func__);
+
       return NULL;
    }
 
@@ -254,16 +259,235 @@ DnD_UriListGetNextFile(char const *uriList,  // IN    : text/uri-list string
    if (length) {
       *length = unescapedLength;
    }
+
    return unescapedName;
 }
 
 
 /* We need to make this suck less. */
 #if defined(linux) || defined(sun) || defined(__FreeBSD__)
+
 /*
  *----------------------------------------------------------------------------
  *
- * DnD_InitializeBlocking --
+ * DnD_AddBlockLegacy --
+ *
+ *    Adds a block to blockPath.
+ *
+ * Results:
+ *    TRUE on success, FALSE on failure.
+ *
+ * Side effects:
+ *    Processes trying to access this path will block until DnD_RemoveBlock
+ *    is called.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+DnD_AddBlockLegacy(int blockFd,                    // IN
+                   const char *blockPath)          // IN
+{
+   ASSERT(blockFd >= 0);
+
+   if (VMBLOCK_CONTROL(blockFd, VMBLOCK_ADD_FILEBLOCK, blockPath) != 0) {
+      LOG(1, ("%s: Cannot add block on %s (%s)\n",
+              __func__, blockPath, strerror(errno)));
+
+      return FALSE;
+   }
+
+   return TRUE;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * DnD_RemoveBlockLegacy --
+ *
+ *    Removes block on blockedPath.
+ *
+ * Results:
+ *    TRUE on success, FALSE on failure.
+ *
+ * Side effects:
+ *    Processes blocked on accessing this path will continue.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+DnD_RemoveBlockLegacy(int blockFd,                    // IN
+                      const char *blockedPath)        // IN
+{
+   if (blockFd >= 0) {
+      if (VMBLOCK_CONTROL(blockFd, VMBLOCK_DEL_FILEBLOCK, blockedPath) != 0) {
+         Log("%s: Cannot delete block on %s (%s)\n",
+             __func__, blockedPath, strerror(errno));
+
+         return FALSE;
+      }
+   } else {
+      LOG(4, ("%s: Could not remove block on %s: "
+              "fd to vmblock no longer exists.\n", __func__, blockedPath));
+   }
+
+   return TRUE;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * DnD_CheckBlockLegacy --
+ *
+ *    Verifies that given file descriptor is truly a control file of
+ *    kernel-based vmblock implementation. Just a stub, for now at
+ *    least since we don't have a good way to check.
+ *
+ * Results:
+ *    TRUE on success, FALSE on failure.
+ *
+ * Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static Bool
+DnD_CheckBlockLegacy(int blockFd)                    // IN
+{
+   return TRUE;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * DnD_AddBlockFuse --
+ *
+ *    Adds a block to blockPath.
+ *
+ * Results:
+ *    TRUE on success, FALSE on failure.
+ *
+ * Side effects:
+ *    Processes trying to access this path will block until DnD_RemoveBlock
+ *    is called.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+DnD_AddBlockFuse(int blockFd,                    // IN
+                 const char *blockPath)          // IN
+{
+   ASSERT(blockFd >= 0);
+
+   if (VMBLOCK_CONTROL_FUSE(blockFd, VMBLOCK_FUSE_ADD_FILEBLOCK,
+                            blockPath) != 0) {
+      LOG(1, ("%s: Cannot add block on %s (%s)\n",
+              __func__, blockPath, strerror(errno)));
+
+      return FALSE;
+   }
+
+   return TRUE;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * DnD_RemoveBlockFuse --
+ *
+ *    Removes block on blockedPath.
+ *
+ * Results:
+ *    TRUE on success, FALSE on failure.
+ *
+ * Side effects:
+ *    Processes blocked on accessing this path will continue.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+DnD_RemoveBlockFuse(int blockFd,                    // IN
+                    const char *blockedPath)        // IN
+{
+   if (blockFd >= 0) {
+      if (VMBLOCK_CONTROL_FUSE(blockFd, VMBLOCK_FUSE_DEL_FILEBLOCK,
+                               blockedPath) != 0) {
+         Log("%s: Cannot delete block on %s (%s)\n",
+             __func__, blockedPath, strerror(errno));
+
+         return FALSE;
+      }
+   } else {
+      LOG(4, ("%s: Could not remove block on %s: "
+              "fd to vmblock no longer exists.\n", __func__, blockedPath));
+   }
+
+   return TRUE;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * DnD_CheckBlockFuse --
+ *
+ *    Verifies that given file descriptor is truly a control file of
+ *    FUSE-based vmblock implementation.
+ *
+ * Results:
+ *    TRUE on success, FALSE on failure.
+ *
+ * Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static Bool
+DnD_CheckBlockFuse(int blockFd)                    // IN
+{
+   char buf[sizeof(VMBLOCK_FUSE_READ_RESPONSE)];
+   size_t size;
+
+   size = read(blockFd, buf, sizeof(VMBLOCK_FUSE_READ_RESPONSE));
+   if (size < 0) {
+      LOG(4, ("%s: read failed, error %s.\n",
+              __func__, strerror(errno)));
+
+      return FALSE;
+   }
+
+   if (size != sizeof(VMBLOCK_FUSE_READ_RESPONSE)) {
+      LOG(4, ("%s: Response too short (%"FMTSZ"d vs. %"FMTSZ"u).\n",
+              __func__, size, sizeof(VMBLOCK_FUSE_READ_RESPONSE)));
+
+      return FALSE;
+   }
+
+   if (memcmp(buf, VMBLOCK_FUSE_READ_RESPONSE,
+              sizeof(VMBLOCK_FUSE_READ_RESPONSE))) {
+      LOG(4, ("%s: Invalid response %.*s",
+              __func__, (int)sizeof(VMBLOCK_FUSE_READ_RESPONSE) - 1, buf));
+
+      return FALSE;
+   }
+
+   return TRUE;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * DnD_TryInitVmblock --
  *
  *    Initializes file blocking needed to prevent access to file before
  *    transfer has finished.
@@ -277,24 +501,24 @@ DnD_UriListGetNextFile(char const *uriList,  // IN    : text/uri-list string
  *----------------------------------------------------------------------------
  */
 
-int
-DnD_InitializeBlocking(void)
+static int
+DnD_TryInitVmblock(const char *vmbFsName,          // IN
+                   const char *vmbMntPoint,        // IN
+                   const char *vmbDevice,          // IN
+                   mode_t vmbDeviceMode,           // IN
+                   Bool (*verifyBlock)(int fd))    // IN
 {
-   uid_t uid;
    Bool found = FALSE;
    int blockFd = -1;
    MNTHANDLE fp;
    DECLARE_MNTINFO(mnt);
 
-   /* root access is needed for opening the vmblock device */
-   uid = Id_BeginSuperUser();
-
    /* Make sure the vmblock file system is mounted. */
    fp = OPEN_MNTFILE("r");
    if (fp == NULL) {
-      LOG(1, ("DnD_InitializeBlocking: could not open mount file\n"));
-      (void) CLOSE_MNTFILE(fp);
-      goto out;
+      LOG(1, ("%s: could not open mount file\n", __func__));
+
+      return -1;
    }
 
    while (GETNEXT_MNTINFO(fp, mnt)) {
@@ -302,8 +526,9 @@ DnD_InitializeBlocking(void)
        * In the future we can publish the mount point in VMDB so that the UI
        * can use it rather than enforcing the VMBLOCK_MOUNT_POINT check here.
        */
-      if (strcmp(MNTINFO_FSTYPE(mnt), VMBLOCK_FS_NAME) == 0 &&
-          strcmp(MNTINFO_MNTPT(mnt), VMBLOCK_MOUNT_POINT) == 0) {
+
+      if (strcmp(MNTINFO_FSTYPE(mnt), vmbFsName) == 0 &&
+          strcmp(MNTINFO_MNTPT(mnt), vmbMntPoint) == 0) {
          found = TRUE;
          break;
       }
@@ -311,25 +536,85 @@ DnD_InitializeBlocking(void)
 
    (void) CLOSE_MNTFILE(fp);
 
-   if (!found) {
-      LOG(4, ("DnD_InitializeBlocking: could not find vmblock mounted\n"));
+   if (found) {
+      /* Open device node for communication with vmblock. */
+      blockFd = Posix_Open(vmbDevice, vmbDeviceMode);
+      if (blockFd < 0) {
+         LOG(1, ("%s: Can not open blocker device (%s)\n",
+                 __func__, strerror(errno)));
+      } else {
+         LOG(4, ("%s: Opened blocker device at %s\n",
+                 __func__, VMBLOCK_DEVICE));
+         if (verifyBlock && !verifyBlock(blockFd)) {
+            LOG(4, ("%s: Blocker device at %s did not pass checks, closing.\n",
+                    __func__, VMBLOCK_DEVICE));
+            close(blockFd);
+            blockFd = -1;
+         }
+      }
+   }
+
+   return blockFd;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * DnD_InitializeBlocking --
+ *
+ *    Initializes file blocking needed to prevent access to file before
+ *    transfer has finished.
+ *
+ * Results:
+ *    TRUE on success, FALSE on failure.
+ *
+ * Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+DnD_InitializeBlocking(DnDBlockControl *blkCtrl)   // OUT
+{
+   uid_t uid;
+   int blockFd;
+
+   /* Root access is needed for opening the vmblock device. */
+   uid = Id_BeginSuperUser();
+
+   /* Fitrst try FUSE and see if it is available. */
+   blockFd = DnD_TryInitVmblock(VMBLOCK_FUSE_FS_NAME, VMBLOCK_FUSE_MOUNT_POINT,
+                                VMBLOCK_FUSE_DEVICE, VMBLOCK_FUSE_DEVICE_MODE,
+                                DnD_CheckBlockFuse);
+   if (blockFd != -1) {
+      blkCtrl->fd = blockFd;
+      /* Setup FUSE methods. */
+      blkCtrl->blockRoot = VMBLOCK_FUSE_FS_ROOT;
+      blkCtrl->AddBlock = DnD_AddBlockFuse;
+      blkCtrl->RemoveBlock = DnD_RemoveBlockFuse;
       goto out;
    }
 
-   /* Open device node for communication with vmblock. */
-   blockFd = Posix_Open(VMBLOCK_DEVICE, VMBLOCK_DEVICE_MODE);
-   if (blockFd < 0) {
-      LOG(1, ("DnD_InitializeBlocking: Can not open blocker device (%s)\n",
-              strerror(errno)));
+   /* Now try OS-specific VMBlock driver. */
+   blockFd = DnD_TryInitVmblock(VMBLOCK_FS_NAME, VMBLOCK_MOUNT_POINT,
+                                VMBLOCK_DEVICE, VMBLOCK_DEVICE_MODE,
+                                NULL);
+   if (blockFd != -1) {
+      blkCtrl->fd = blockFd;
+      /* Setup legacy in-kernel methods. */
+      blkCtrl->blockRoot = VMBLOCK_FS_ROOT;
+      blkCtrl->AddBlock = DnD_AddBlockLegacy;
+      blkCtrl->RemoveBlock = DnD_RemoveBlockLegacy;
       goto out;
    }
-   LOG(4, ("DnD_InitializeBlocking: Opened blocker device at %s\n",
-           VMBLOCK_DEVICE));
 
+   LOG(4, ("%s: could not find vmblock mounted\n", __func__));
 out:
    Id_EndSuperUser(uid);
 
-   return blockFd;
+   return blockFd != -1;
 }
 
 
@@ -350,85 +635,63 @@ out:
  */
 
 Bool
-DnD_UninitializeBlocking(int blockFd)        // IN
+DnD_UninitializeBlocking(DnDBlockControl *blkCtrl)    // IN
 {
    Bool ret = TRUE;
-   if (blockFd >= 0) {
-      if (close(blockFd) < 0) {
-         Log("DnD_UninitializeBlocking: Can not close blocker device (%s)\n",
-             strerror(errno));
+
+   if (blkCtrl->fd >= 0) {
+      if (close(blkCtrl->fd) < 0) {
+         Log("%s: Can not close blocker device (%s)\n",
+             __func__, strerror(errno));
          ret = FALSE;
+      } else {
+         blkCtrl->fd = -1;
       }
    }
 
    return ret;
 }
 
-
 /*
- *----------------------------------------------------------------------------
+ * DnD_CompleteBlockInitialization --
  *
- * DnD_AddBlock --
- *
- *    Adds a block to blockPath.
+ *    Complete block initialization in case when we were handed
+ *    blocking file descriptor (presumably opened for us by a
+ *    suid application).
  *
  * Results:
- *    TRUE on success, FALSE on failure.
+ *    TRUE on success, FALSE on failure (invalid type).
  *
  * Side effects:
- *    Processes trying to access this path will block until DnD_RemoveBlock
- *    is called.
+ *    Adjusts blkCtrl to match blocking device type (legacy or fuse).
  *
- *----------------------------------------------------------------------------
  */
 
 Bool
-DnD_AddBlock(int blockFd,                    // IN
-             const char *blockPath)          // IN
+DnD_CompleteBlockInitialization(int fd,                     // IN
+                                DnDBlockControl *blkCtrl)   // OUT
 {
-   ASSERT(blockFd >= 0);
+   blkCtrl->fd = fd;
 
-   if (VMBLOCK_CONTROL(blockFd, VMBLOCK_ADD_FILEBLOCK, blockPath) != 0) {
-      LOG(1, ("DnD_AddBlock: Cannot add block on %s (%s)\n",
-              blockPath, strerror(errno)));
+   if (DnD_CheckBlockFuse(fd)) {
+      /* Setup FUSE methods. */
+      blkCtrl->blockRoot = VMBLOCK_FUSE_FS_ROOT;
+      blkCtrl->AddBlock = DnD_AddBlockFuse;
+      blkCtrl->RemoveBlock = DnD_RemoveBlockFuse;
+   } else if (DnD_CheckBlockLegacy(fd)) {
+      /* Setup legacy methods. */
+      blkCtrl->blockRoot = VMBLOCK_FS_ROOT;
+      blkCtrl->AddBlock = DnD_AddBlockLegacy;
+      blkCtrl->RemoveBlock = DnD_RemoveBlockLegacy;
+   } else {
+      Log("%s: Can't determine block type.\n", __func__);
+
       return FALSE;
    }
+
    return TRUE;
 }
 
-
-/*
- *----------------------------------------------------------------------------
- *
- * DnD_RemoveBlock --
- *
- *    Removes block on blockedPath.
- *
- * Results:
- *    TRUE on success, FALSE on failure.
- *
- * Side effects:
- *    Processes blocked on accessing this path will continue.
- *
- *----------------------------------------------------------------------------
- */
-
-Bool
-DnD_RemoveBlock(int blockFd,                    // IN
-                const char *blockedPath)        // IN
-{
-   if (blockFd >= 0) {
-      if (VMBLOCK_CONTROL(blockFd, VMBLOCK_DEL_FILEBLOCK, blockedPath) != 0) {
-         Log("DnD_RemoveBlock: Cannot delete block on %s (%s)\n",
-             blockedPath, strerror(errno));
-         return FALSE;
-      }
-   } else {
-      LOG(4, ("DnD_RemoveBlock: Could not remove block on %s: fd to vmblock no "
-              "longer exists.\n", blockedPath));
-   }
-   return TRUE;
-}
 #endif /* linux || sun || FreeBSD */
 
 

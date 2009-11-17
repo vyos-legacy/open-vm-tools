@@ -47,7 +47,6 @@
 #include "vmware.h"
 #include "procMgr.h"
 #include "vm_version.h"
-#include "vm_app.h"
 #include "message.h"
 
 #if defined(VMTOOLS_USE_GLIB)
@@ -78,6 +77,7 @@
 #include "codeset.h"
 #include "posix.h"
 #include "unicode.h"
+#include "hashTable.h"
 
 #if defined(linux) || defined(_WIN32)
 #include "netutil.h"
@@ -95,6 +95,12 @@
 #include "registryWin32.h"
 #include "win32u.h"
 #endif /* _WIN32 */
+#include "hgfsHelper.h"
+
+#ifdef linux
+#include "mntinfo.h"
+#include <sys/vfs.h>
+#endif
 
 #define SECONDS_BETWEEN_POLL_TEST_FINISHED     1
 
@@ -138,6 +144,18 @@ static Bool thisProcessRunsAsRoot = FALSE;
 static Bool allowConsoleUserOps = FALSE;
 static VixToolsReportProgramDoneProcType reportProgramDoneProc = NULL;
 static void *reportProgramDoneData = NULL;
+
+#ifndef _WIN32
+typedef struct VixToolsEnvironmentTableIterator {
+   char **envp;
+   size_t pos;
+} VixToolsEnvironmentTableIterator;
+
+/*
+ * Stores the environment variables to use when executing guest applications.
+ */
+static HashTable *userEnvironmentTable = NULL;
+#endif
 
 static VixError VixToolsGetFileInfo(VixCommandRequestHeader *requestMsg,
                                     char **result);
@@ -206,6 +224,10 @@ static VixError VixToolsProcessHgfsPacket(VixCommandHgfsSendPacket *requestMsg,
                                           char **result,
                                           size_t *resultValueResult);
 
+static VixError VixToolsListFileSystems(VixCommandRequestHeader *requestMsg,
+                                        char **result);
+
+
 #if defined(__linux__) || defined(_WIN32)
 static VixError VixToolsGetGuestNetworkingConfig(VixCommandRequestHeader *requestMsg,
                                                  char **resultBuffer,
@@ -217,6 +239,8 @@ static VixError VixToolsSetGuestNetworkingConfig(VixCommandRequestHeader *reques
 #endif
 
 static VixError VixTools_Base64EncodeBuffer(char **resultValuePtr, size_t *resultValLengthPtr);
+
+static VixError VixToolsSetSharedFoldersProperties(VixPropertyListImpl *propList);
 
 #if defined(_WIN32)
 static HRESULT VixToolsEnableDHCPOnPrimary(void);
@@ -236,6 +260,17 @@ static VixError VixToolsDoesUsernameMatchCurrentUser(const char *username);
 
 static Bool VixToolsPidRefersToThisProcess(ProcMgr_Pid pid);
 
+#ifndef _WIN32
+static void VixToolsBuildUserEnvironmentTable(const char * const *envp);
+
+static char **VixToolsEnvironmentTableToEnvp(const HashTable *envTable);
+
+static int VixToolsEnvironmentTableEntryToEnvpEntry(const char *key, void *value,
+                                                    void *clientData);
+
+static void VixToolsFreeEnvp(char **envp);
+#endif
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -254,6 +289,7 @@ static Bool VixToolsPidRefersToThisProcess(ProcMgr_Pid pid);
 
 VixError
 VixTools_Initialize(Bool thisProcessRunsAsRootParam,                                // IN
+                    const char * const *originalEnvp,                               // IN
                     VixToolsReportProgramDoneProcType reportProgramDoneProcParam,   // IN
                     void *clientData)                                               // IN
 {
@@ -263,8 +299,195 @@ VixTools_Initialize(Bool thisProcessRunsAsRootParam,                            
    reportProgramDoneProc = reportProgramDoneProcParam;
    reportProgramDoneData = clientData;
 
+#ifndef _WIN32
+   VixToolsBuildUserEnvironmentTable(originalEnvp);
+#endif
+
    return(err);
 } // VixTools_Initialize
+
+
+#ifndef _WIN32
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixToolsBuildUserEnvironmentTable --
+ *
+ *      Takes an array of strings of the form "<key>=<value>" storing the
+ *      environment variables (as per environ(7)) that should be used when
+ *      running programs, and populates the hash table with them.
+ *
+ *      If 'envp' is NULL, skip creating the user environment table, so that
+ *      we just use the current environment.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      May initialize the global userEnvironmentTable.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+VixToolsBuildUserEnvironmentTable(const char * const *envp)   // IN: optional
+{
+   if (NULL == envp) {
+      ASSERT(NULL == userEnvironmentTable);
+      return;
+   }
+
+   if (NULL == userEnvironmentTable) {
+      userEnvironmentTable = HashTable_Alloc(64,  // buckets (power of 2)
+                                             HASH_STRING_KEY | HASH_FLAG_COPYKEY,
+                                             free); // freeFn for the values
+   } else {
+      /*
+       * If we're being reinitialized, we can just clear the table and
+       * load the new values into it. They shouldn't have changed, but
+       * in case they ever do this will cover it.
+       */
+      HashTable_Clear(userEnvironmentTable);
+   }
+
+   for (; NULL != *envp; envp++) {
+      char *name;
+      char *value;
+      char *whereToSplit;
+      size_t nameLen;
+
+      whereToSplit = strchr(*envp, '=');
+      if (NULL == whereToSplit) {
+         /* Our code generated this list, so this shouldn't happen. */
+         ASSERT(0);
+         continue;
+      }
+
+      nameLen = whereToSplit - *envp;
+      name = Util_SafeMalloc(nameLen + 1);
+      memcpy(name, *envp, nameLen);
+      name[nameLen] = '\0';
+
+      whereToSplit++;   // skip over '='
+
+      value = Util_SafeStrdup(whereToSplit);
+
+      HashTable_Insert(userEnvironmentTable, name, value);
+      DEBUG_ONLY(value = NULL;)  // the hash table now owns 'value'
+
+      free(name);
+      DEBUG_ONLY(name = NULL;)
+   }
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixToolsEnvironmentTableToEnvp --
+ *
+ *      Take a hash table storing environment variables names and values and
+ *      build an array out of them.
+ *
+ * Results:
+ *      char ** - envp array as per environ(7). Must be freed using
+ *      VixToolsFreeEnvp
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static char **
+VixToolsEnvironmentTableToEnvp(const HashTable *envTable)   // IN
+{
+   char **envp;
+
+   if (NULL != envTable) {
+      VixToolsEnvironmentTableIterator itr;
+      size_t numEntries = HashTable_GetNumElements(envTable);
+
+      itr.envp = envp = Util_SafeMalloc((numEntries + 1) * sizeof *envp);
+      itr.pos = 0;
+
+      HashTable_ForEach(envTable, VixToolsEnvironmentTableEntryToEnvpEntry, &itr);
+
+      ASSERT(numEntries == itr.pos);
+
+      envp[numEntries] = NULL;
+   } else {
+      envp = NULL;
+   }
+
+   return envp;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixToolsEnvironmentTableEntryToEnvpEntry --
+ *
+ *      Callback for HashTable_ForEach(). Gets called for each entry in an
+ *      environment table, converting the key (environment variable name) and
+ *      value (environment variable value) into a string of the form
+ *      "<key>=<value>" and adding that to the envp array passed in with the
+ *      VixToolsEnvironmentTableIterator client data.
+ *
+ * Results:
+ *      int - always 0
+ *
+ * Side effects:
+ *      Sets one entry in the envp.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static int
+VixToolsEnvironmentTableEntryToEnvpEntry(const char *key,     // IN
+                                         void *value,         // IN
+                                         void *clientData)    // IN/OUT
+{
+   VixToolsEnvironmentTableIterator *itr = clientData;
+
+   itr->envp[itr->pos++] = Str_SafeAsprintf(NULL, "%s=%s", key, (char *)value);
+
+   return 0;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixToolsFreeEnvp --
+ *
+ *      Free's an array of strings where both the strings and the array
+ *      were heap allocated.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+VixToolsFreeEnvp(char **envp)   // IN
+{
+   if (NULL != envp) {
+      char **itr;
+
+      for (itr = envp; NULL != *itr; itr++) {
+         free(*itr);
+      }
+
+      free(envp);
+   }
+}
+#endif  // #ifndef _WIN32
 
 
 /*
@@ -438,9 +661,9 @@ VixToolsRunProgramImpl(char *requestName,      // IN
    char *stopProgramFileName;
    Bool programExists;
    Bool programIsExecutable;
+   ProcMgr_ProcArgs procArgs;
 #if defined(_WIN32)
    Bool forcedRoot = FALSE;
-   ProcMgr_ProcArgs procArgs;
    STARTUPINFO si;
 #endif
 #if defined(VMTOOLS_USE_GLIB)
@@ -540,15 +763,19 @@ VixToolsRunProgramImpl(char *requestName,      // IN
    si.dwFlags = STARTF_USESHOWWINDOW;
    si.wShowWindow = (VIX_RUNPROGRAM_ACTIVATE_WINDOW & runProgramOptions)
                      ? SW_SHOWNORMAL : SW_MINIMIZE;
-   asyncState->procState = ProcMgr_ExecAsync(fullCommandLine, &procArgs);
 #else
-   asyncState->procState = ProcMgr_ExecAsync(fullCommandLine, NULL);
+   procArgs.envp = VixToolsEnvironmentTableToEnvp(userEnvironmentTable);
 #endif
+
+   asyncState->procState = ProcMgr_ExecAsync(fullCommandLine, &procArgs);
 
 #if defined(_WIN32)
    if (forcedRoot) {
       Impersonate_UnforceRoot();
    }
+#else
+   VixToolsFreeEnvp(procArgs.envp);
+   DEBUG_ONLY(procArgs.envp = NULL;)
 #endif
 
    if (NULL == asyncState->procState) {
@@ -806,12 +1033,11 @@ VixTools_GetToolsPropertiesImpl(GuestApp_Dict **confDictRef,      // IN
 
 #ifdef _WIN32
    osFamily = GUEST_OS_FAMILY_WINDOWS;
-#elif defined(N_PLAT_NLM)
-   osFamily = GUEST_OS_FAMILY_NETWARE;
 #else
    osFamily = GUEST_OS_FAMILY_LINUX;
 #endif
-   if (!(GuestInfo_GetOSName(sizeof osNameFull, sizeof osName, osNameFull, osName))) {
+   if (!(Hostinfo_GetOSName(sizeof osNameFull, sizeof osName, osNameFull,
+                            osName))) {
       osNameFull[0] = 0;
       osName[0] = 0;
    }
@@ -943,6 +1169,9 @@ VixTools_GetToolsPropertiesImpl(GuestApp_Dict **confDictRef,      // IN
       goto abort;
    }
 
+   /* Retrieve the share folders UNC root path. */
+   err = VixToolsSetSharedFoldersProperties(&propList);
+
    /*
     * Serialize the property list to buffer then encode it.
     * This is the string we return to the VMX process.
@@ -971,6 +1200,9 @@ abort:
 
    VixPropertyList_Initialize(&propList);
 
+   /* Retrieve the share folders UNC root path. */
+   err = VixToolsSetSharedFoldersProperties(&propList);
+
    /*
     * Serialize the property list to buffer then encode it.
     * This is the string we return to the VMX process.
@@ -993,6 +1225,52 @@ abort:
    
    return err;
 } // VixTools_GetToolsPropertiesImpl
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixToolsSetSharedFoldersProperties --
+ *
+ *    Set information about the shared folders feature.
+ *
+ * Return value:
+ *    VixError
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static VixError
+VixToolsSetSharedFoldersProperties(VixPropertyListImpl *propList)    // IN
+{
+   VixError err = VIX_OK;
+
+   /* Retrieve the share folders UNC root path. */
+   Unicode hgfsRootPath = NULL;
+
+   if (!HgfsHlpr_QuerySharesDefaultRootPath(&hgfsRootPath)) {
+      /* Exit ok as we have nothing to set from shared folders. */
+      goto exit;
+   }
+
+   ASSERT(hgfsRootPath != NULL);
+
+   err = VixPropertyList_SetString(propList,
+                                   VIX_PROPERTY_GUEST_SHAREDFOLDERS_SHARES_PATH,
+                                   UTF8(hgfsRootPath));
+   if (VIX_OK != err) {
+      goto exit;
+   }
+
+exit:
+   if (hgfsRootPath != NULL) {
+      HgfsHlpr_FreeSharesRootPath(hgfsRootPath);
+   }
+   return err;
+}
 
 
 #if 0
@@ -1153,7 +1431,14 @@ VixToolsReadRegistry(VixCommandRequestHeader *requestMsg,  // IN
    if (VIX_PROPERTYTYPE_INTEGER == registryRequest->expectedRegistryKeyType) {
       errResult = Registry_ReadInteger(registryPathName, &valueInt);
       if (ERROR_SUCCESS != errResult) {
-         err = Vix_TranslateSystemError(errResult);
+         /*
+          * E_UNEXPECTED isn't a system err. Don't use Vix_TranslateSystemError
+          */
+         if (E_UNEXPECTED == errResult) {
+            err = VIX_E_REG_INCORRECT_VALUE_TYPE;
+         } else {
+            err = Vix_TranslateSystemError(errResult);
+         }
          goto abort;
       }
 
@@ -1165,7 +1450,14 @@ VixToolsReadRegistry(VixCommandRequestHeader *requestMsg,  // IN
    } else if (VIX_PROPERTYTYPE_STRING == registryRequest->expectedRegistryKeyType) {
       errResult = Registry_ReadString(registryPathName, &valueStr);
       if (ERROR_SUCCESS != errResult) {
-         err = Vix_TranslateSystemError(errResult);
+         /*
+          * E_UNEXPECTED isn't a system err. Don't use Vix_TranslateSystemError
+          */
+         if (E_UNEXPECTED == errResult) {
+            err = VIX_E_REG_INCORRECT_VALUE_TYPE;
+         } else {
+            err = Vix_TranslateSystemError(errResult);
+         }
          goto abort;
       }
    } else {
@@ -1334,27 +1626,7 @@ VixToolsDeleteObject(VixCommandRequestHeader *requestMsg)  // IN
          }
       }
 
-#ifdef _WIN32
-      resultInt = File_UnlinkIfExists(pathName);
-#else
-      /*
-       * UnlinkIfExists() chases the symlink and tries to delete
-       * what it points to.  We don't want this, and rather than
-       * fight with bora/lib/file, just do it here ourselves.
-       */
-      {
-         char *primaryPath = Unicode_GetAllocBytes(pathName,
-                                                   STRING_ENCODING_DEFAULT);
-         if (NULL != primaryPath) {
-            resultInt = (unlink(primaryPath) == -1) ? errno : 0;
-            resultInt = (resultInt == ENOENT) ? 0 : resultInt;
-            free(primaryPath);
-         } else {
-            resultInt = UNICODE_CONVERSION_ERRNO;
-         }
-      }
-#endif
-
+      resultInt = File_UnlinkNoFollow(pathName);
       if (0 != resultInt) {
          err = FoundryToolsDaemon_TranslateSystemErr();
       }
@@ -1662,6 +1934,23 @@ VixToolsReadVariable(VixCommandRequestHeader *requestMsg,   // IN
        * Alwasy get environment variable for the current user, even if the
        * current user is root/administrator
        */
+#ifndef _WIN32
+      /*
+       * If we are maintaining our own set of environment variables
+       * because the application we're running from changed the user's
+       * environment, then we should be reading from that.
+       */
+      if (NULL != userEnvironmentTable) {
+         if (HashTable_Lookup(userEnvironmentTable, valueName,
+                              (void **) &value)) {
+            value = Util_SafeStrdup(value);
+         } else {
+            value = Util_SafeStrdup("");
+         }
+         break;
+      }
+#endif
+
       value = System_GetEnv(FALSE, valueName);
       if (NULL == value) {
          value = Util_SafeStrdup("");
@@ -1750,7 +2039,25 @@ VixToolsWriteVariable(VixCommandRequestHeader *requestMsg)   // IN
       result = System_SetEnv(FALSE, valueName, value);
       if (0 != result) {
          err = FoundryToolsDaemon_TranslateSystemErr();
+         goto abort;
       }
+
+#ifndef _WIN32
+      /*
+       * We need to make sure that this change is reflected in the table of
+       * environment variables we use when launching programs. This is so if a
+       * a user sets LD_LIBRARY_PATH with WriteVariable, and then calls
+       * RunProgramInGuest, that program will see the new value.
+       */
+      if (NULL != userEnvironmentTable) {
+         /*
+          * The hash table will make a copy of valueName, but we have to supply
+          * a deep copy of the value.
+          */
+         HashTable_ReplaceOrInsert(userEnvironmentTable, valueName,
+                                   Util_SafeStrdup(value));
+      }
+#endif
       break;
 
    case VIX_GUEST_CONFIG:
@@ -2430,9 +2737,9 @@ VixToolsRunScript(VixCommandRequestHeader *requestMsg,  // IN
    static char resultBuffer[32];
    VixMsgRunScriptRequest *scriptRequest;
    const char *interpreterFlags = "";
+   ProcMgr_ProcArgs procArgs;
 #if defined(_WIN32)
    Bool forcedRoot = FALSE;
-   ProcMgr_ProcArgs procArgs;
 #endif
 #if defined(VMTOOLS_USE_GLIB)
    GSource *timer;
@@ -2617,15 +2924,19 @@ if (0 == *interpreterName) {
    memset(&procArgs, 0, sizeof procArgs);
    procArgs.hToken = (PROCESS_CREATOR_USER_TOKEN == userToken) ? NULL : userToken;
    procArgs.bInheritHandles = TRUE;
-   asyncState->procState = ProcMgr_ExecAsync(fullCommandLine, &procArgs);
 #else
-   asyncState->procState = ProcMgr_ExecAsync(fullCommandLine, NULL);
+   procArgs.envp = VixToolsEnvironmentTableToEnvp(userEnvironmentTable);
 #endif
+
+   asyncState->procState = ProcMgr_ExecAsync(fullCommandLine, &procArgs);
 
 #if defined(_WIN32)
    if (forcedRoot) {
       Impersonate_UnforceRoot();
    }
+#else
+   VixToolsFreeEnvp(procArgs.envp);
+   DEBUG_ONLY(procArgs.envp = NULL;)
 #endif
 
    if (NULL == asyncState->procState) {
@@ -2707,6 +3018,8 @@ VixToolsImpersonateUser(VixCommandRequestHeader *requestMsg,   // IN
    VixCommandNamePassword *namePasswordStruct;
    int credentialType;
 
+   Debug(">%s\n", __FUNCTION__);
+
    credentialField = ((char *) requestMsg)
                            + requestMsg->commonHeader.headerLength 
                            + requestMsg->commonHeader.bodyLength;
@@ -2737,6 +3050,8 @@ VixToolsImpersonateUser(VixCommandRequestHeader *requestMsg,   // IN
       }
 #endif
    }
+
+   Debug("<%s\n", __FUNCTION__);
 
    return(err);
 } // VixToolsImpersonateUser
@@ -3038,7 +3353,11 @@ VixToolsFreeRunProgramState(VixToolsRunProgramState *asyncState) // IN
    }
 
    if (NULL != asyncState->tempScriptFilePath) {
-      File_UnlinkIfExists(asyncState->tempScriptFilePath);
+      /*
+       * Use UnlinkNoFollow() since we created the file and we know it is not
+       * a symbolic link.
+       */
+      File_UnlinkNoFollow(asyncState->tempScriptFilePath);
    }
    if (NULL != asyncState->procState) {
       ProcMgr_Free(asyncState->procState);
@@ -3156,7 +3475,7 @@ abort:
  *    The recipient of this string is ToolsDaemonHgfsImpersonated,
  *    which lives in foundryToolsDaemon.c.  It parses the authentication
  *    information, impersonates a user in the guest using
- *    ToolsDaemonImpersonateUser, and then calls HgfsServer_DispatchPacket
+ *    ToolsDaemonImpersonateUser, and then calls HgfsServerManager_ProcessPacket
  *    to issue the HGFS packet to the HGFS Server.  The HGFS Server
  *    replies with an HGFS packet, which will be forwarded back to
  *    us and handled in VMAutomationOnBackdoorCallReturns.
@@ -3198,14 +3517,15 @@ VixToolsProcessHgfsPacket(VixCommandHgfsSendPacket *requestMsg,   // IN
    hgfsPacket = ((char *) requestMsg) + sizeof(*requestMsg);
    hgfsPacketSize = requestMsg->hgfsPacketSize;
 
-#if !defined(N_PLAT_NLM) && !defined(__FreeBSD__)
+#if !defined(__FreeBSD__)
    /*
     * Impersonation was okay, so let's give our packet to
     * the HGFS server and forward the reply packet back.
     */
-   HgfsServer_DispatchPacket(hgfsPacket,        // packet in buf
-                             hgfsReplyPacket,   // packet out buf
-                             &hgfsPacketSize);  // in/out size
+   HgfsServer_ProcessPacket(hgfsPacket,        // packet in buf
+                            hgfsReplyPacket,   // packet out buf
+                            &hgfsPacketSize,   // in/out size
+                            0);                // in flags
 #endif
 
    if (NULL != resultValueResult) {
@@ -3223,6 +3543,166 @@ abort:
 
    return err;
 } // VixToolsProcessHgfsPacket
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixToolsListFileSystems --
+ *
+ *
+ * Return value:
+ *    VixError
+ *
+ * Side effects:
+ *    None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+VixToolsListFileSystems(VixCommandRequestHeader *requestMsg, // IN
+                        char **result)                       // OUT
+{
+   VixError err = VIX_OK;
+   static char resultBuffer[MAX_PROCESS_LIST_RESULT_LENGTH];
+   Bool impersonatingVMWareUser = FALSE;
+   void *userToken = NULL;
+   char *destPtr;
+   char *endDestPtr;
+#if defined(_WIN32) || defined(linux)
+   const char *listFileSystemsFormatString = "<filesystem>"
+                                             "<name>%s</name>"
+                                             "<size>%"FMT64"u</size>"
+                                             "<freeSpace>%"FMT64"u</freeSpace>"
+                                             "<type>%s</type>"
+                                             "</filesystem>";
+#endif
+#if defined(_WIN32)
+   Unicode *driveList = NULL;
+   int numDrives = -1;
+   uint64 freeBytesToUser = 0;
+   uint64 totalBytesToUser = 0;
+   uint64 freeBytes = 0;
+   Unicode fileSystemType;
+   int i;
+#endif
+#ifdef linux
+   MNTHANDLE fp;
+   DECLARE_MNTINFO(mnt);
+   const char *mountfile = NULL;
+#endif
+
+   Debug(">%s\n", __FUNCTION__);
+
+   destPtr = resultBuffer;
+   *destPtr = 0;
+   endDestPtr = resultBuffer + sizeof(resultBuffer);
+
+   err = VixToolsImpersonateUser(requestMsg, &userToken);
+   if (VIX_OK != err) {
+      goto abort;
+   }
+   impersonatingVMWareUser = TRUE;
+
+#if defined(_WIN32)
+   numDrives = Win32U_GetLogicalDriveStrings(&driveList);
+   if (-1 == numDrives) {
+      Warning("unable to get drive listing: windows error code %d\n",
+              GetLastError());
+      err = FoundryToolsDaemon_TranslateSystemErr();
+      goto abort;
+   }
+
+   for (i = 0; i < numDrives; i++) {
+      if (!Win32U_GetDiskFreeSpaceEx(driveList[i],
+                                     (PULARGE_INTEGER) &freeBytesToUser,
+                                     (PULARGE_INTEGER) &totalBytesToUser,
+                                     (PULARGE_INTEGER) &freeBytes)) {
+         /*
+          * If we encounter an error, just return 0 values for the space info
+          */
+         freeBytesToUser = 0;
+         totalBytesToUser = 0;
+         freeBytes = 0;
+
+         Warning("unable to get drive size info: windows error code %d\n",
+                 GetLastError());
+      }
+
+      // If it fails, fileSystemType will be NULL
+      Win32U_GetVolumeInformation(driveList[i],
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  &fileSystemType);
+
+      destPtr += Str_Sprintf(destPtr, endDestPtr - destPtr,
+                             listFileSystemsFormatString,
+                             driveList[i],
+                             totalBytesToUser,
+                             freeBytesToUser,
+                             fileSystemType);
+
+      Unicode_Free(fileSystemType);
+   }
+
+#elif defined(linux)
+
+   mountfile = "/etc/mtab";
+
+   fp = Posix_Setmntent(mountfile, "r");
+   if (fp == NULL) {
+      Warning("failed to open mount file\n");
+      err = VIX_E_FILE_NOT_FOUND;
+      goto abort;
+   }
+
+   while (GETNEXT_MNTINFO(fp, mnt)) {
+      struct statfs statfsbuf;
+      uint64 size, freeSpace;
+
+      if (Posix_Statfs(MNTINFO_MNTPT(mnt), &statfsbuf)) {
+         Warning("%s unable to stat mount point %s\n",
+                 __FUNCTION__, MNTINFO_MNTPT(mnt));
+         continue;
+      }
+      size = (uint64) statfsbuf.f_blocks * (uint64) statfsbuf.f_bsize;
+      freeSpace = (uint64) statfsbuf.f_bfree * (uint64) statfsbuf.f_bsize;
+      destPtr += Str_Sprintf(destPtr, endDestPtr - destPtr,
+                             listFileSystemsFormatString,
+                             MNTINFO_NAME(mnt),
+                             size,
+                             freeSpace,
+                             MNTINFO_FSTYPE(mnt));
+
+   }
+   CLOSE_MNTFILE(fp);
+#else
+   err = VIX_E_NOT_SUPPORTED;
+#endif
+
+abort:
+#if defined(_WIN32)
+   for (i = 0; i < numDrives; i++) {
+      Unicode_Free(driveList[i]);
+   }
+
+   free(driveList);
+#endif
+
+   if (impersonatingVMWareUser) {
+      VixToolsUnimpersonateUser(userToken);
+   }
+   VixToolsLogoutUser(userToken);
+
+   *result = resultBuffer;
+
+   Debug("<%s\n", __FUNCTION__);
+
+   return(err);
+} // VixToolsListFileSystems
 
 
 /*
@@ -3481,22 +3961,115 @@ VixToolsDoesUsernameMatchCurrentUser(const char *username)  // IN
 #ifdef _WIN32
    char *currentUser = NULL;
    DWORD currentUserSize = 0;
-   
+   DWORD retVal = 0;
+   HANDLE processToken = INVALID_HANDLE_VALUE;
+   PTOKEN_USER processTokenInfo = NULL;
+   DWORD processTokenInfoSize = 0;
+   Unicode sidUserName = NULL;
+   DWORD sidUserNameSize = 0;
+   Unicode sidDomainName = NULL;
+   DWORD sidDomainNameSize = 0;
+   SID_NAME_USE sidNameUse;
+
    /*
-    * For Windows, get the name of the owner of this process, then
-    * compare it to the provided username.
+    * Check to see if the user provided a '<Domain>\<User>' formatted username
     */
-   if (!Win32U_GetUserName(currentUser, &currentUserSize)) {
+   if (NULL != Str_Strchr(username, '\\')) {
+      /*
+       * A '<Domain>\<User>' formatted username was provided.
+       * We must retrieve the domain as well as the username to verify
+       * the current vixtools user matches the username provided
+       */
+      retVal = OpenProcessToken(GetCurrentProcess(),
+                                TOKEN_READ,
+                                &processToken);
+
+      if (!retVal || !processToken) {
+         Warning("unable to open process token: windows error code %d\n",
+                 GetLastError());
+         err = FoundryToolsDaemon_TranslateSystemErr();
+
+         goto abort;
+      }
+
+      // Determine necessary buffer size
+      GetTokenInformation(processToken,
+                          TokenUser,
+                          NULL,
+                          0,
+                          &processTokenInfoSize);
+
       if (ERROR_INSUFFICIENT_BUFFER != GetLastError()) {
+         Warning("unable to get token info: windows error code %d\n",
+                 GetLastError());
          err = FoundryToolsDaemon_TranslateSystemErr();
          goto abort;
       }
 
-      currentUser = Util_SafeMalloc(currentUserSize);
+      processTokenInfo = Util_SafeMalloc(processTokenInfoSize);
 
-      if (!Win32U_GetUserName(currentUser, &currentUserSize)) {
+      if (!GetTokenInformation(processToken,
+                               TokenUser,
+                               processTokenInfo,
+                               processTokenInfoSize,
+                               &processTokenInfoSize)) {
+         Warning("unable to get token info: windows error code %d\n",
+                 GetLastError());
          err = FoundryToolsDaemon_TranslateSystemErr();
          goto abort;
+      }
+
+      // Retrieve user name and domain name based on user's SID.
+      Win32U_LookupAccountSid(NULL,
+                              processTokenInfo->User.Sid,
+                              NULL,
+                              &sidUserNameSize,
+                              NULL,
+                              &sidDomainNameSize,
+                              &sidNameUse);
+
+      if (ERROR_INSUFFICIENT_BUFFER != GetLastError()) {
+         Warning("unable to lookup account sid: windows error code %d\n",
+                 GetLastError());
+         err = FoundryToolsDaemon_TranslateSystemErr();
+         goto abort;
+      }
+
+      sidUserName = Util_SafeMalloc(sidUserNameSize);
+      sidDomainName = Util_SafeMalloc(sidDomainNameSize);
+
+      if (!Win32U_LookupAccountSid(NULL,
+                                   processTokenInfo->User.Sid,
+                                   sidUserName,
+                                   &sidUserNameSize,
+                                   sidDomainName,
+                                   &sidDomainNameSize,
+                                   &sidNameUse)) {
+         Warning("unable to lookup account sid: windows error code %d\n",
+                 GetLastError());
+         err = FoundryToolsDaemon_TranslateSystemErr();
+         goto abort;
+     }
+
+      // Populate currentUser with Domain + '\' + Username
+      currentUser = Str_SafeAsprintf(NULL, "%s\\%s", sidDomainName, sidUserName);
+   } else {
+      /*
+       * For Windows, get the name of the owner of this process, then
+       * compare it to the provided username.
+       */
+      if (!Win32U_GetUserName(currentUser, &currentUserSize)) {
+         if (ERROR_INSUFFICIENT_BUFFER != GetLastError()) {
+            err = FoundryToolsDaemon_TranslateSystemErr();
+            goto abort;
+         }
+
+         currentUser = Util_SafeMalloc(currentUserSize);
+
+         if (!Win32U_GetUserName(currentUser, &currentUserSize)) {
+            err = FoundryToolsDaemon_TranslateSystemErr();
+            goto abort;
+         }
       }
    }
 
@@ -3508,6 +4081,10 @@ VixToolsDoesUsernameMatchCurrentUser(const char *username)  // IN
    err = VIX_OK;
 
 abort:
+   free(sidDomainName);
+   free(sidUserName);
+   free(processTokenInfo);
+   CloseHandle(processToken);
    free(currentUser);
 
 #else /* Below is the POSIX case. */
@@ -3658,6 +4235,7 @@ VixTools_ProcessVixCommand(VixCommandRequestHeader *requestMsg,   // IN
       *deleteResultBufferResult = FALSE;
    }
 
+   Debug("%s: command %d\n", __FUNCTION__, requestMsg->opCode);
 
    switch (requestMsg->opCode) {
       ////////////////////////////////////
@@ -3835,6 +4413,12 @@ VixTools_ProcessVixCommand(VixCommandRequestHeader *requestMsg,   // IN
          err = VixToolsSetProperties(requestMsg, confDictRef);
          break;
 #endif
+
+      ////////////////////////////////////
+      case VIX_COMMAND_LIST_FILESYSTEMS:
+         err = VixToolsListFileSystems(requestMsg, &resultValue);
+         // resultValue is static. Do not free it.
+         break;
 
       ////////////////////////////////////
       default:
@@ -4047,5 +4631,3 @@ VixToolsEnableStaticOnPrimary(const char *ipAddr,       // IN
    return ret;
 }
 #endif
-
-

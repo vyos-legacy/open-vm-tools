@@ -136,7 +136,7 @@ static int SNEForEachCallback(const char *key, void *value, void *clientData);
  *          497 days. This function can detect the wrapping and still return
  *          a correct, monotonic, 64 bit wide value if it is called at least
  *          once every 497 days.
- *      
+ *
  * Result:
  *    The value on success
  *    -1 on failure (never happens in this implementation)
@@ -153,7 +153,7 @@ System_Uptime(void)
    /*
     * Dummy variable b/c times(NULL) segfaults on FreeBSD 3.2 --greg
     */
-   struct tms tp; 
+   struct tms tp;
 
 #if !defined (VM_X86_64)
    static uint64 base = 0;
@@ -203,7 +203,7 @@ System_GetCurrentTime(int64 *secs,  // OUT
 
    ASSERT(secs);
    ASSERT(usecs);
-   
+
    if (gettimeofday(&tv, NULL) < 0) {
       return FALSE;
    }
@@ -238,7 +238,7 @@ System_GetCurrentTime(int64 *secs,  // OUT
 
 Bool
 System_EnableTimeSlew(int64 delta,            // IN: Time difference in us
-                      uint32 timeSyncPeriod)  // IN: Time interval in 100th of a second
+                      int64 timeSyncPeriod)   // IN: Time interval in us
 {
 #if defined(__FreeBSD__) || defined(sun)
 
@@ -261,10 +261,9 @@ System_EnableTimeSlew(int64 delta,            // IN: Time difference in us
 
    struct timex tx;
    int error;
-   uint64 tick;
-   uint64 timeSyncPeriodUS = timeSyncPeriod * 10000L;
+   int64 tick;
 
-   ASSERT(timeSyncPeriod);
+   ASSERT(timeSyncPeriod > 0);
 
    /*
     * Set the tick so that delta time is corrected in timeSyncPeriod period.
@@ -273,7 +272,8 @@ System_EnableTimeSlew(int64 delta,            // IN: Time difference in us
     * interval.
     */
    tx.modes = ADJ_TICK;
-   tick = (timeSyncPeriodUS + delta) / ((timeSyncPeriod / 100) * USER_HZ);
+   tick = (timeSyncPeriod + delta) /
+          ((timeSyncPeriod / 1000000) * USER_HZ);
    if (tick > TICK_INCR_MAX) {
       tick = TICK_INCR_MAX;
    } else if (tick < TICK_INCR_MIN) {
@@ -377,7 +377,7 @@ System_IsTimeSlewEnabled(void)
    struct timeval oldTx;
    int error;
 
-   /* 
+   /*
     * Solaris needs first argument non-NULL and zero
     * to get the old timeval value.
     */
@@ -440,24 +440,24 @@ System_AddToCurrentTime(int64 deltaSecs,  // IN
    int64 newTime;
    int64 secs;
    int64 usecs;
-   
+
    if (!System_GetCurrentTime(&secs, &usecs)) {
       return FALSE;
    }
-   
+
    if (System_IsTimeSlewEnabled()) {
       System_DisableTimeSlew();
    }
 
    newTime = (secs + deltaSecs) * 1000000L + (usecs + deltaUsecs);
    ASSERT(newTime > 0);
-   
+
    /*
     * timeval.tv_sec is a 32-bit signed integer. So, Linux will treat
-    * newTime as a time before the epoch if newTime is a time 68 years 
-    * after the epoch (beacuse of overflow). 
+    * newTime as a time before the epoch if newTime is a time 68 years
+    * after the epoch (beacuse of overflow).
     *
-    * If it is a 64-bit linux, everything should be fine. 
+    * If it is a 64-bit linux, everything should be fine.
     */
    if (sizeof tv.tv_sec < 8 && newTime / 1000000L > MAX_INT32) {
       Log("System_AddToCurrentTime() overflow: deltaSecs=%"FMT64"d, secs=%"FMT64"d\n",
@@ -465,14 +465,14 @@ System_AddToCurrentTime(int64 deltaSecs,  // IN
 
       return FALSE;
    }
- 
+
    tv.tv_sec = newTime / 1000000L;
    tv.tv_usec = newTime % 1000000L;
 
    if (settimeofday(&tv, NULL) < 0) {
       return FALSE;
    }
-   
+
    return TRUE;
 }
 
@@ -527,7 +527,7 @@ System_GetTimeAsString(void)
    do {
       char *newBuf;
       bufSize *= 2;
-      
+
       newBuf = realloc(buf, bufSize);
       if (newBuf == NULL) {
          goto out;
@@ -562,7 +562,7 @@ System_GetTimeAsString(void)
  *
  * Results:
  *    TRUE if this is an ACPI system.
- *    FALSE if this is not an ACPI system.   
+ *    FALSE if this is not an ACPI system.
  *
  * Side effects:
  *	None.
@@ -581,14 +581,14 @@ System_IsACPI(void)
 
 /*
  *-----------------------------------------------------------------------------
- *  
- * System_Shutdown -- 
+ *
+ * System_Shutdown --
  *
  *   Initiate system shutdown.
- * 
- * Return value: 
+ *
+ * Return value:
  *    None.
- * 
+ *
  * Side effects:
  *    None.
  *
@@ -598,15 +598,21 @@ System_IsACPI(void)
 void
 System_Shutdown(Bool reboot)  // IN: "reboot or shutdown" flag
 {
-   static char *cmd;
+   char *cmd;
 
    if (reboot) {
-      cmd = "shutdown -r now";
+#if defined(sun)
+      cmd = "/usr/sbin/shutdown -g 0 -i 6 -y";
+#else
+      cmd = "/sbin/shutdown -r now";
+#endif
    } else {
 #if __FreeBSD__
-      cmd = "shutdown -p now";
+      cmd = "/sbin/shutdown -p now";
+#elif defined(sun)
+      cmd = "/usr/sbin/shutdown -g 0 -i 5 -y";
 #else
-      cmd = "shutdown -h now";
+      cmd = "/sbin/shutdown -h now";
 #endif
    }
    if (system(cmd) == -1) {
@@ -618,17 +624,17 @@ System_Shutdown(Bool reboot)  // IN: "reboot or shutdown" flag
 
 /*
  *-----------------------------------------------------------------------------
- *  
- * System_IsUserAdmin -- 
+ *
+ * System_IsUserAdmin --
  *
  *    On Windows this functions checks if the calling user has membership in
  *    the Administrators group (for NT platforms). On POSIX machines, we simply
  *    check if the user's effective UID is root.
- * 
- * Return value: 
+ *
+ * Return value:
  *    TRUE if the user has an effective UID of root.
  *    FALSE if not.
- * 
+ *
  * Side effects:
  *    None.
  *
@@ -658,11 +664,11 @@ System_IsUserAdmin(void)
  */
 
 char *
-System_GetEnv(Bool global,       // IN
-              char *valueName)   // IN: UTF-8
+System_GetEnv(Bool global,           // IN
+              const char *valueName) // IN: UTF-8
 {
    char *result;
-   
+
 #if defined(sun)
    result = NULL;
 #else
@@ -698,8 +704,8 @@ System_GetEnv(Bool global,       // IN
 
 int
 System_SetEnv(Bool global,      // IN
-              char *valueName,  // IN: UTF-8
-              char *value)      // IN: UTF-8
+              const char *valueName,  // IN: UTF-8
+              const char *value)      // IN: UTF-8
 {
 #if defined(sun)
    return(-1);
@@ -714,7 +720,7 @@ System_SetEnv(Bool global,      // IN
  *
  * System_UnsetEnv --
  *
- *    Unset environment variable. 
+ *    Unset environment variable.
  *
  * Results:
  *    0 if success, -1 otherwise.
@@ -742,7 +748,7 @@ System_UnsetEnv(const char *valueName) // IN: UTF-8
  *
  * System_SetLDPath --
  *
- *    Set LD_LIBRARY_PATH. If native is TRUE, use VMWARE_LD_LIBRARY_PATH 
+ *    Set LD_LIBRARY_PATH. If native is TRUE, use VMWARE_LD_LIBRARY_PATH
  *    as the value (and ignore the path argument, which should be set to
  *    NULL in this case). If native is FALSE, use the passed in path (and
  *    if that path is NULL, unsetenv the value).
@@ -752,7 +758,7 @@ System_UnsetEnv(const char *valueName) // IN: UTF-8
  *    responsible for calling free() on this pointer.
  *
  * Side effects:
- *    Manipulates the value of LD_LIBRARY_PATH variable. 
+ *    Manipulates the value of LD_LIBRARY_PATH variable.
  *
  *----------------------------------------------------------------------
  */
@@ -806,7 +812,7 @@ System_SetLDPath(const char *path,      // IN: UTF-8
       free(p);
    } else if (path) {
       /*
-       * Set LD_LIBRARY_PATH to the specified value. 
+       * Set LD_LIBRARY_PATH to the specified value.
        */
       System_SetEnv(TRUE, "LD_LIBRARY_PATH", (char *) path);
    } else {
@@ -814,214 +820,6 @@ System_SetLDPath(const char *path,      // IN: UTF-8
    }
    return oldpath;
 } // System_SetLDPath
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * System_WritePidfile --
- *
- *      Write a PID into a pidfile.
- *
- *      Originally from the POSIX guestd as GuestdWritePidfile.
- *
- * Return value:
- *      TRUE on success
- *      FALSE on failure (detail is displayed on stderr)
- *
- * Side effects:
- *      This function is not thread-safe.  May display error messages on
- *      stderr.
- *
- *-----------------------------------------------------------------------------
- */
-
-static Bool
-System_WritePidfile(char const *fileName, // IN: Path where we'll write pid
-                    pid_t pid)            // IN: C'mon, really?
-{
-   FILE *pidFile;
-   Bool success = FALSE;
-
-   pidFile = fopen(fileName, "w+");
-   if (pidFile == NULL) {
-      fprintf(stderr, "Unable to open the \"%s\" PID file: %s.\n\n", fileName,
-              strerror(errno));
-
-      return FALSE;
-   }
-
-   if (fprintf(pidFile, "%"FMTPID"\n", pid) < 0) {
-      fprintf(stderr, "Unable to write the \"%s\" PID file: %s.\n\n", fileName,
-              strerror(errno));
-   } else {
-      success = TRUE;
-   }
-
-   if (fclose(pidFile)) {
-      fprintf(stderr, "Unable to close the \"%s\" PID file: %s.\n\n", fileName,
-              strerror(errno));
-
-      return FALSE;
-   }
-
-   return success;
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * System_Daemon --
- *
- *      Analog to daemon(3), but optionally guarantees child's PID is written
- *      to a pidfile before the parent exits.
- *
- *      Originally from the short-lived Mac OS guestd, as Mac OS X does not
- *      provide daemon(3).  Additionally, the "optionally guaranteed pidfile"
- *      concept is another motivation for this function.
- *
- * Results:
- *      TRUE on success.
- *      FALSE on any failure (e.g., fork, setsid, WritePidfile, etc.)
- *
- * Side effects:
- *      Parent will exit if fork() succeeds.
- *      Caller is expected to be able to catch SIGPIPE.
- *
- *-----------------------------------------------------------------------------
- */
-
-Bool
-System_Daemon(Bool nochdir,
-                 // IN: If TRUE, will -not- chdir("/").
-              Bool noclose,
-                 // IN: If TRUE, will -not- redirect stdin, stdout, and stderr
-                 //     to /dev/null.
-              const char *pidFile)
-                 // IN: If non-NULL, will write the child's PID to this file.
-{
-   int fds[2];
-   pid_t child;
-   char buf;
-
-   if (pipe(fds) == -1) {
-      fprintf(stderr, "pipe failed: %s\n", strerror(errno));
-      return FALSE;
-   }
-
-   child = fork();
-   if (child == -1) {
-      fprintf(stderr, "fork failed: %s\n", strerror(errno));
-      return FALSE;
-   }
-
-   if (child) { /* Parent */
-      ssize_t actual;
-
-      /* Close unused write end of the pipe. */
-      close(fds[1]);
-
-      /*
-       * Wait for the child to finish its critical initialization before the
-       * parent exits.
-       */
-      do {
-         actual = read(fds[0], &buf, sizeof buf);
-      } while (actual == -1 && errno == EINTR);
-
-      if (actual == -1) {
-         fprintf(stderr, "read from pipe failed: %s\n", strerror(errno));
-         _exit(EXIT_FAILURE);
-      }
-
-      _exit(EXIT_SUCCESS);
-   } else { /* Child */
-      /* Close unused read end of the pipe. */
-      close(fds[0]);
-
-      /*
-       * The parent's caller might want to kill the child as soon as the
-       * parent exits, so better guarantee that by that time the child's PID
-       * has been written to the PID file.
-       *
-       * Note that because the parent knows the child's PID, the parent
-       * could do this if needed. But because the parent cannot do the
-       * setsid() below, the child might as well do both things here.
-       */
-      if (pidFile) {
-         if (!System_WritePidfile(pidFile, getpid())) {
-            goto kidfail;
-         }
-      }
-
-      /*
-       * The parent's caller might want to destroy the session as soon as
-       * the parent exits, so better guarantee that by that time the child
-       * has created its own new session.
-       */
-      if (setsid() == -1) {
-         fprintf(stderr, "setsid failed: %s\n", strerror(errno));
-         goto kidfail;
-      }
-
-      /*
-       * The child has finished its critical initialization. Notify the
-       * parent that it can exit.
-       *
-       * We are writing the first byte to the pipe. This cannot possibly
-       * block (otherwise communication over a pipe would be impossible).
-       * Consequently it cannot be interrupted by a signal either.
-       *
-       * See pipe(7) for more information.
-       *
-       * The caller registered a signal handler for SIGPIPE, right?!  We
-       * won't treat EPIPE as an error, because we'd like to carry on with
-       * our own life, even if our parent -did- abandon us.  ;_;
-       */
-      if (write(fds[1], &buf, sizeof buf) == -1) {
-         fprintf(stderr, "write failed: %s\n", strerror(errno));
-         close(fds[1]);
-         return FALSE;
-      }
-      close(fds[1]);
-
-      if (!nochdir && (chdir("/") == -1)) {
-         fprintf(stderr, "chdir failed: %s\n", strerror(errno));
-         return FALSE;
-      }
-
-      if (!noclose) {
-         /*
-          * The child has finished its initialization, and does not need to
-          * output anything to stderr anymore. Re-assign all standard file
-          * file descriptors.
-          */
-         int nullFd;
-
-         nullFd = open("/dev/null", O_RDWR);
-         if (nullFd == -1) {
-            fprintf(stderr, "open of /dev/null failed: %s\n",
-                    strerror(errno));
-            return FALSE;
-         }
-
-         if ((dup2(nullFd, STDIN_FILENO) == -1) ||
-             (dup2(nullFd, STDOUT_FILENO) == -1) ||
-             (dup2(nullFd, STDERR_FILENO) == -1)) {
-            fprintf(stderr, "dup2 failed: %s\n", strerror(errno));
-            close(nullFd);
-            return FALSE;
-         }
-      }
-   }
-
-   return TRUE;
-
-kidfail:
-   close(fds[1]);
-   return FALSE;
-}
 
 
 /*
@@ -1040,9 +838,9 @@ kidfail:
  *
  *      Every value created by the wrapper begins with a 1 or 0 to indicate
  *      whether the value was set in the native environment.  Based on this:
- *        VMWARE_FOO="1foo"     -> FOO="foo"
- *        VMWARE_FOO="1"        -> FOO=""
- *        VMWARE_FOO="0"        -> FOO is unset in the native environment
+ *        VMWARE_FOO="1foo"               -> FOO="foo"
+ *        VMWARE_FOO="1"                  -> FOO=""
+ *        VMWARE_FOO="0"                  -> FOO is unset in the native environment
  *
  *      Variables without the VMWARE_ prefix are just copied over to the new
  *      environment.  Note, of course, that VMWARE_-prefixed variables take
@@ -1175,9 +973,13 @@ SNEBuildHash(const char **compatEnviron)
           * figure out the original environment variable name (by just indexing
           * past the prefix) and value (by indexing past the "was this variable
           * in the native environment?" marker).
+          *
+          * XXX Should we move this marker to a separate header?
           */
          char *realKey = &key[prefixLength];
-         char *realValue = (value[0] == '0') ? NULL : Util_SafeStrdup(&value[1]);
+         char *realValue = (value[0] == '0')
+                           ? NULL
+                           : Util_SafeStrdup(&value[1]);
          HashTable_ReplaceOrInsert(environTable, realKey, realValue);
       } else {
          HashTable_LookupOrInsert(environTable, key, value);

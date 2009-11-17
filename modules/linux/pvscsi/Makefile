@@ -26,7 +26,24 @@
 ####
 SRCROOT = .
 
-VM_UNAME = $(shell uname -r)
+#
+# open-vm-tools doesn't replicate shared source files for different modules;
+# instead, files are kept in shared locations. So define a few useful macros
+# to be able to handle both cases cleanly.
+#
+INCLUDE      :=
+ifdef OVT_SOURCE_DIR
+AUTOCONF_DIR := $(OVT_SOURCE_DIR)/modules/linux/shared/autoconf
+VMLIB_PATH   = $(OVT_SOURCE_DIR)/lib/$(1)
+INCLUDE      += -I$(OVT_SOURCE_DIR)/modules/linux/shared
+INCLUDE      += -I$(OVT_SOURCE_DIR)/lib/include
+else
+AUTOCONF_DIR := $(SRCROOT)/shared/autoconf
+INCLUDE      += -I$(SRCROOT)/shared
+endif
+
+
+VM_UNAME = $(KVERS)
 
 # Header directory for the running kernel
 HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
@@ -34,7 +51,7 @@ HEADER_DIR = /lib/modules/$(VM_UNAME)/build/include
 BUILD_DIR = $(HEADER_DIR)/..
 
 DRIVER := pvscsi
-PRODUCT := @PRODUCT@
+PRODUCT := tools
 
 # Grep program
 GREP = /bin/grep
@@ -106,18 +123,10 @@ prebuild:: ;
 postbuild:: ;
 
 $(DRIVER_KO): prebuild
-	make -C $(BUILD_DIR) SUBDIRS=$$PWD SRCROOT=$$PWD/$(SRCROOT) modules
-	make -C $$PWD SRCROOT=$$PWD/$(SRCROOT) postbuild
-
-else
-
-ifneq ($(VM_CCVER), $(VMCCVER))
-$(warning *** Inappropriate build environment: you wanted to use gcc \
- version $(VM_CCVER) while kernel attempts to use gcc version $(VMCCVER).)
-$(error For proper build you'll have to replace $(CC) with symbolic \
- link to $(VM_CC))
-endif
-
+	make -C $(BUILD_DIR) SUBDIRS=$$PWD SRCROOT=$$PWD/$(SRCROOT) \
+	  MODULEBUILDDIR=$(MODULEBUILDDIR) modules
+	make -C $$PWD SRCROOT=$$PWD/$(SRCROOT) \
+	  MODULEBUILDDIR=$(MODULEBUILDDIR) postbuild
 endif
 
 vm_check_build = $(shell if $(CC) $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS) \

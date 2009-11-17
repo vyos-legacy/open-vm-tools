@@ -1,0 +1,34 @@
+#!/bin/sh
+
+# initramfs hook for vmxnet (open-vm-tools)
+
+set -e
+
+# initramfs-tools header
+
+PREREQ=""
+
+prereqs()
+{
+	echo "${PREREQ}"
+}
+
+case "${1}" in
+	prereqs)
+		prereqs
+		exit 0
+		;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+# vmxnet hook
+
+# If pcnet32 is installed in the initrd, also install vmxnet. Together with the
+# modprobe configuration, we can ensure that vmxnet is always preferred over
+# pcnet32.
+
+if [ -e "${DESTDIR}"/lib/modules/*/kernel/drivers/net/pcnet32.ko ]
+then
+	manual_add_modules vmxnet
+fi

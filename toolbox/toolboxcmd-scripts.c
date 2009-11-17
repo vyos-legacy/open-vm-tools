@@ -22,12 +22,15 @@
  *     The scripts functions for the linux toolbox-cmd
  */
 
+#include <glib.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include "system.h"
 #include "toolboxCmdInt.h"
+#include "vmtools.h"
 
 
 #define SCRIPT_SUSPEND "suspend"
@@ -40,10 +43,9 @@ typedef enum ScriptType {
    Current
 } ScriptType;
 
-static int ScriptToggle(char *apm, Bool enable, int quiet_flag);
-static char* GetConfName(char *apm);
-static int GetConfEntry(char *apm, ScriptType type);
-static int WriteDict(GuestApp_Dict *confDict, int quiet_flag);
+static int ScriptToggle(const char *apm, Bool enable, int quiet_flag);
+static const char* GetConfName(const char *apm);
+static int GetConfEntry(const char *apm, ScriptType type);
 
 
 /*
@@ -62,16 +64,16 @@ static int WriteDict(GuestApp_Dict *confDict, int quiet_flag);
  *-----------------------------------------------------------------------------
  */
 
-static char *
-GetConfName(char *apm) // IN: apm name.
+static const char *
+GetConfName(const char *apm) // IN: apm name.
 {
-   if (strcmp(apm, SCRIPT_SUSPEND) == 0) {
+   if (toolbox_strcmp(apm, SCRIPT_SUSPEND) == 0) {
       return CONFNAME_SUSPENDSCRIPT;
-   }else if (strcmp(apm, SCRIPT_RESUME) == 0) {
+   } else if (toolbox_strcmp(apm, SCRIPT_RESUME) == 0) {
       return CONFNAME_RESUMESCRIPT;
-   } else if (strcmp(apm, SCRIPT_OFF) == 0) {
+   } else if (toolbox_strcmp(apm, SCRIPT_OFF) == 0) {
       return CONFNAME_POWEROFFSCRIPT;
-   } else if (strcmp(apm, SCRIPT_ON) == 0) {
+   } else if (toolbox_strcmp(apm, SCRIPT_ON) == 0) {
      return CONFNAME_POWERONSCRIPT;
    } else {
       return NULL;
@@ -82,12 +84,49 @@ GetConfName(char *apm) // IN: apm name.
 /*
  *-----------------------------------------------------------------------------
  *
- * GetConfEntry --
+ * LoadConfFile --
  *
- *      Gets the entry in the ConfDict.
+ *      Loads the tools configuration file. If running as admin, tries to
+ *      upgrade it if an old-style file is found.
  *
  * Results:
- *      The conf entry.
+ *      A new GKeyFile *. If the conf file is not valid, it will be empty.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static GKeyFile *
+LoadConfFile(void)
+{
+   gchar *confPath;
+   GKeyFile *confDict;
+
+   confPath = VMTools_GetToolsConfFile();
+   confDict = VMTools_LoadConfig(confPath,
+                                 G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                                 System_IsUserAdmin());
+
+   if (confDict == NULL) {
+      confDict = g_key_file_new();
+   }
+
+   g_free(confPath);
+   return confDict;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * GetConfEntry --
+ *
+ *      Gets the entry in the config dictionary.
+ *
+ * Results:
+ *      EXIT_SUCCESS on success, error code otherwise.
  *
  * Side effects:
  *      None.
@@ -96,65 +135,42 @@ GetConfName(char *apm) // IN: apm name.
  */
 
 static int
-GetConfEntry(char *apm,        // IN: apm name
+GetConfEntry(const char *apm,  // IN: apm name
              ScriptType type)  // IN: Script type (default or current)
 {
-   const char *entry = NULL;
-   GuestApp_Dict *confDict;
-   char *confName;
-   confDict = Conf_Load();
+   gchar *entry = NULL;
+   GKeyFile *confDict = NULL;
+   const char *confName;
+   int ret;
+
    confName = GetConfName(apm);
    if (!confName) {
       fprintf(stderr, "Unknown operation\n");
       return EX_USAGE;
    }
+
+   confDict = LoadConfFile();
+
    if (type == Default) {
-      entry = GuestApp_GetDictEntryDefault(confDict, confName);
+      entry = g_strdup(GuestApp_GetDefaultScript(confName));
    } else if (type == Current) {
-      entry = GuestApp_GetDictEntry(confDict, confName);
-   }
-   if (entry) {
-      printf("%s\n", entry);
-      return EXIT_SUCCESS;
-   } else {
-      fprintf(stderr, "Error retreiving the path for script %s\n", apm);
-      return EX_TEMPFAIL;
-   }
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * WriteDict --
- *
- *      Writes a ConfDict to the hard disk.
- *
- * Results:
- *      EXIT_SUCCESS on success.
- *      EXIT_TEMPFAIL on failure
- *
- * Side effects:
- *      Writes the Dict to the hard disk.
- *
- *-----------------------------------------------------------------------------
- */
-
-static int
-WriteDict(GuestApp_Dict *confDict, // IN: The Dict to be writen
-          int quiet_flag)          // IN: Verbosity flag.
-{
-   if (!GuestApp_WriteDict(confDict)) {
-      fprintf(stderr, "Unable to write dictionary\n");
-      GuestApp_FreeDict(confDict);
-      return EX_TEMPFAIL;
-   } else {
-      if (!quiet_flag) {
-         printf("Script Set\n");
+      entry = g_key_file_get_string(confDict, "powerops", confName, NULL);
+      if (entry == NULL) {
+         entry = g_strdup(GuestApp_GetDefaultScript(confName));
       }
-      GuestApp_FreeDict(confDict);
-      return EXIT_SUCCESS;
    }
+
+   if (strlen(entry) > 0) {
+      printf("%s\n", entry);
+      ret = EXIT_SUCCESS;
+   } else {
+      fprintf(stderr, "No script for operation %s\n", apm);
+      ret = EX_TEMPFAIL;
+   }
+
+   g_free(entry);
+   g_key_file_free(confDict);
+   return ret;
 }
 
 
@@ -177,7 +193,7 @@ WriteDict(GuestApp_Dict *confDict, // IN: The Dict to be writen
  */
 
 int
-Script_GetDefault(char *apm) // IN: APM name
+Script_GetDefault(const char *apm) // IN: APM name
 {
    return GetConfEntry(apm, Default);
 }
@@ -202,7 +218,7 @@ Script_GetDefault(char *apm) // IN: APM name
  */
 
 int
-Script_GetCurrent(char *apm) // IN: apm function name
+Script_GetCurrent(const char *apm) // IN: apm function name
 {
    return GetConfEntry(apm, Current);
 }
@@ -228,14 +244,17 @@ Script_GetCurrent(char *apm) // IN: apm function name
  */
 
 static int
-ScriptToggle(char *apm,       // IN: APM name
-              Bool enable,    // IN: status
-              int quiet_flag) // IN: Verbosity flag
+ScriptToggle(const char *apm, // IN: APM name
+             Bool enable,     // IN: status
+             int quiet_flag)  // IN: Verbosity flag
 {
    const char *path;
-   char *confName;
-   GuestApp_Dict *confDict;
-   confDict = Conf_Load();
+   const char *confName;
+   gchar *confPath;
+   int ret = EXIT_SUCCESS;
+   GKeyFile *confDict;
+   GError *err = NULL;
+
    confName = GetConfName(apm);
 
    if (!confName) {
@@ -243,15 +262,25 @@ ScriptToggle(char *apm,       // IN: APM name
       return EX_USAGE;
    }
 
+   confDict = LoadConfFile();
+
    if (!enable) {
       path = "";
    } else {
-      path = GuestApp_GetDictEntryDefault (confDict, confName);
+      path = GuestApp_GetDefaultScript(confName);
    }
 
-   GuestApp_SetDictEntry(confDict, confName, path);
+   g_key_file_set_string(confDict, "powerops", confName, path);
+   confPath = VMTools_GetToolsConfFile();
+   if (!VMTools_WriteConfig(confPath, confDict, &err)) {
+      fprintf(stderr, "Error writing config: %s\n", err->message);
+      g_clear_error(&err);
+      ret = EX_TEMPFAIL;
+   }
 
-   return WriteDict(confDict, quiet_flag);
+   g_key_file_free(confDict);
+   g_free(confPath);
+   return ret;
 }
 
 
@@ -272,8 +301,8 @@ ScriptToggle(char *apm,       // IN: APM name
  */
 
 int
-Script_Enable(char *apm,      // IN: APM name
-              int quiet_flag) // IN: Verbosity flag
+Script_Enable(const char *apm,   // IN: APM name
+              int quiet_flag)    // IN: Verbosity flag
 {
    return ScriptToggle(apm, TRUE, quiet_flag);
 }
@@ -296,8 +325,8 @@ Script_Enable(char *apm,      // IN: APM name
  */
 
 int
-Script_Disable(char *apm,      // IN: APM name
-               int quiet_flag) // IN: Verbosity Flag
+Script_Disable(const char *apm,  // IN: APM name
+               int quiet_flag)   // IN: Verbosity Flag
 {
    return ScriptToggle(apm, FALSE, quiet_flag);
 }
@@ -323,25 +352,62 @@ Script_Disable(char *apm,      // IN: APM name
  */
 
 int
-Script_Set(char *apm,	   // IN: APM name
-           char *path,	   // IN: path to script
-           int quiet_flag) // IN: Verbosity flag
+Script_Set(const char *apm,   // IN: APM name
+           const char *path,  // IN: path to script
+           int quiet_flag)    // IN: Verbosity flag
 {
-   char *confName;
-   GuestApp_Dict *confDict;
+   const char *confName;
+   int ret = EXIT_SUCCESS;
+   gchar *confPath = NULL;
+   GKeyFile *confDict = NULL;
+   GError *err = NULL;
+
    if (!File_Exists(path)) {
-      fprintf(stderr, "%s doesn't exists\n", path);
+      fprintf(stderr, "%s doesn't exist\n", path);
       return EX_OSFILE;
    }
-   confDict = Conf_Load();
+
    confName = GetConfName(apm);
    if (!confName) {
       fprintf(stderr, "Unknown operation\n");
       return EX_USAGE;
    }
 
-   GuestApp_SetDictEntry(confDict, confName, path);
-   return WriteDict(confDict, quiet_flag);
+   confPath = VMTools_GetToolsConfFile();
+   confDict = LoadConfFile();
 
+   g_key_file_set_string(confDict, "powerops", confName, path);
+
+   if (!VMTools_WriteConfig(confPath, confDict, &err)) {
+      fprintf(stderr, "Error writing config: %s\n", err->message);
+      g_clear_error(&err);
+      ret = EX_TEMPFAIL;
+   }
+
+   g_key_file_free(confDict);
+   g_free(confPath);
+   return ret;
 }
 
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Script_CheckName  --
+ *
+ *      Check if it is known script
+ *
+ * Results:
+ *      TRUE if name is known, FALSE otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+Script_CheckName(const char *apm) // IN: script name
+{
+   return GetConfName(apm) != NULL;
+}

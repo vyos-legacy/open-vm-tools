@@ -186,10 +186,21 @@ EXTERN Bool File_SetTimes(ConstUnicode pathName,
                           VmTimeType writeTime,
                           VmTimeType attrChangeTime);
 
+EXTERN Bool File_GetFilePermissions(ConstUnicode pathName,
+                                   int *mode);
+
+EXTERN Bool File_SetFilePermissions(ConstUnicode pathName,
+                                    int mode);
+
 EXTERN Bool File_SupportsFileSize(ConstUnicode pathName,
                                   uint64 fileSize);
 
 EXTERN Bool File_SupportsLargeFiles(ConstUnicode pathName);
+
+EXTERN char *File_MapPathPrefix(const char *oldPath,
+                                const char **oldPrefixes,
+                                const char **newPrefixes,
+                                size_t numPrefixes);
 
 EXTERN Bool File_CopyFromFdToFd(FileIODescriptor src, 
                                 FileIODescriptor dst);

@@ -61,6 +61,15 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+
+/*
+ * Warn builders up front that GTK 2 is mandatory.
+ */
+#ifndef GTK2
+#   error UnityX11 depends on GTK+ 2.
+#endif
+
+
 /*
  * These defines are listed in the EWMH spec, but not available in any header file that I
  * know of.
@@ -141,13 +150,38 @@ struct UnitySpecialWindow {
 
 typedef struct UnityPlatformWindow UnityPlatformWindow;
 
-/*
+
+/**
+ * Custom Glib source to monitor the Xlib queue and X11 socket(s).
+ *
+ * This structure is "derived from" GSource.  It will be recast and used as
+ * a GSource with Glib functions.
+ */
+
+typedef struct {
+   GSource base;        ///< Owned by Glib.  Hands off!
+   UnityPlatform *up;   ///< Our running UnityPlatform context.
+   GHashTable *fdTable; ///< file descriptor => GPollFD *.
+} UnityGSource;
+
+
+/**
  * Holds platform-specific data.
  */
 struct _UnityPlatform {
    Display *display; // X11 display object
    long eventTimeDiff; // Diff between X server time and our local time
-   guint unityDisplayWatchID; // Manages listening to the display from the glib main loop
+   /**
+    * Integrates Unity event sources with the Glib main loop.
+    *
+    * Monitors dedicated Unity X11 socket(s) and the associated Xlib event
+    * queue.  Its lifetime is for the duration that the user is in Unity mode.
+    *
+    * @note
+    * The event source is created in UnityPlatformStartHelperThreads and torn
+    * down in UnityPlatformKillHelperThreads.
+    */
+   UnityGSource *glibSource;
 
    struct { // Atoms that we'll find useful
       Atom _NET_WM_WINDOW_TYPE,
@@ -205,6 +239,7 @@ struct _UnityPlatform {
       _NET_SUPPORTED,
       _NET_FRAME_EXTENTS,
       WM_CLASS,
+      WM_CLIENT_LEADER,
       WM_DELETE_WINDOW,
       WM_ICON,
       WM_NAME,
@@ -214,7 +249,7 @@ struct _UnityPlatform {
    } atoms;
 
    UnityWindowTracker *tracker;
-   UnityUpdateThreadData updateData;
+   UnityUpdateChannel *updateChannel;
 
    /*
     * This tracks all toplevel windows, whether or not they are showing through to the
@@ -384,26 +419,23 @@ Bool UPWindow_ProtocolSupported(const UnityPlatform *up,
 UnityPlatformWindow *UPWindow_Lookup(UnityPlatform *up, Window window);
 void UPWindow_SetUserTime(UnityPlatform *up,
                           UnityPlatformWindow *upw);
+void UPWindow_SetEWMHDesktop(UnityPlatform *up,
+                             UnityPlatformWindow *upw,
+                             uint32 ewmhDesktopId);
 
 /*
  * Implemented by unityPlatformX11.c
  */
 Bool UnityPlatformWMProtocolSupported(UnityPlatform *up, UnityX11WMProtocol proto);
 Bool UnityPlatformIsRootWindow(UnityPlatform *up, Window window);
-void UnityPlatformSendPendingUpdates(UnityPlatform *up, int flags);
 uint32 UnityX11GetCurrentDesktop(UnityPlatform *up);
 void UnityX11SetCurrentDesktop(UnityPlatform *up, uint32 currentDesktop);
 Time UnityPlatformGetServerTime(UnityPlatform *up);
 
-#if GTK_MAJOR_VERSION >= 2
-#   define UnityPlatformProcessMainLoop() g_main_context_iteration(NULL, TRUE)
-#else
-#   define UnityPlatformProcessMainLoop() gtk_main_iteration()
-#endif
+#define UnityPlatformProcessMainLoop() g_main_context_iteration(NULL, TRUE)
 
 int UnityPlatformGetErrorCount(UnityPlatform *up);
 void UnityPlatformResetErrorCount(UnityPlatform *up);
-void UnityPlatformDumpUpdate(UnityPlatform *up);
 Bool UnityPlatformSetTaskbarVisible(UnityPlatform *up, Bool currentSetting);
 void UnityPlatformSendClientMessage(UnityPlatform *up, Window destWindow,
 				    Window w, Atom messageType,
@@ -414,5 +446,15 @@ void UnityX11RestoreSystemSettings(UnityPlatform *up);
 size_t UnityPlatformGetNumVirtualDesktops(UnityPlatform *up);
 void UnityPlatformGetVirtualDesktopLayout(UnityPlatform *up, Atom *layoutData);
 const char *UnityPlatformGetEventString(UnityPlatform *up, int type);
+
+gboolean UnityX11HandleEvents(gpointer data);
+
+
+/*
+ * Implemented in x11Event.c.
+ */
+
+void UnityX11EventEstablishSource(UnityPlatform *up);
+void UnityX11EventTeardownSource(UnityPlatform *up);
 
 #endif

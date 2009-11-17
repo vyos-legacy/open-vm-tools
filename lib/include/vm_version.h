@@ -75,38 +75,6 @@
 #define BUILD_VERSION COMPILATION_OPTION BUILD_NUMBER
 
 
-/* Hard-coded expiration date */
-/* Please don't put 0 in the front if the month or date is single digital number,
- * otherwise ENCODE_DATE will treat it as an octal number.
- */
-#define DATE_DAY_MAX 31
-#define DATE_MONTH_MAX 12
-#define ENCODE_DATE(year, month, day) ((year) * ((DATE_MONTH_MAX + 1) * (DATE_DAY_MAX + 1)) + (month) * (DATE_DAY_MAX + 1) + (day))
-#if !defined(VMX86_DEVEL) && defined(BUILD_EXPIRE)
-#   if defined(VMX86_SERVER)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_WGS)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_DESKTOP)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_P2V)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_V2V)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_SYSIMAGE)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_VCB)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_VPX)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_WBC)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   elif defined(VMX86_SDK)
-#      define HARD_EXPIRE ENCODE_DATE(2009, 1, 31)
-#   endif
-#endif
-
-
 /*
  * Used in .rc files on the Win32 platform. We must use PRODUCT_BUILD_NUMBER
  * in numeric Win32 version numbers to stay below the 65k (circa) limit.
@@ -116,11 +84,13 @@
  * hard-coded value for every other product.
  */
 #if defined(VMX86_DESKTOP)
-   #define PRODUCT_VERSION    6,5,0,PRODUCT_BUILD_NUMBER_NUMERIC
+   #define PRODUCT_VERSION    7,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #elif defined(VMX86_TOOLS)
    #define PRODUCT_VERSION    TOOLS_VERSION_EXT_CURRENT_CSV
 #elif defined(VMX86_VCB)
    #define PRODUCT_VERSION    1,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
+#elif defined(VMX86_VLICENSE)
+   #define PRODUCT_VERSION    1,1,2,PRODUCT_BUILD_NUMBER_NUMERIC
 #else
    #define PRODUCT_VERSION    3,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #endif
@@ -190,7 +160,6 @@
  * When updating the ESX_VERSION* and ESX_RELEASE* macros, you will also
  * need to update:
  *
- *   > bora/install/server/weasel/packages.xml
  *   > bora/support/gobuild/targets/server.py
  *   > console-os26/SOURCES/kernel-2.6.spec
  *
@@ -214,8 +183,8 @@
  * 4.0.0-1.7: update 1
  * 4.0.0-1.8: patch 3
  */
-#define ESX_VERSION_MAJOR "4"
-#define ESX_VERSION_MINOR "1"
+#define ESX_VERSION_MAJOR "5"
+#define ESX_VERSION_MINOR "0"
 #define ESX_VERSION_MAINT "0"
 #define ESX_VERSION ESX_VERSION_MAJOR "." ESX_VERSION_MINOR "." \
                     ESX_VERSION_MAINT
@@ -236,7 +205,7 @@
 #define PLAYER_VERSION "e.x.p"
 #define V2V_VERSION "e.x.p"
 #define V2V_FILE_VERSION 1,0,0,0
-#define FUSION_VERSION "2.0"
+#define FUSION_VERSION "3.0.0"
 
 // These must match VIE_FILEVERSION above
 #define SYSIMAGE_VERSION "4.0.0"
@@ -248,15 +217,16 @@
 #define WBC_VERSION "e.x.p"
 #define SDK_VERSION "4.1.0"
 #define FOUNDRY_VERSION "e.x.p"
-#define FOUNDRY_FILE_VERSION 1,6,2,PRODUCT_BUILD_NUMBER_NUMERIC
+#define FOUNDRY_FILE_VERSION 1,8,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #define VMLS_VERSION "e.x.p"
-#define VLICENSE_VERSION "e.x.p"
+#define VLICENSE_VERSION "1.1.2"
 #define DDK_VERSION "e.x.p"
-#define VIM_API_VERSION "4.0"
+#define VIM_API_VERSION "4.5"
 #define VIPERL_VERSION "1.1.0"
-#define RCLI_VERSION "4.0.0"
+#define RCLI_VERSION "4.5.0"
 #define VDM_VERSION "e.x.p"
-#define VMSAFE_VERSION "e.x.p"
+#define VMSAFE_VERSION        "1.1.0"
+#define VMSAFE_FILE_VERSION    1,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #define VDDK_VERSION          "1.1.0"
 #define VDDK_FILE_VERSION      1,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #define OVFTOOL_VERSION "1.0.0"
@@ -282,7 +252,7 @@
 /*
  * The current Tools version, derived from vm_tools_version.h. Do not modify this.
  */
-#define TOOLS_VERSION "2009.01.21"
+#define TOOLS_VERSION TOOLS_VERSION_CURRENT_STR
 
 #ifdef VMX86_VPX
 #define VIM_API_TYPE "VirtualCenter"
@@ -308,7 +278,11 @@
 #elif defined(VMX86_ENTERPRISE_DESKTOP)
 #  define PRODUCT_VERSION_NUMBER WORKSTATION_ENTERPRISE_VERSION
 #elif defined(VMX86_DESKTOP)
-#  define PRODUCT_VERSION_NUMBER WORKSTATION_VERSION
+#  if defined(__APPLE__)
+#    define PRODUCT_VERSION_NUMBER FUSION_VERSION
+#  else
+#    define PRODUCT_VERSION_NUMBER WORKSTATION_VERSION
+#  endif
 #elif defined(VMX86_API)
 #  define PRODUCT_VERSION_NUMBER API_SCRIPTING_VERSION
 #elif defined(VMX86_VPX)
@@ -377,7 +351,11 @@
 #  elif defined(VMX86_ENTERPRISE_DESKTOP)
 #    define PRODUCT_LICENSE_VERSION "1.0"
 #  elif defined(VMX86_DESKTOP)
-#    define PRODUCT_LICENSE_VERSION "6.0"
+#    if defined(__APPLE__)
+#      define PRODUCT_LICENSE_VERSION "3.0"
+#    else
+#      define PRODUCT_LICENSE_VERSION "7.0"
+#    endif
 #  elif defined(VMX86_VPX)
 #    define PRODUCT_LICENSE_VERSION "1.0"
 #  elif defined(VMX86_WBC)
@@ -393,6 +371,8 @@
 #  endif
 #  define PRODUCT_VERSION_STRING_FOR_LICENSE PRODUCT_LICENSE_VERSION " " BUILD_NUMBER
 #endif
+
+#define PLAYER_LICENSE_VERSION "6.0"
 
 /*
  * This is for ACE Management Server
@@ -439,9 +419,6 @@
 #define CONFIG_VERSION_MSNAP            "8"     /* Multiple Snapshots */
 #define CONFIG_VERSION_WS5              "8"     /* WS5.0 */
 
-#define VMVISOR_VERSION "4.1.0"
-
-
 /*
  * Product version strings allows UIs to refer to a single place for specific
  * versions of product names.  These do not include a "VMware" prefix.
@@ -452,6 +429,7 @@
 #define PRODUCT_VERSION_SCALABLE_SERVER_3 PRODUCT_SCALABLE_SERVER_BRIEF_NAME " 3.x"
 #define PRODUCT_VERSION_SCALABLE_SERVER_30 PRODUCT_SCALABLE_SERVER_BRIEF_NAME " 3.0"
 #define PRODUCT_VERSION_SCALABLE_SERVER_31 PRODUCT_SCALABLE_SERVER_BRIEF_NAME " 3.5"
+#define PRODUCT_VERSION_SCALABLE_SERVER_40 PRODUCT_SCALABLE_SERVER_BRIEF_NAME " 4.0"
 #define PRODUCT_VERSION_WGS_1 PRODUCT_WGS_BRIEF_NAME " 1.x"
 #define PRODUCT_VERSION_WGS_2 PRODUCT_WGS_BRIEF_NAME " 2.0"
 #define PRODUCT_VERSION_GSX_2 PRODUCT_GSX_BRIEF_NAME " 2.x"
@@ -460,12 +438,14 @@
 #define PRODUCT_VERSION_WORKSTATION_5 PRODUCT_WORKSTATION_BRIEF_NAME " 5.x"
 #define PRODUCT_VERSION_WORKSTATION_6 PRODUCT_WORKSTATION_BRIEF_NAME " 6.0"
 #define PRODUCT_VERSION_WORKSTATION_65 PRODUCT_WORKSTATION_BRIEF_NAME " 6.5"
+#define PRODUCT_VERSION_WORKSTATION_70 PRODUCT_WORKSTATION_BRIEF_NAME " 7.0"
 #define PRODUCT_VERSION_WORKSTATION_ENTERPRISE_1 "ACE 1.x"
 #define PRODUCT_VERSION_WORKSTATION_ENTERPRISE_2 "ACE 2.0"
 #define PRODUCT_VERSION_WORKSTATION_ENTERPRISE_25 "ACE 2.5"
 #define PRODUCT_VERSION_PLAYER_1 PRODUCT_PLAYER_BRIEF_NAME " 1.x"
 #define PRODUCT_VERSION_MAC_DESKTOP_1 PRODUCT_MAC_DESKTOP_BRIEF_NAME " 1.1"
 #define PRODUCT_VERSION_MAC_DESKTOP_2 PRODUCT_MAC_DESKTOP_BRIEF_NAME " 2.0"
+#define PRODUCT_VERSION_MAC_DESKTOP_3 PRODUCT_MAC_DESKTOP_BRIEF_NAME " 3.0"
 
 
 /*

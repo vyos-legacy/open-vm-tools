@@ -57,6 +57,7 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
+#include <net/if_arp.h>         // for ARPHRD_ETHER
 
 #if defined(__FreeBSD__) || defined(__APPLE__)
 #include "ifaddrs.h"
@@ -70,10 +71,65 @@
 #include "str.h"
 
 #define MAX_IFACES      4
-#define LOOPBACK        "lo"
+#define LOOPBACK        "lo"    // XXX: We would have a problem with something like "loa0".
 #ifndef INET_ADDRSTRLEN
 #define INET_ADDRSTRLEN 16
 #endif
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * ValidateConvertAddress --
+ *
+ *      Helper routine validates an address as a return value for
+ *      NetUtil_GetPrimaryIP.
+ *
+ * Results:
+ *      Returns TRUE with sufficient result stored in outputBuffer on success.
+ *      Returns FALSE with "" stored in outputBuffer on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+ValidateConvertAddress(const char *ifaceName,           // IN: interface name
+                       const struct sockaddr_in *addr,  // IN: network address to
+                                                        //     evaluate
+                       char ipstr[INET_ADDRSTRLEN])     // OUT: converted address
+                                                        //      stored here
+{
+   /*
+    * 1.  Ensure this isn't a loopback device.
+    * 2.  Ensure this is an (IPv4) internet address.
+    */
+   if (ifaceName[0] == '\0' ||
+       strncmp(ifaceName, LOOPBACK, sizeof LOOPBACK - 1) == 0 ||
+       addr->sin_family != AF_INET) {
+      goto invalid;
+   }
+
+   /*
+    * Branches separated because it just looked really silly to lump the
+    * initial argument checking and actual conversion logic together.
+    */
+
+   /*
+    * 3.  Attempt network to presentation conversion.
+    * 4.  Ensure the IP isn't all zeros.
+    */
+   if (inet_ntop(AF_INET, (void *)&addr->sin_addr, ipstr, INET_ADDRSTRLEN) != NULL &&
+       strcmp(ipstr, "0.0.0.0") != 0) {
+      return TRUE;
+   }
+
+invalid:
+   ipstr[0] = '\0';
+   return FALSE;
+}
 
 
 /*
@@ -84,12 +140,12 @@
  *      Get the primary IP for this machine.
  *
  * Results:
- *      
- *      The IP or NULL if an error occurred.
+ *      If applicable address found, returns string of said IP address.
+ *      If applicable address not found, returns an empty string.
+ *      If an error occurred, returns NULL.
  *
  * Side effects:
- *
- *	None.
+ *	Caller is responsible for free()ing returned string.
  *
  *----------------------------------------------------------------------
  */
@@ -101,12 +157,12 @@ NetUtil_GetPrimaryIP(void)
    int sd, i;
    struct ifconf iflist;
    struct ifreq ifaces[MAX_IFACES];
-   char *ipstr;
+   char ipstr[INET_ADDRSTRLEN] = "";
 
    /* Get a socket descriptor to give to ioctl(). */
    sd = socket(PF_INET, SOCK_STREAM, 0);
    if (sd < 0) {
-      goto error;
+      return NULL;
    }
 
    memset(&iflist, 0, sizeof iflist);
@@ -118,54 +174,22 @@ NetUtil_GetPrimaryIP(void)
 
    if (ioctl(sd, SIOCGIFCONF, &iflist) < 0) {
       close(sd);
-      goto error;
+      return NULL;
    }
 
    close(sd);
 
    /* Loop through the list of interfaces provided by ioctl(). */
    for (i = 0; i < (sizeof ifaces/sizeof *ifaces); i++) {
-      /*
-       * Find the first interface whose name is not blank and isn't a
-       * loopback device.  This should be the primary interface.
-       */
-      if ((*ifaces[i].ifr_name != '\0') &&
-          (strncmp(ifaces[i].ifr_name, LOOPBACK, strlen(LOOPBACK)) != 0)) {
-         struct sockaddr_in *addr;
-
-         /*
-          * Allocate memory to return to caller; they must free this if we
-          * don't return error.
-          */
-         ipstr = calloc(1, INET_ADDRSTRLEN);
-         if (!ipstr) {
-            goto error;
-         }
-
-         addr = (struct sockaddr_in *)(&ifaces[i].ifr_addr);
-
-         /* Convert this address to dotted decimal */
-         if (inet_ntop(AF_INET, (void *)&addr->sin_addr,
-                       ipstr, INET_ADDRSTRLEN) == NULL) {
-            goto error_free;
-         }
-
-         /* We'd rather return NULL than an IP of zeros. */
-         if (strcmp(ipstr, "0.0.0.0") == 0) {
-            goto error_free;
-         }
-
-         return ipstr;
+      if (ValidateConvertAddress(ifaces[i].ifr_name,
+                                 (struct sockaddr_in *)&ifaces[i].ifr_addr,
+                                 ipstr)) {
+         break;
       }
    }
 
-   /* Making it through loop means no non-loopback devices were found. */
-   return NULL;
-
-error_free:
-   free(ipstr);
-error:
-   return NULL;
+   /* Success.  Here, caller, you can throw this away. */
+   return strdup(ipstr);
 }
 
 #else /* } FreeBSD || APPLE { */
@@ -175,7 +199,7 @@ NetUtil_GetPrimaryIP(void)
 {
    struct ifaddrs *ifaces;
    struct ifaddrs *curr;
-   char ipstr[INET_ADDRSTRLEN];
+   char ipstr[INET_ADDRSTRLEN] = "";
 
    /*
     * getifaddrs(3) creates a NULL terminated linked list of interfaces for us
@@ -185,45 +209,15 @@ NetUtil_GetPrimaryIP(void)
       return NULL;
    }
 
-   if (!ifaces) {
-      return NULL;
-   }
-
    /*
     * We traverse the list until there are no more interfaces or we have found
     * the primary interface.  This function defines the primary interface to be
     * the first non-loopback, internet interface in the interface list.
     */
    for(curr = ifaces; curr != NULL; curr = curr->ifa_next) {
-      struct sockaddr_in *addr;
-
-      /* Ensure this isn't a loopback device. */
-      if (strncmp(curr->ifa_name, LOOPBACK, strlen(LOOPBACK)) == 0) {
-         continue;
-      }
-
-      addr = (struct sockaddr_in *)(curr->ifa_addr);
-
-      /* Ensure this is an (IPv4) internet interface. */
-      if (addr->sin_family == AF_INET) {
-         memset(ipstr, 0, sizeof ipstr);
-
-         /* Attempt network to presentation conversion. */
-         if (inet_ntop(AF_INET, (void *)&addr->sin_addr, ipstr, sizeof ipstr) == NULL) {
-            continue;
-         }
-
-         /* If the IP is all zeros we'll try for another interface. */
-         if (strcmp(ipstr, "0.0.0.0") == 0) {
-            /* Empty the string so we never return "0.0.0.0". */
-            ipstr[0] = '\0';
-            continue;
-         }
-
-         /*
-          * We have found the primary interface and its dotted-decimal IP is
-          * in ipstr.
-          */
+      if (ValidateConvertAddress(curr->ifa_name,
+                                 (struct sockaddr_in *)curr->ifa_addr,
+                                 ipstr)) {
          break;
       }
    }
@@ -231,11 +225,8 @@ NetUtil_GetPrimaryIP(void)
    /* Tell FreeBSD to free our linked list. */
    freeifaddrs(ifaces);
 
-   /*
-    * If ipstr is blank, just return NULL.  Otherwise, we create a copy of the
-    * string and return the pointer; the caller must free this memory.
-    */
-   return (ipstr[0] == '\0') ? NULL : strdup(ipstr);
+   /* Success.  Here, caller, you can throw this away. */
+   return strdup(ipstr);
 }
 #endif /* } */
 
@@ -283,3 +274,217 @@ NetUtil_GetPrimaryNic(void)
 abort:
    return nicEntry;
 }
+
+
+#if defined(linux)
+#   ifdef DUMMY_NETUTIL
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * NetUtil_GetIfIndex (dummy version) --
+ *
+ *      Given an interface name, return its index.
+ *
+ * Results:
+ *      Returns a valid interface index on success or -1 on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+NetUtil_GetIfIndex(const char *ifName)  // IN: interface name
+{
+   NetUtilIfTableEntry *iterator;
+   int ifIndex = -1;
+
+   ASSERT(netUtilIfTable != NULL);
+
+   for (iterator = netUtilIfTable; iterator->ifName; iterator++) {
+      if (strcmp(iterator->ifName, ifName) == 0) {
+         ifIndex = iterator->ifIndex;
+         break;
+      }
+   }
+
+   return ifIndex;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * NetUtil_GetIfName (dummy version) --
+ *
+ *      Given an interface index, return its name.
+ *
+ * Results:
+ *      Returns a valid interface name on success, NULL on failure.
+ *
+ * Side effects:
+ *      Caller is responsible for freeing the returned string.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+char *
+NetUtil_GetIfName(int ifIndex)  // IN: interface index
+{
+   NetUtilIfTableEntry *iterator;
+   char *ifName = NULL;
+
+   ASSERT(netUtilIfTable != NULL);
+
+   for (iterator = netUtilIfTable; iterator->ifName; iterator++) {
+      if (iterator->ifIndex == ifIndex) {
+         ifName = Util_SafeStrdup(iterator->ifName);
+         break;
+      }
+   }
+
+   return ifName;
+}
+
+
+#   else // ifdef DUMMY_NETUTIL
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * NetUtil_GetIfIndex --
+ *
+ *      Given an interface name, return its index.
+ *
+ * Results:
+ *      Returns a valid interface index on success or -1 on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+NetUtil_GetIfIndex(const char *ifName)  // IN: interface name
+{
+   struct ifreq ifreq;
+   int fd = -1;
+   int ifIndex = -1;
+
+   memset(&ifreq, 0, sizeof ifreq);
+   if (Str_Snprintf(ifreq.ifr_name, sizeof ifreq.ifr_name, "%s", ifName) == -1) {
+      return -1;
+   }
+
+   if ((fd = socket(PF_INET, SOCK_DGRAM, 0)) == -1) {
+      return -1;
+   }
+
+   if (ioctl(fd, SIOCGIFINDEX, &ifreq) == 0) {
+      ifIndex = ifreq.ifr_ifindex;
+   }
+
+   close(fd);
+
+   return ifIndex;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * NetUtil_GetIfName --
+ *
+ *      Given an interface index, return its name.
+ *
+ * Results:
+ *      Returns a valid interface name on success, NULL on failure.
+ *
+ * Side effects:
+ *      Caller is responsible for freeing the returned string.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+char *
+NetUtil_GetIfName(int ifIndex)  // IN: interface index
+{
+   struct ifreq ifreq;
+   char *ifName = NULL;
+   int fd = -1;
+
+   memset(&ifreq, 0, sizeof ifreq);
+   ifreq.ifr_ifindex = ifIndex;
+
+   if ((fd = socket(PF_INET, SOCK_DGRAM, 0)) == -1) {
+      return NULL;
+   }
+
+   if (ioctl(fd, SIOCGIFNAME, &ifreq) == 0) {
+      ifName = Util_SafeStrdup(ifreq.ifr_name);
+   }
+
+   close(fd);
+
+   return ifName;
+}
+#   endif // ifdef DUMMY_NETUTIL
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * NetUtil_GetHardwareAddress --
+ *
+ *      Given an interface name, return its hardware/link layer address.
+ *
+ * Results:
+ *      Returns TRUE and populates hwAddr on success.
+ *      Returns FALSE on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+size_t
+NetUtil_GetHardwareAddress(int ifIndex,         // IN
+                           char *hwAddr,        // OUT
+                           size_t hwAddrSize,   // IN
+                           IanaIfType *ifType)  // OUT
+{
+   struct ifreq ifreq;
+   int fd = -1;
+   size_t ret = 0;
+
+   if (hwAddrSize < IFHWADDRLEN) {
+      return FALSE;
+   }
+
+   ASSERT(sizeof ifreq.ifr_name >= IF_NAMESIZE);
+
+   memset(&ifreq, 0, sizeof ifreq);
+   if (if_indextoname(ifIndex, ifreq.ifr_name) == NULL) {
+      return FALSE;
+   }
+
+   if ((fd = socket(PF_INET, SOCK_DGRAM, 0)) == -1) {
+      return FALSE;
+   }
+
+   if (ioctl(fd, SIOCGIFHWADDR, &ifreq) == 0 &&
+       ifreq.ifr_hwaddr.sa_family == ARPHRD_ETHER) {
+      memcpy(hwAddr, ifreq.ifr_hwaddr.sa_data, IFHWADDRLEN);
+      *ifType = IANA_IFTYPE_ETHERNETCSMACD;
+      ret = IFHWADDRLEN;
+   }
+
+   close(fd);
+
+   return ret;
+}
+
+
+#endif // if defined(linux)

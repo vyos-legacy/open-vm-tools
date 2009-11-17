@@ -26,8 +26,8 @@
 #include <string.h>
 
 #include "vmware.h"
+#include "appUtil.h"
 #include "debug.h"
-#include "guestCaps.h"
 #include "rpcout.h"
 #include "str.h"
 
@@ -38,7 +38,7 @@
  * AppUtil_SendGuestCaps --
  *
  *     Send a list of guest capabilities to the host.
- *
+ * 
  * Results:
  *     None.
  *

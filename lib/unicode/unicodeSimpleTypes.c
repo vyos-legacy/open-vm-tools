@@ -25,6 +25,7 @@
 
 #include <ctype.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "unicodeBase.h"
 #include "unicodeInt.h"
@@ -33,6 +34,7 @@
 #include "vm_assert.h"
 #include "util.h"
 #include "hashTable.h"
+#include "vm_atomic.h"
 
 static char *UnicodeNormalizeEncodingName(const char *encoding);
 
@@ -2169,13 +2171,6 @@ static struct xRef {
 
 
 /*
- * Thread-safe hash table to speed up encoding name -> IANA table
- * index lookups.
- */
-static HashTable *encCache = NULL;
-
-
-/*
  *-----------------------------------------------------------------------------
  *
  * UnicodeNormalizeEncodingName --
@@ -2205,6 +2200,7 @@ UnicodeNormalizeEncodingName(const char *encodingName) // IN
    currentResult = result;
 
    for (currentResult = result; *encodingName != '\0'; encodingName++) {
+      // The explicit cast from char to int is necessary for Netware builds.
       if (isalnum((int) *encodingName)) {
          *currentResult = tolower(*encodingName);
          currentResult++;
@@ -2237,27 +2233,41 @@ UnicodeNormalizeEncodingName(const char *encodingName) // IN
 static int
 UnicodeIANALookup(const char *encodingName) // IN
 {
-   char *name;
+   /*
+    * Thread-safe hash table to speed up encoding name -> IANA table
+    * index lookups.
+    */
+   static Atomic_Ptr htPtr;
+   static HashTable *encCache = NULL;
+
+   char *name = NULL;
    char *candidate = NULL;
    const char *p;
    int i;
    int j;
    int acp;
    void *idx;
+   size_t windowsPrefixLen = sizeof "windows-" - 1 /* NUL */;
 
-   if (encCache && HashTable_Lookup(encCache, encodingName, (void **) &idx)) {
+   if (UNLIKELY(encCache == NULL)) {
+      encCache = HashTable_AllocOnce(&htPtr, 128, HASH_ISTRING_KEY | HASH_FLAG_ATOMIC |
+                                     HASH_FLAG_COPYKEY, free);
+   }
+
+   if (encCache && HashTable_Lookup(encCache, encodingName, &idx)) {
       return (int)(uintptr_t)idx;
    }
 
-   name = UnicodeNormalizeEncodingName(encodingName);
-   
    /*
     * check for Windows-xxxx encoding names generated from GetACP()
     * code page numbers, see: CodeSetOld_GetCurrentCodeSet()
     */
-   if (!strncmp(encodingName, "windows-", strlen("windows-"))) {
-      p = encodingName + strlen("windows-");
+   if (   strncmp(encodingName, "windows-", windowsPrefixLen) == 0
+       || strncmp(encodingName, "Windows-", windowsPrefixLen) == 0) {
+      p = encodingName + windowsPrefixLen;
       acp = 0;
+
+      // The explicit cast from char to int is necessary for Netware builds.
       while (*p && isdigit((int)*p)) {
          acp *= 10;
          acp += *p - '0';
@@ -2271,11 +2281,21 @@ UnicodeIANALookup(const char *encodingName) // IN
          }
       }
    }
-   
+
+   // Try the raw names first to avoid the expense of normalizing everything.
+   for (i = 0; i < ARRAYSIZE(xRef); i++) {
+      for (j = 0; (p = xRef[i].names[j]) != NULL; j++) {
+         if (strcmp(encodingName, p) == 0) {
+            goto done;
+         }
+      }
+   }
+
+   name = UnicodeNormalizeEncodingName(encodingName);
    for (i = 0; i < ARRAYSIZE(xRef); i++) {
       for (j = 0; (p = xRef[i].names[j]) != NULL; j++) {
          candidate = UnicodeNormalizeEncodingName(p);
-         if (!strcmp(name, candidate)) {
+         if (strcmp(name, candidate) == 0) {
             goto done;
          }
          free(candidate);
@@ -2429,139 +2449,101 @@ Unicode_IsEncodingValid(StringEncoding encoding)  // IN
       encoding < STRING_ENCODING_MAX_SPECIFIED;
 }
 
-
 /*
  *-----------------------------------------------------------------------------
  *
- * Unicode_InitEx --
+ * UnicodeInitInternal --
  *
- *      Convert argv and environment from default encoding into unicode
- *	and initialize the cache of the native code set name used to
- *	resolve STRING_ENCODING_DEFAULT.
+ *      Convert argv and environment from default encoding into
+ *      unicode and initialize the cache of the native code set name
+ *      used to resolve STRING_ENCODING_DEFAULT.
+ *
+ *      wargv takes precedence over argv as input if both are
+ *      specified, likewise with wenvp/envp.
  *
  * Results:
- *	returns on success
+ *      returns on success
  *      errors are terminal
  *
  * Side effects:
- *	Calling CodeSet_GetCurrentCodeSet() initializes the cache of the
+ *      Calling CodeSet_GetCurrentCodeSet() initializes the cache of the
  *      native code set name.  The cached name is used to resolve references
  *      to STRING_ENCODING_DEFAULT in unicode functions.
  *
  *-----------------------------------------------------------------------------
  */
-
-void
-Unicode_InitEx(int argc,                // IN
-               char ***argv,            // IN/OUT
-               char ***envp,            // IN/OUT
-               const char *icuDataDir)  // IN
+static void
+UnicodeInitInternal(int argc,               // IN
+                    const char *icuDataDir, // IN
+                    utf16_t **wargv,        // IN/OUT (OPT)
+                    utf16_t **wenvp,        // IN/OUT (OPT)
+                    char ***argv,           // IN/OUT (OPT)
+                    char ***envp)           // IN/OUT (OPT)
 {
 #if !defined(__APPLE__) && !defined(VMX86_SERVER)
    char **list;
    StringEncoding encoding;
 #endif
+   Bool success = FALSE;
+   char panicMsg[1024];
+   static volatile Bool inited = FALSE;
+   static Atomic_uint32 locked = {0};
+
+   panicMsg[0] = '\0';
+
+   /*
+    * This function must be callable multiple times. We can't depend
+    * on lib/sync, so cheese it.
+    */
+   while (1 == Atomic_ReadIfEqualWrite(&locked, 0, 1)) {
+#if !defined(N_PLAT_NLM) && !defined(__FreeBSD__)
+      usleep(250 * 1000);
+#endif
+   }
+
+   if (inited) {
+      success = TRUE;
+      goto exit;
+   }
 
    /*
     * Always init the codeset module first.
     */
-
    if (!CodeSet_Init(icuDataDir)) {
-      Panic("Failed to initialize codeset.\n");
-      goto bail;
-   }
-
-   encCache = HashTable_Alloc(128, HASH_ISTRING_KEY | HASH_FLAG_ATOMIC |
-                              HASH_FLAG_COPYKEY, free);
-   if (encCache == NULL) {
-      Panic("HashTable_Alloc failed.\n");
-      goto bail;
+#ifndef N_PLAT_NLM
+      snprintf(panicMsg, sizeof panicMsg, "Failed to initialize codeset.\n");
+#endif
+      goto exit;
    }
 
    // UTF-8 native encoding for these two
 #if !defined(__APPLE__) && !defined(VMX86_SERVER)
-
    encoding = Unicode_EncodingNameToEnum(CodeSet_GetCurrentCodeSet());
    if (!Unicode_IsEncodingValid(encoding)) {
-      Panic("Unsupported local character encoding \"%s\".\n",
-            Unicode_EncodingEnumToName(STRING_ENCODING_DEFAULT));
-      goto bail;
+#ifndef N_PLAT_NLM
+      snprintf(panicMsg, sizeof panicMsg,
+         "Unsupported local character encoding \"%s\".\n",
+         Unicode_EncodingEnumToName(STRING_ENCODING_DEFAULT));
+#endif
+      goto exit;
    }
-
-   if (argv) {
-      list = Unicode_AllocList(*argv, argc + 1, STRING_ENCODING_DEFAULT);
-      if (!list) {
-         Panic("Unicode_AllocList1 failed.\n");
-         goto bail;
-      }
-      *argv = list;
-   }
-
-   if (envp) {
-      list = Unicode_AllocList(*envp, -1, STRING_ENCODING_DEFAULT);
-      if (!list) {
-         Panic("Unicode_AllocList2 failed.\n");
-         goto bail;
-      }
-      *envp = list;
-   }
-#endif // !__APPLE__ && !VMX86_SERVER
-
-   return;
-
-bail:
-   exit(1);
-}
-
-void
-Unicode_Init(int argc,        // IN
-             char ***argv,    // IN/OUT
-             char ***envp)    // IN/OUT
-{
-   Unicode_InitEx(argc, argv, envp, NULL);
-}
-
-#if defined(_WIN32)
-void
-Unicode_InitW(int argc,               // IN
-              utf16_t **wargv,        // IN
-              utf16_t **wenvp,        // IN
-              char ***argv,           // OUT
-              char ***envp)           // OUT
-{
-   char **list;
-   StringEncoding encoding;
-
-   /*
-    * Always init the codeset module first.
-    */
-
-   if (!CodeSet_Init(NULL)) {
-      Panic("Failed to initialize codeset.\n");
-      goto bail;
-   }
-
-   encCache = HashTable_Alloc(128, HASH_ISTRING_KEY | HASH_FLAG_ATOMIC |
-                              HASH_FLAG_COPYKEY, free);
-   if (encCache == NULL) {
-      Panic("HashTable_Alloc failed.\n");
-      goto bail;
-   }
-
-   encoding = Unicode_EncodingNameToEnum(CodeSet_GetCurrentCodeSet());
-   if (!Unicode_IsEncodingValid(encoding)) {
-      Panic("Unsupported character encoding \"%s\".\n",
-            Unicode_EncodingEnumToName(encoding));
-      goto bail;
-   }
-
-   encoding = STRING_ENCODING_UTF16;
 
    if (wargv) {
       list = Unicode_AllocList((char **)wargv, argc + 1, STRING_ENCODING_UTF16);
       if (!list) {
-         Panic("Unicode_AllocList1 failed.\n");
-         goto bail;
+#ifndef N_PLAT_NLM
+         snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList1 failed.\n");
+#endif
+         goto exit;
+      }
+      *argv = list;
+   } else if (argv) {
+      list = Unicode_AllocList(*argv, argc + 1, STRING_ENCODING_DEFAULT);
+      if (!list) {
+#ifndef N_PLAT_NLM
+         snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList2 failed.\n");
+#endif
+         goto exit;
       }
       *argv = list;
    }
@@ -2569,15 +2551,63 @@ Unicode_InitW(int argc,               // IN
    if (wenvp) {
       list = Unicode_AllocList((char **)wenvp, -1, STRING_ENCODING_UTF16);
       if (!list) {
-         Panic("Unicode_AllocList2 failed.\n");
-         goto bail;
+#ifndef N_PLAT_NLM
+         snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList3 failed.\n");
+#endif
+         goto exit;
+      }
+      *envp = list;
+   } else if (envp) {
+      list = Unicode_AllocList(*envp, -1, STRING_ENCODING_DEFAULT);
+      if (!list) {
+#ifndef N_PLAT_NLM
+         snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList4 failed.\n");
+#endif
+         goto exit;
       }
       *envp = list;
    }
+#endif // !__APPLE__ && !VMX86_SERVER
 
-   return;
+   inited = TRUE;
+   success = TRUE;
 
-bail:
-   exit(1);
+  exit:
+   Atomic_Write(&locked, 0);
+
+   if (!success) {
+      panicMsg[sizeof panicMsg - 1] = '\0';
+      Panic("%s", panicMsg);
+      exit(1);
+   }
 }
-#endif // _WIN32
+
+
+void
+Unicode_InitW(int argc,                // IN
+              utf16_t **wargv,         // IN/OUT (OPT)
+              utf16_t **wenvp,         // IN/OUT (OPT)
+              char ***argv,            // IN/OUT (OPT)
+              char ***envp)            // IN/OUT (OPT)
+{
+   UnicodeInitInternal(argc, NULL, wargv, wenvp, argv, envp);
+}
+
+
+void
+Unicode_InitEx(int argc,                // IN
+               char ***argv,            // IN/OUT (OPT)
+               char ***envp,            // IN/OUT (OPT)
+               const char *icuDataDir)  // IN (OPT)
+{
+   UnicodeInitInternal(argc, icuDataDir, NULL, NULL, argv, envp);
+}
+
+
+void
+Unicode_Init(int argc,        // IN
+             char ***argv,    // IN/OUT (OPT)
+             char ***envp)    // IN/OUT (OPT)
+{
+   UnicodeInitInternal(argc, NULL, NULL, NULL, argv, envp);
+}

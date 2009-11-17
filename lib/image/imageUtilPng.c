@@ -282,36 +282,6 @@ ImageUtilDataWriteCallback(png_structp png_ptr,         // IN
  *
  * ImageUtil_ConstructPNGBuffer --
  *
- *      Writes a PNG of the image to the DynBuf passed in.
- *
- * Results:
- *      TRUE if successful, FALSE otherwise.
- *
- * Side effects:
- *      If successful, imageData should be destroyed.
- *
- *----------------------------------------------------------------------------
- */
-
-Bool
-ImageUtil_ConstructPNGBuffer(const ImageInfo *image, // IN
-                             DynBuf *imageData)      // OUT
-
-{
-   ImagePngWriteOptions options;
-
-   options.zlibCompressLevel = -1;
-   options.stripAlphaChannel = TRUE;
-
-   return ImageUtil_ConstructPNGBufferEx(image, &options, imageData);
-}
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * ImageUtil_ConstructPNGBufferEx --
- *
  *      Writes a PNG of the image to the DynBuf passed in. Accepts a zlib
  *      compression level (0-9, 0 means no compression, -1 means "use the
  *      default").
@@ -326,9 +296,9 @@ ImageUtil_ConstructPNGBuffer(const ImageInfo *image, // IN
  */
 
 Bool
-ImageUtil_ConstructPNGBufferEx(const ImageInfo *image,              // IN
-                               const ImagePngWriteOptions *options, // IN
-                               DynBuf *imageData)                   // OUT
+ImageUtil_ConstructPNGBuffer(const ImageInfo *image,               // IN
+                             const ImagePngWriteOptions *pOptions, // IN/OPT
+                             DynBuf *imageData)                    // OUT
 {
    png_structp png_ptr;
    png_infop info_ptr;
@@ -344,13 +314,20 @@ ImageUtil_ConstructPNGBufferEx(const ImageInfo *image,              // IN
 
    int bytes_per_line;
    png_bytep *row_pointers;
+   ImagePngWriteOptions options;
 
    ASSERT(image);
    ASSERT(imageData);
-   ASSERT(options);
 
-   if (!image || !options || !imageData) {
+   if (!image || !imageData) {
       return FALSE;
+   }
+
+   if (pOptions == NULL) {
+      options.zlibCompressLevel = -1;
+      options.stripAlphaChannel = TRUE;
+   } else {
+      options = *pOptions;
    }
 
    row_pointers = malloc(sizeof *row_pointers * image->height);
@@ -400,8 +377,8 @@ ImageUtil_ConstructPNGBufferEx(const ImageInfo *image,              // IN
    png_set_IHDR(png_ptr, info_ptr, image->width, image->height, 8, color_type,
                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
 
-   if (options->zlibCompressLevel >= 0 && options->zlibCompressLevel <= 9) {
-      png_set_compression_level(png_ptr, options->zlibCompressLevel);
+   if (options.zlibCompressLevel >= 0 && options.zlibCompressLevel <= 9) {
+      png_set_compression_level(png_ptr, options.zlibCompressLevel);
    }
 
 #ifdef RGB_MASK
@@ -463,7 +440,7 @@ ImageUtil_ConstructPNGBufferEx(const ImageInfo *image,              // IN
 
       png_set_PLTE(png_ptr, info_ptr, palette, image->numColors);
    } else if (image->bpp == 32) {
-      if (options->stripAlphaChannel) {
+      if (options.stripAlphaChannel) {
 
          /*
           * Strip the alpha channel
@@ -493,7 +470,7 @@ ImageUtil_ConstructPNGBufferEx(const ImageInfo *image,              // IN
    /* Write the file header information.  REQUIRED */
    png_write_info(png_ptr, info_ptr);
 
-   if ((image->bpp == 32) && options->stripAlphaChannel) {
+   if ((image->bpp == 32) && options.stripAlphaChannel) {
       /* treat the alpha channel byte as filler */
       png_set_filler(png_ptr, 0, PNG_FILLER_AFTER);
    }

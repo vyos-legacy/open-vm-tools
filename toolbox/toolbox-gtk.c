@@ -25,12 +25,15 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <gdk/gdkkeysyms.h>
 
 #include "toolboxGtkInt.h"
 #include "vm_assert.h"
-#include "vm_app.h"
 #include "eventManager.h"
 #include "guestApp.h"
+#if !defined(OPEN_VM_TOOLS)
+#  include "installerdb.h"
+#endif
 #include "vmcheck.h"
 #include "debug.h"
 #include "strutil.h"
@@ -44,6 +47,8 @@
 #include "toolboxgtk_version.h"
 #include "util.h"
 #include "system.h"
+#include "vmware/guestrpc/tclodefs.h"
+#include "vmware/guestrpc/timesync.h"
 
 #include "embed_version.h"
 VM_EMBED_VERSION(TOOLBOXGTK_VERSION_STRING);
@@ -71,17 +76,18 @@ RpcIn *gRpcInCtlPanel;
 static GtkWidget *toolsMain;
 static Bool optionAutoHide;
 static guint gTimeoutId;
-static const char **gNativeEnviron;
+const char **gNativeEnviron;
 
 /* Help pages. These need to be in the same order as the tabs in the UI. */
+#define HELP_INDEX      "index.html"
+#define HELP_TOPIC(t)   HELP_INDEX "?context=vm_tools&topic=" #t
 static const char *gHelpPages[] = {
-   "index.htm",
-   "tools_options.htm",
-   "tools_devices.htm",
-   "tools_scripts.htm",
-   "tools_shrink.htm",
-   NULL,                        // Record/Replay
-   "tools_about.htm",
+   HELP_INDEX,
+   HELP_TOPIC(IDH_OPTIONS),
+   HELP_TOPIC(IDH_DEVICES),
+   HELP_TOPIC(IDH_SCRIPTS),
+   HELP_TOPIC(IDH_SHRINK),
+   HELP_TOPIC(IDH_ABOUT)
 };
 
 /*
@@ -109,25 +115,30 @@ GtkWidget *optionsTimeSync;
 GtkWidget *scriptsApply;
 DblLnkLst_Links *gEventQueue;
 
-void ToolsMainCleanupRpc(void);
-void ToolsMainSignalHandler(int sig);
-void ToolsMain_OnDestroy(GtkWidget *widget, gpointer data);
-void ToolsMain_YesNoBoxOnClicked(GtkButton *btn, gpointer user_data);
-void ToolsMain_OnHelp(gpointer btn, gpointer data);
-void ToolsMain_OpenHelp(const char *help);
+static void ToolsMainCleanupRpc(void);
+static void ToolsMainSignalHandler(int sig);
+static void ToolsMain_OnDestroy(GtkWidget *widget, gpointer data);
+static void ToolsMain_YesNoBoxOnClicked(GtkButton *btn, gpointer user_data);
+static void ToolsMain_YesNoBoxOnDestroy(GtkWidget *widget, gpointer data);
+static void ToolsMain_OnHelp(gpointer btn, gpointer data);
+static void ToolsMain_OpenHelp(const char *help);
+static gint ToolsMain_CheckF1Help(GtkWidget *widget, GdkEventKey *event,
+                                  gpointer data);
 
-GtkWidget* ToolsMain_Create(void);
+static GtkWidget* ToolsMain_Create(void);
 
 
-Bool RpcInResetCB(RpcInData *data);
-Bool RpcInSetOptionCB(char const **result, size_t *resultLen, const char *name,
-                      const char *args, size_t argsSize, void *clientData);
-Bool RpcInCapRegCB(char const **result, size_t *resultLen, const char *name,
-                   const char *args, size_t argsSize, void *clientData);
-void RpcInErrorCB(void *clientdata, char const *status);
-gint EventQueuePump(gpointer data);
+static Bool RpcInResetCB(RpcInData *data);
+static Bool RpcInSetOptionCB(char const **result, size_t *resultLen,
+                             const char *name, const char *args,
+                             size_t argsSize, void *clientData);
+static Bool RpcInCapRegCB(char const **result, size_t *resultLen,
+                          const char *name, const char *args,
+                          size_t argsSize, void *clientData);
+static void RpcInErrorCB(void *clientdata, char const *status);
+static gint EventQueuePump(gpointer data);
 
-void ShowUsage(char const *prog);
+static void ShowUsage(char const *prog);
 
 
 /*
@@ -146,7 +157,7 @@ void ShowUsage(char const *prog);
  *-----------------------------------------------------------------------------
  */
 
-void
+static void
 ToolsMainCleanupRpc(void)
 {
    if (gRpcInCtlPanel) {
@@ -182,7 +193,8 @@ ToolsMainCleanupRpc(void)
  *-----------------------------------------------------------------------------
  */
 
-void ToolsMainSignalHandler(int sig) // IN
+static void
+ToolsMainSignalHandler(int sig) // IN
 {
    /* We want to kill the event manager before gtk_main_quit. */
    ToolsMainCleanupRpc();
@@ -206,33 +218,31 @@ void ToolsMainSignalHandler(int sig) // IN
  *-----------------------------------------------------------------------------
  */
 
-void
+static void
 ToolsMain_OpenHelp(const char *help) // IN
 {
-   char helpPage[1000];
+   gchar *helpPage;
 
    if (hlpDir == NULL) {
       ToolsMain_MsgBox("Error", "Unable to determine where help pages are stored.");
       return;
    }
 
-   Str_Snprintf(helpPage, sizeof helpPage, "file:%s/%s", hlpDir, help);
-
-   {
-      const gchar *localPath = &helpPage[sizeof "file:" - 1];
-      if (help == NULL || !g_file_test(localPath, G_FILE_TEST_IS_REGULAR)) {
-         ToolsMain_MsgBox("Error", "No Help page was found for this tab.");
-         return;
-      }
+   helpPage = g_strdup_printf("%s/%s", hlpDir, HELP_INDEX);
+   if (help == NULL || !g_file_test(helpPage, G_FILE_TEST_IS_REGULAR)) {
+      ToolsMain_MsgBox("Error", "No help was found.");
+      g_free(helpPage);
+      return;
    }
 
-   Str_Snprintf(helpPage, sizeof helpPage, "file:%s/%s", hlpDir, help);
+   g_free(helpPage);
+   helpPage = g_strdup_printf("file:%s/%s", hlpDir, help);
    if (!GuestApp_OpenUrl(helpPage, FALSE)) {
       ToolsMain_MsgBox("Help Unavailable",
                        "Sorry, but help requires a web browser.  You may need "
                        "to modify your PATH environment variable accordingly.");
-      return;
    }
+   g_free(helpPage);
 }
 
 
@@ -253,7 +263,7 @@ ToolsMain_OpenHelp(const char *help) // IN
  *-----------------------------------------------------------------------------
  */
 
-void
+static void
 ToolsMain_OnHelp(gpointer btn,  // IN: Unused
                  gpointer data) // IN: notebook containing all tabs
 {
@@ -280,6 +290,37 @@ ToolsMain_OnHelp(gpointer btn,  // IN: Unused
    ToolsMain_OpenHelp(gHelpPages[page]);
 }
 
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * ToolsMain_CheckF1Help --
+ *
+ *      Snooper function to detect F1 key press and display appropriate help
+ *      page to the user.
+ *
+ * Results:
+ *      TRUE if user pressed F1.
+ *      FALSE if user pressed any other key and it should be processed further.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static gint
+ToolsMain_CheckF1Help(GtkWidget *widget,    // IN: Unused
+                      GdkEventKey *event,   // IN: event that was snooped
+                      gpointer data)        // IN: notebook containing all tabs
+{
+   if (event->type != GDK_KEY_PRESS || event->keyval != GDK_F1) {
+      return FALSE; /* pass event further */
+   }
+
+   ToolsMain_OnHelp(NULL, data);
+   return TRUE;
+}
 
 /*
  *-----------------------------------------------------------------------------
@@ -373,6 +414,8 @@ ToolsMain_YesNoBox(gchar *title, gchar *msg)
    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
    gtk_container_set_border_width(GTK_CONTAINER(GTK_DIALOG(dialog)->vbox), 10);
    gdk_window_set_icon(dialog->window, NULL, pixmap, bitmask);
+   gtk_signal_connect(GTK_OBJECT(dialog), "destroy",
+                      GTK_SIGNAL_FUNC(ToolsMain_YesNoBoxOnDestroy), &ret);
 
    label = gtk_label_new (msg);
    gtk_widget_show(label);
@@ -428,19 +471,51 @@ ToolsMain_YesNoBox(gchar *title, gchar *msg)
  *-----------------------------------------------------------------------------
  */
 
-void
+static void
 ToolsMain_YesNoBoxOnClicked(GtkButton *btn,     // IN: clicked button
                            gpointer user_data) // OUT: pointer to result value
 {
    char *text;
-   Bool *ret = (Bool*)user_data;
+   int *ret = (int *)user_data;
+
    gtk_label_get(GTK_LABEL(GTK_BIN(btn)->child), &text);
+
    if (strcmp(text, "Yes") == 0) {
       *ret = 1;
    } else if (strcmp(text, "No") == 0) {
       *ret = 2;
    }
+
    gtk_widget_destroy(GTK_WIDGET(gtk_widget_get_toplevel(GTK_WIDGET(btn))));
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * ToolsMain_YesNoBoxOnDestroy  --
+ *
+ *      Callback for the gtk signal "destroy" on the Yes/No dialog.
+ *      If user did not press any buttons but attempted to close
+ *      the window assume that changes should not be saved.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      May cause changes to scripts and other settings to be abandoned.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+ToolsMain_YesNoBoxOnDestroy(GtkWidget *widget, // IN: Unused
+                            gpointer data)     // OUT: result value
+{
+   int *ret = (int *) data;
+
+   if (*ret == 0) {
+      *ret = 2;
+   }
 }
 
 
@@ -462,7 +537,7 @@ ToolsMain_YesNoBoxOnClicked(GtkButton *btn,     // IN: clicked button
  *-----------------------------------------------------------------------------
  */
 
-void
+static void
 ToolsMain_OnDestroy(GtkWidget *widget, // IN: Unused
                     gpointer data)     // IN: Unused
 {
@@ -497,7 +572,7 @@ ToolsMain_OnDestroy(GtkWidget *widget, // IN: Unused
  *-----------------------------------------------------------------------------
  */
 
-gint
+static gint
 EventQueuePump(gpointer data) // IN: Unused
 {
    int ret;
@@ -534,7 +609,7 @@ EventQueuePump(gpointer data) // IN: Unused
  *-----------------------------------------------------------------------------
  */
 
-GtkWidget*
+static GtkWidget*
 ToolsMain_Create(void)
 {
    GtkWidget *ToolsMain;
@@ -602,8 +677,6 @@ ToolsMain_Create(void)
                             gtk_label_new_with_mnemonic(TAB_LABEL_SCRIPTS));
    gtk_notebook_append_page(GTK_NOTEBOOK(notebookMain), Shrink_Create(ToolsMain),
                             gtk_label_new_with_mnemonic(TAB_LABEL_SHRINK));
-   gtk_notebook_append_page(GTK_NOTEBOOK(notebookMain), Record_Create(ToolsMain),
-                            gtk_label_new_with_mnemonic(TAB_LABEL_RECORD));
    gtk_notebook_append_page(GTK_NOTEBOOK(notebookMain), About_Create(ToolsMain),
                             gtk_label_new_with_mnemonic(TAB_LABEL_ABOUT));
 #else
@@ -611,8 +684,6 @@ ToolsMain_Create(void)
                             gtk_label_new(TAB_LABEL_SCRIPTS));
    gtk_notebook_append_page(GTK_NOTEBOOK(notebookMain), Shrink_Create(ToolsMain),
                             gtk_label_new(TAB_LABEL_SHRINK));
-   gtk_notebook_append_page(GTK_NOTEBOOK(notebookMain), Record_Create(ToolsMain),
-                            gtk_lable_new(TAB_LABEL_RECORD));
    gtk_notebook_append_page(GTK_NOTEBOOK(notebookMain), About_Create(ToolsMain),
                             gtk_label_new(TAB_LABEL_ABOUT));
 #endif
@@ -644,6 +715,9 @@ ToolsMain_Create(void)
 #else
    btn = gtk_button_new_with_label("Close");
 #endif
+
+   gtk_key_snooper_install(ToolsMain_CheckF1Help, notebookMain);
+
    gtk_widget_show(btn);
    gtk_box_pack_start(GTK_BOX(hbox), btn, FALSE, FALSE, 0);
    gtk_signal_connect_object(GTK_OBJECT(btn), "clicked",
@@ -672,7 +746,7 @@ ToolsMain_Create(void)
  *-----------------------------------------------------------------------------
  */
 
-Bool
+static Bool
 RpcInResetCB(RpcInData *data) // IN/OUT
 {
    Debug("----------toolbox: Received 'reset' from vmware\n");
@@ -697,7 +771,7 @@ RpcInResetCB(RpcInData *data) // IN/OUT
  *-----------------------------------------------------------------------------
  */
 
-void
+static void
 RpcInErrorCB(void *clientdata, char const *status)
 {
    Warning("Error in the RPC recieve loop: %s\n", status);
@@ -725,7 +799,7 @@ RpcInErrorCB(void *clientdata, char const *status)
  *-----------------------------------------------------------------------------
  */
 
-Bool
+static Bool
 RpcInSetOptionCB(char const **result,     // OUT
                  size_t *resultLen,       // OUT
                  const char *name,        // IN
@@ -817,7 +891,7 @@ RpcInSetOptionCB(char const **result,     // OUT
  *-----------------------------------------------------------------------------
  */
 
-Bool
+static Bool
 RpcInCapRegCB(char const **result,     // OUT
               size_t *resultLen,       // OUT
               const char *name,        // IN
@@ -887,8 +961,8 @@ OnViewportSizeRequest(GtkWidget *widget,           // IN
  *
  * InitHelpDir --
  *
- *      Queries the Tools config dictionary for the location of the Toolbox
- *      Help docs.  If not found, will try to fall back to semi-safe defaults.
+ *      Queries the location db for the location of the Toolbox Help docs.
+ *      If not found, will try to fall back to semi-safe defaults.
  *
  * Results:
  *      None.
@@ -900,14 +974,27 @@ OnViewportSizeRequest(GtkWidget *widget,           // IN
  *-----------------------------------------------------------------------------
  */
 
-void
-InitHelpDir(GuestApp_Dict *pConfDict)   // IN
+static void
+InitHelpDir(void)
 {
-   const char *tmpDir = NULL;
+   gchar *tmpDir = NULL;
 
    ASSERT(hlpDir == NULL);
 
-   tmpDir = GuestApp_GetDictEntry(pConfDict, CONFNAME_HELPDIR);
+   /*
+    * XXX: open-vm-tools doesn't have an installer db, nor does it have help
+    * files yet IIRC.
+    */
+#if !defined(OPEN_VM_TOOLS)
+   if (InstallerDB_Init("/etc/vmware-tools", TRUE)) {
+      const char *libdir = InstallerDB_GetLibDir();
+      if (libdir != NULL) {
+         tmpDir = g_strdup_printf("%s/hlp", libdir);
+      }
+      InstallerDB_DeInit();
+   }
+#endif
+
    if (!tmpDir || !File_Exists(tmpDir)) {
       unsigned int i;
 
@@ -918,14 +1005,14 @@ InitHelpDir(GuestApp_Dict *pConfDict)   // IN
 
       for (i = 0; i < ARRAYSIZE(candidates); i++) {
          if (File_Exists(candidates[i])) {
-            tmpDir = candidates[i];
+            tmpDir = g_strdup(candidates[i]);
             break;
          }
       }
    }
 
    if (tmpDir) {
-      hlpDir = Util_SafeStrdup(tmpDir);
+      hlpDir = tmpDir;
    }
 }
 
@@ -946,7 +1033,7 @@ InitHelpDir(GuestApp_Dict *pConfDict)   // IN
  *-----------------------------------------------------------------------------
  */
 
-void
+static void
 ShowUsage(char const *prog)
 {
    fprintf(stderr,
@@ -987,15 +1074,11 @@ main(int argc,                  // IN: ARRAY_SIZEOF(argv)
 {
    Bool optIconify, optHelp, optVersion;
    struct sigaction olds[ARRAYSIZE(gSignals)];
-   GuestApp_Dict *pConfDict;
+   GKeyFile *pConfDict;
 
    if (!VmCheck_IsVirtualWorld()) {
-#ifndef ALLOW_TOOLS_IN_FOREIGN_VM
       Warning("The VMware Toolbox must be run inside a virtual machine.\n");
       return 1;
-#else
-      runningInForeignVM = TRUE;
-#endif
    }
 
    if (Signal_SetGroupHandler(gSignals, olds, ARRAYSIZE(gSignals),
@@ -1003,11 +1086,14 @@ main(int argc,                  // IN: ARRAY_SIZEOF(argv)
       Panic("vmware-toolbox can't set signal handler\n");
    }
 
-   pConfDict = Conf_Load();
-   Debug_Set(GuestApp_GetDictEntryBool(pConfDict, CONFNAME_LOG), DEBUG_PREFIX);
-   Debug_EnableToFile(GuestApp_GetDictEntry(pConfDict, CONFNAME_LOGFILE), FALSE);
-   InitHelpDir(pConfDict);
-   GuestApp_FreeDict(pConfDict);
+   pConfDict = Toolbox_LoadToolsConf();
+   Debug_Set(g_key_file_get_boolean(pConfDict, "logging", CONFNAME_LOG, NULL),
+             DEBUG_PREFIX);
+   Debug_EnableToFile(g_key_file_get_string(pConfDict, "logging",
+                                            CONFNAME_LOGFILE, NULL),
+                      FALSE);
+   InitHelpDir();
+   g_key_file_free(pConfDict);
 
    optionAutoHide = FALSE;
 
@@ -1130,7 +1216,7 @@ main(int argc,                  // IN: ARRAY_SIZEOF(argv)
 
    gdk_pixmap_unref(pixmap);
    gdk_bitmap_unref(bitmask);
-   free(hlpDir);
+   g_free(hlpDir);
 
    return 0;
 }

@@ -16,13 +16,13 @@
  *
  *********************************************************/
 
-/*
- * unityPlatformX11.c --
+/**
+ * @file unityPlatformX11.c
  *
- *    Implementation of Unity for guest operating systems that use the X11 windowing
- *    system. This file holds the basic things such as initialization/destruction of the
- *    UnityPlatform object, overall event handling, and handling of some Unity
- *    RPCs that are not window-centric.
+ * Implementation of Unity for guest operating systems that use the X11 windowing
+ * system. This file holds the basic things such as initialization/destruction of the
+ * UnityPlatform object, overall event handling, and handling of some Unity
+ * RPCs that are not window-centric.
  */
 
 #include "unityX11.h"
@@ -49,9 +49,6 @@ static void USWindowUpdate(UnityPlatform *up,
 static UnitySpecialWindow *USWindowLookup(UnityPlatform *up, Window window);
 static void USWindowDestroy(UnityPlatform *up, UnitySpecialWindow *usw);
 
-static gboolean UnityPlatformHandleEvents(gboolean errorOccurred,
-                                          gboolean inputAvailable,
-                                          gpointer data);
 static void UnityPlatformProcessXEvent(UnityPlatform *up,
                                        const XEvent *xevent,
                                        Window realEventWindow);
@@ -62,16 +59,6 @@ static void USRootWindowsProcessEvent(UnityPlatform *up,
                                        Window window);
 static int UnityPlatformXErrorHandler(Display *dpy, XErrorEvent *xev);
 static UnitySpecialWindow *UnityPlatformMakeRootWindowsObject(UnityPlatform *up);
-
-#ifdef GTK2
-static gboolean UnityPlatformHandleEventsGlib(GIOChannel *source,
-                                              GIOCondition condition,
-                                              gpointer data);
-#else
-static void UnityPlatformHandleEventsGdk(gpointer data,
-                                         gint source,
-                                         GdkInputCondition condition);
-#endif
 
 static void UnityPlatformSendClientMessageFull(Display *d,
                                                Window destWindow,
@@ -89,11 +76,19 @@ static void UnityPlatformDnDSendClientMessage(UnityPlatform *up,
                                               int numItems,
                                               const void *data);
 
+static Bool GetRelevantWMWindow(UnityPlatform *up,
+                                UnityWindowId windowId,
+                                Window *wmWindow);
+static Bool SetWindowStickiness(UnityPlatform *up,
+                                UnityWindowId windowId,
+                                Bool wantSticky);
+
 static const GuestCapabilities platformUnityCaps[] = {
    UNITY_CAP_WORK_AREA,
    UNITY_CAP_START_MENU,
    UNITY_CAP_MULTI_MON,
-   UNITY_CAP_VIRTUAL_DESK
+   UNITY_CAP_VIRTUAL_DESK,
+   UNITY_CAP_STICKY_WINDOWS,
 };
 
 /*
@@ -142,23 +137,24 @@ UnityPlatformIsSupported(void)
  */
 
 UnityPlatform *
-UnityPlatformInit(UnityWindowTracker *tracker, // IN
-                  int *blockedWnd)             // UNUSED
+UnityPlatformInit(UnityWindowTracker *tracker,                            // IN
+                  UnityUpdateChannel *updateChannel,                      // IN
+                  int *blockedWnd,                                        // IN, not used
+                  DesktopSwitchCallbackManager *desktopSwitchCallbackMgr) // IN, not used
 {
    UnityPlatform *up;
    char *displayName;
+
+   ASSERT(tracker);
+   ASSERT(updateChannel);
 
    Debug("UnityPlatformInit: Running\n");
 
    up = Util_SafeCalloc(1, sizeof *up);
    up->tracker = tracker;
+   up->updateChannel = updateChannel;
 
    up->savedScreenSaverTimeout = -1;
-
-   if (!UnityUpdateThreadInit(&up->updateData)) {
-      free(up);
-      return NULL;
-   }
 
    /*
     * Because GDK filters events heavily, and we need to do a lot of low-level X work, we
@@ -197,27 +193,6 @@ UnityPlatformInit(UnityWindowTracker *tracker, // IN
          Debug("XTest extension not available.\n");
       }
    }
-
-   /*
-    * Set up a callback in the glib main loop to listen for incoming X events on the
-    * unity display connection.
-    */
-#ifdef GTK2
-   {
-      GIOChannel *unityDisplayChannel;
-      unityDisplayChannel = g_io_channel_unix_new(ConnectionNumber(up->display));
-      up->unityDisplayWatchID = g_io_add_watch(unityDisplayChannel,
-                                               G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
-                                               UnityPlatformHandleEventsGlib,
-                                               up);
-      g_io_channel_unref(unityDisplayChannel);
-   }
-#else
-   up->unityDisplayWatchID = gdk_input_add(ConnectionNumber(up->display),
-                                           GDK_INPUT_READ | GDK_INPUT_EXCEPTION,
-                                           UnityPlatformHandleEventsGdk,
-                                           up);
-#endif
 
    up->allWindows = HashTable_Alloc(128, HASH_INT_KEY, NULL);
    up->specialWindows = HashTable_Alloc(32, HASH_INT_KEY, NULL);
@@ -284,6 +259,7 @@ UnityPlatformInit(UnityWindowTracker *tracker, // IN
    INIT_ATOM(_NET_SUPPORTED);
    INIT_ATOM(_NET_FRAME_EXTENTS);
    INIT_ATOM(WM_CLASS);
+   INIT_ATOM(WM_CLIENT_LEADER);
    INIT_ATOM(WM_DELETE_WINDOW);
    INIT_ATOM(WM_ICON);
    INIT_ATOM(WM_NAME);
@@ -326,6 +302,12 @@ UnityPlatformCleanup(UnityPlatform *up) // IN
       return;
    }
 
+   /*
+    * Caller should've called Unity_Exit first.
+    */
+   ASSERT(!up->isRunning);
+   ASSERT(up->glibSource == NULL);
+
    if (up->specialWindows) {
       HashTable_Free(up->specialWindows);
       up->specialWindows = NULL;
@@ -335,21 +317,10 @@ UnityPlatformCleanup(UnityPlatform *up) // IN
       up->allWindows = NULL;
    }
 
-   if (up->unityDisplayWatchID) {
-#ifdef GTK2
-      g_source_remove(up->unityDisplayWatchID);
-#else
-      gdk_input_remove(up->unityDisplayWatchID);
-#endif
-      up->unityDisplayWatchID = 0;
-   }
-
    if (up->display) {
       XCloseDisplay(up->display);
       up->display = NULL;
    }
-
-   UnityUpdateThreadCleanup(&up->updateData);
 
    free(up->desktopInfo.guestDesktopToUnity);
    up->desktopInfo.guestDesktopToUnity = NULL;
@@ -796,8 +767,11 @@ UnityPlatformKillHelperThreads(UnityPlatform *up) // IN
    size_t numWindows;
 
    if (!up || !up->isRunning) {
+      ASSERT(up->glibSource == NULL);
       return;
    }
+
+   UnityX11EventTeardownSource(up);
 
    up->desktopInfo.numDesktops = 0; // Zero means host has not set virtual desktop config
    UnityX11RestoreSystemSettings(up);
@@ -940,6 +914,7 @@ Bool
 UnityPlatformStartHelperThreads(UnityPlatform *up) // IN
 {
    ASSERT(up);
+   ASSERT(up->glibSource == NULL);
 
    XSync(up->display, TRUE);
    up->rootWindows = UnityPlatformMakeRootWindowsObject(up);
@@ -983,6 +958,12 @@ UnityPlatformStartHelperThreads(UnityPlatform *up) // IN
       free(up->needWorkAreas);
       up->needWorkAreas = NULL;
    }
+
+   /*
+    * Set up a callback in the glib main loop to listen for incoming X events on the
+    * unity display connection.
+    */
+   UnityX11EventEstablishSource(up);
 
    return TRUE;
 }
@@ -1186,123 +1167,7 @@ UnityPlatformUpdateWindowState(UnityPlatform *up,               // IN
 /*
  *-----------------------------------------------------------------------------
  *
- * UnityPlatformSendPendingUpdates --
- *
- *      Pushes any pending window tracker updates out to the host.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-UnityPlatformSendPendingUpdates(UnityPlatform *up, // IN
-                                int flags)         // IN
-{
-
-   DynBuf_SetSize(&up->updateData.updates, up->updateData.cmdSize);
-   UnityWindowTracker_RequestUpdates(up->tracker,
-                                     flags,
-                                     &up->updateData.updates);
-   DynBuf_AppendString(&up->updateData.updates, "");
-   if (DynBuf_GetSize(&up->updateData.updates) > (up->updateData.cmdSize + 1)) {
-      UnityPlatformDumpUpdate(up);
-      if (!UnitySendUpdates(&up->updateData)) {
-         Debug("UPDATE TRANSMISSION FAILED! --------------------\n");
-      }
-   }
-}
-
-
-#ifdef GTK2
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * UnityPlatformHandleEventsGlib --
- *
- *      Lets the UnityPlatform object know that new events are available to process.
- *      This implementation is used in Gtk+ 2.0 and greater.
- *
- * Results:
- *      TRUE if we should continue to process events from the display, FALSE otherwise.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-static gboolean
-UnityPlatformHandleEventsGlib(GIOChannel *source,     // IN
-                              GIOCondition condition, // IN
-                              gpointer data)          // IN
-{
-   gboolean errorOccurred = FALSE;
-   gboolean inputAvailable = FALSE;
-
-   if (condition & (G_IO_ERR | G_IO_HUP | G_IO_NVAL)) {
-      errorOccurred = TRUE;
-   } else if (condition & G_IO_IN) {
-      inputAvailable = TRUE;
-   }
-
-   return UnityPlatformHandleEvents(errorOccurred, inputAvailable, data);
-}
-#else
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * UnityX11SignalEventsGdk --
- *
- *      Lets the UnityX11 object know that new events are available to process.
- *      This skeleton is used with Gtk+ 1.x.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      Signals the update thread.
- *
- *-----------------------------------------------------------------------------
- */
-
-static void
-UnityPlatformHandleEventsGdk(gpointer data,               // IN
-                             gint source,                 // IN
-                             GdkInputCondition condition) // IN
-{
-   gboolean errorOccurred = FALSE;
-   gboolean inputAvailable = FALSE;
-
-   if (condition & GDK_INPUT_EXCEPTION) {
-      Debug("UnityPlatformHandleEventsGdk - errorOccurred\n");
-      errorOccurred = TRUE;
-   } else if (condition & GDK_INPUT_READ) {
-      inputAvailable = TRUE;
-   }
-
-   if (!UnityPlatformHandleEvents(errorOccurred, inputAvailable, data)) {
-      UnityPlatform *up = (UnityPlatform *) data;
-
-      gdk_input_remove(up->unityDisplayWatchID);
-      up->unityDisplayWatchID = -1;
-   }
-}
-#endif
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * UnityPlatformHandleEvents --
+ * UnityX11HandleEvents --
  *
  *      Handle incoming events
  *
@@ -1315,25 +1180,15 @@ UnityPlatformHandleEventsGdk(gpointer data,               // IN
  *-----------------------------------------------------------------------------
  */
 
-static gboolean
-UnityPlatformHandleEvents(gboolean errorOccurred,  // IN
-                          gboolean inputAvailable, // IN
-                          gpointer data)           // IN
+gboolean
+UnityX11HandleEvents(gpointer data) // IN
 {
    UnityPlatform *up = (UnityPlatform *) data;
    GList *incomingEvents = NULL;
    Bool restackDetWnd = FALSE;
 
    ASSERT(up);
-
-   if (errorOccurred) {
-      /*
-       * XXX We should force an exit from unity mode here - our X connection just died.
-       */
-      return FALSE;
-   } else if (!inputAvailable) {
-      Panic("Unity event handler was invoked with no input and no error\n");
-   }
+   ASSERT(up->isRunning);
 
    Debug("Starting unity event handling\n");
    while (XEventsQueued(up->display, QueuedAfterFlush)) {
@@ -1405,7 +1260,7 @@ UnityPlatformHandleEvents(gboolean errorOccurred,  // IN
          UnityPlatformStackDnDDetWnd(up);
       }
       UnityPlatformUpdateZOrder(up);
-      UnityPlatformSendPendingUpdates(up, UNITY_UPDATE_INCREMENTAL);
+      UnityPlatformDoUpdate(up, TRUE);
    }
 
    return TRUE;
@@ -1910,44 +1765,6 @@ UnityPlatformWMProtocolSupported(UnityPlatform *up,         // IN
 
 
 /*
- *-----------------------------------------------------------------------------
- *
- * UnityPlatformDumpUpdate --
- *
- *      Prints a Unity update via debug output...
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-UnityPlatformDumpUpdate(UnityPlatform *up) // IN
-{
-   int i, len;
-   char *buf;
-
-   return;
-
-   len = up->updateData.updates.size;
-   buf = alloca(len + 1);
-   memcpy(buf, up->updateData.updates.data, len);
-   buf[len] = '\0';
-   for (i = 0 ; i < len; i++) {
-      if (buf[i] == '\0') {
-         buf[i] = '!';
-      }
-   }
-
-   Debug("Sending update: %s\n", buf);
-}
-
-
-/*
  *----------------------------------------------------------------------------
  *
  * UnityPlatformSendClientMessageFull --
@@ -2067,10 +1884,7 @@ UnityPlatformSetTopWindowGroup(UnityPlatform *up,        // IN: Platform data
                                UnityWindowId *windows,   // IN: array of window ids
                                unsigned int windowCount) // IN: # of windows in the array
 {
-   UnityPlatformWindow *upw;
-   UnityPlatformWindow *prevupw = NULL;
-   Atom data[5] = {0,0,0,0,0};
-   XWindowChanges winch;
+   Window sibling = None;
    int i;
 
    ASSERT(up);
@@ -2078,13 +1892,12 @@ UnityPlatformSetTopWindowGroup(UnityPlatform *up,        // IN: Platform data
    ASSERT(windowCount);
 
    /*
-    * Restack everything top to bottom.
+    * Restack everything bottom to top.
     */
-   data[0] = 2; // Magic source indicator to give full control
-   winch.stack_mode = data[2] = Above; // First window will go at the top of everything
    for (i = 0; i < windowCount; i++) {
-      unsigned int valueMask = CWStackMode;
+      UnityPlatformWindow *upw;
       Window curWindow;
+      Atom data[5] = {0,0,0,0,0};
 
       upw = UPWindow_Lookup(up, windows[i]);
       if (!upw) {
@@ -2094,51 +1907,48 @@ UnityPlatformSetTopWindowGroup(UnityPlatform *up,        // IN: Platform data
       curWindow = upw->clientWindow ? upw->clientWindow : upw->toplevelWindow;
       UPWindow_SetUserTime(up, upw);
 
-      if (i == 0) {
-         if (UnityPlatformWMProtocolSupported(up, UNITY_X11_WM__NET_ACTIVE_WINDOW)) {
-            uint32 activeData[5] = {0,0,0,0,0};
-            Window focusWindow;
-            int revertState;
-
-            XGetInputFocus(up->display, &focusWindow, &revertState);
-            activeData[0] = 2; // Source indicator
-            activeData[1] = UnityPlatformGetServerTime(up);
-            activeData[2] = focusWindow;
-            UnityPlatformSendClientMessage(up, up->rootWindows->windows[0],
-                                           curWindow, up->atoms._NET_ACTIVE_WINDOW,
-                                           32, 5, data);
-         } else {
-            XSetInputFocus(up->display, curWindow, RevertToParent,
-                           UnityPlatformGetServerTime(up));
-         }
-      }
-
-      if (prevupw) {
-         valueMask |= CWSibling;
-         if (prevupw->clientWindow) {
-            winch.sibling = data[1] = prevupw->clientWindow;
-         } else {
-            winch.sibling = data[1] = prevupw->toplevelWindow;
-         }
-      } else {
-         winch.sibling = data[1] = None;
-      }
-
       if (UnityPlatformWMProtocolSupported(up, UNITY_X11_WM__NET_RESTACK_WINDOW)) {
+         data[0] = 2;           // Magic source indicator to give full control
+         data[1] = sibling;
+         data[2] = Above;
+
          UnityPlatformSendClientMessage(up, up->rootWindows->windows[0],
                                         curWindow,
                                         up->atoms._NET_RESTACK_WINDOW,
                                         32, 5, data);
       } else {
-         XReconfigureWMWindow(up->display,
-                              curWindow,
-                              0, valueMask, &winch);
+         XWindowChanges winch = {
+            .stack_mode = Above,
+            .sibling = sibling
+         };
+         unsigned int valueMask = CWStackMode;
+
+         if (sibling != None) {
+            valueMask |= CWSibling;
+         }
+
+         /*
+          * As of writing, Metacity doesn't support _NET_RESTACK_WINDOW and
+          * will block our attempt to raise a window unless it's active, so
+          * we activate the window first.
+          */
+         if (UnityPlatformWMProtocolSupported(up, UNITY_X11_WM__NET_ACTIVE_WINDOW)) {
+            data[0] = 2;           // Magic source indicator to give full control
+            data[1] = UnityPlatformGetServerTime(up);
+            data[2] = None;
+            UnityPlatformSendClientMessage(up, up->rootWindows->windows[0],
+                                           curWindow,
+                                           up->atoms._NET_ACTIVE_WINDOW,
+                                           32, 5, data);
+         }
+
+         XReconfigureWMWindow(up->display, upw->toplevelWindow, 0, valueMask, &winch);
       }
 
-      prevupw = upw;
-      data[2] = Below; // We want all other windows stacked below the new top window
-      winch.stack_mode = Below;
+      sibling = upw->toplevelWindow;
    }
+
+   XSync(up->display, False);
 
    return TRUE;
 }
@@ -2197,6 +2007,11 @@ static void
 UnityPlatformStackDnDDetWnd(UnityPlatform *up)
 {
    static const Atom onDesktop[] = { 0xFFFFFFFF, 0, 0, 0, 0 };
+
+   if (!up->dnd.setMode || !up->dnd.detWnd) {
+      Debug("%s: DnD not yet initialized.\n", __func__);
+      return;
+   }
 
    if (!up->desktopWindow) {
       Debug("Desktop Window not cached. Tracker isn't populated.\n");
@@ -2983,7 +2798,7 @@ UnityPlatformSetDesktopConfig(UnityPlatform *up,                             // 
  *
  * UnityPlatformSetInitialDesktop --
  *
- *     Set a desktop specified by the desktop id as the initial state. 
+ *     Set a desktop specified by the desktop id as the initial state.
  *
  * Results:
  *     Returns TRUE if successful, and FALSE otherwise.
@@ -3027,6 +2842,12 @@ UnityPlatformSetDesktopActive(UnityPlatform *up,         // IN
 {
    ASSERT(up);
 
+   /*
+    * Update the uwt with the new active desktop info.
+    */
+
+   UnityWindowTracker_ChangeActiveDesktop(up->tracker, desktopId);
+
    if (desktopId >= up->desktopInfo.numDesktops) {
       return FALSE;
    }
@@ -3043,3 +2864,251 @@ UnityPlatformSetDesktopActive(UnityPlatform *up,         // IN
 
    return TRUE;
 }
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UnityPlatformDoUpdate --
+ *
+ *      This function is used to (possibly asynchronously) collect Unity window
+ *      updates and send them to the host via the RPCI update channel.
+ *
+ * Results:
+ *      Updates will be collected.  Updates may be sent.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+UnityPlatformDoUpdate(UnityPlatform *up,        // IN:
+                      Bool incremental)         // IN: Incremental vs. full update
+{
+   ASSERT(up);
+   ASSERT(up->updateChannel);
+
+   DynBuf_SetSize(&up->updateChannel->updates, up->updateChannel->cmdSize);
+
+   if (!incremental) {
+      UnityPlatformUpdateWindowState(up, up->tracker);
+   }
+
+   UnityWindowTracker_RequestUpdates(up->tracker,
+                                     incremental ? UNITY_UPDATE_INCREMENTAL : 0,
+                                     &up->updateChannel->updates);
+
+   DynBuf_AppendString(&up->updateChannel->updates, "");
+
+   if (DynBuf_GetSize(&up->updateChannel->updates) > (up->updateChannel->cmdSize + 1)) {
+      if (!UnitySendUpdates(up->updateChannel)) {
+         Debug("UPDATE TRANSMISSION FAILED! --------------------\n");
+      }
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * Unity_UnityToLocalPoint --
+ *
+ *      Initializes localPt structure based on the input unityPt structure.
+ *      Translate point from Unity coordinate to local coordinate.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *----------------------------------------------------------------------------
+ */
+
+void
+Unity_UnityToLocalPoint(UnityPoint *localPt, // IN/OUT
+                        UnityPoint *unityPt) // IN
+{
+   ASSERT(localPt);
+   ASSERT(unityPt);
+   localPt->x = unityPt->x;
+   localPt->y = unityPt->y;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * Unity_LocalToUnityPoint --
+ *
+ *      Initializes unityPt structure based on the input localPt structure.
+ *      Translate point from local coordinate to Unity coordinate.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *----------------------------------------------------------------------------
+ */
+
+void
+Unity_LocalToUnityPoint(UnityPoint *unityPt, // IN/OUT
+                        UnityPoint *localPt) // IN
+{
+   ASSERT(unityPt);
+   ASSERT(localPt);
+   unityPt->x = localPt->x;
+   unityPt->y = localPt->y;
+}
+
+
+/*
+ ******************************************************************************
+ * UnityPlatformStickWindow --                                           */ /**
+ *
+ * @brief "Stick" a window to the desktop.
+ *
+ * @param[in] up       Platform context.
+ * @param[in] windowId Operand window.
+ *
+ * @retval TRUE  Success.
+ * @retval FALSE Failure.
+ *
+ ******************************************************************************
+ */
+
+Bool
+UnityPlatformStickWindow(UnityPlatform *up,      // IN
+                         UnityWindowId windowId) // IN
+{
+   return SetWindowStickiness(up, windowId, TRUE);
+}
+
+
+/*
+ ******************************************************************************
+ * UnityPlatformUnstickWindow --                                         */ /**
+ *
+ * @brief "Unstick" a window from the desktop.
+ *
+ * @param[in] up       Platform context.
+ * @param[in] windowId Operand window.
+ *
+ * @retval TRUE  Success.
+ * @retval FALSE Failure.
+ *
+ ******************************************************************************
+ */
+
+Bool
+UnityPlatformUnstickWindow(UnityPlatform *up,      // IN
+                           UnityWindowId windowId) // IN
+{
+   return SetWindowStickiness(up, windowId, FALSE);
+}
+
+
+/*
+ ******************************************************************************
+ * Begin file-scope functions.
+ *
+ */
+
+
+/*
+ ******************************************************************************
+ * GetRelevantWMWindow --                                                */ /**
+ *
+ * @brief Given a UnityWindowId, return the X11 window relevant to WM operations.
+ *
+ * Starting with a Unity window, look for and return its associated
+ * clientWindow.  If there is no clientWindow, then return the top-level window.
+ *
+ * @param[in]  up        Unity/X11 context.
+ * @param[in]  windowId  Window search for.
+ * @param[out] wmWindow  Set to the relevant X11 window.
+ *
+ * @todo Consider exporting this for use in unityPlatformX11Window.c.
+ *
+ * @retval TRUE  Relevant window found and recorded in @a wmWindow.
+ * @retval FALSE Unable to find @a windowId.
+ *
+ ******************************************************************************
+ */
+
+static Bool
+GetRelevantWMWindow(UnityPlatform *up,          // IN
+                    UnityWindowId windowId,     // IN
+                    Window *wmWindow)           // OUT
+{
+   UnityPlatformWindow *upw;
+
+   ASSERT(up);
+
+   upw = UPWindow_Lookup(up, windowId);
+   if (!upw) {
+      return FALSE;
+   }
+
+   *wmWindow = upw->clientWindow ? upw->clientWindow : upw->toplevelWindow;
+   return TRUE;
+}
+
+
+/*
+ ******************************************************************************
+ * SetWindowStickiness --                                                */ /**
+ *
+ * @brief Sets or clears a window's sticky state.
+ *
+ * @param[in] up         Unity/X11 context.
+ * @param[in] windowId   Operand window.
+ * @param[in] wantSticky Set to TRUE to stick a window, FALSE to unstick it.
+ *
+ * @retval TRUE  Request successfully sent to X server.
+ * @retval FALSE Request failed.
+ *
+ ******************************************************************************
+ */
+
+static Bool
+SetWindowStickiness(UnityPlatform *up,          // IN
+                    UnityWindowId windowId,     // IN
+                    Bool wantSticky)            // IN
+{
+   GdkWindow *gdkWindow;
+   Window curWindow;
+
+   ASSERT(up);
+
+   if (!GetRelevantWMWindow(up, windowId, &curWindow)) {
+      Debug("%s: Lookup against window %#x failed.\n", __func__, windowId);
+      return FALSE;
+   }
+
+   gdkWindow = gdk_window_foreign_new(curWindow);
+   if (gdkWindow == NULL) {
+      Debug("%s: Unable to create Gdk window?! (%#x)\n", __func__, windowId);
+      return FALSE;
+   }
+
+   if (wantSticky) {
+      gdk_window_stick(gdkWindow);
+   } else {
+      gdk_window_unstick(gdkWindow);
+   }
+
+   gdk_flush();
+   g_object_unref(G_OBJECT(gdkWindow));
+
+   return TRUE;
+}
+
+
+/*
+ *
+ * End file-scope functions.
+ ******************************************************************************
+ */

@@ -33,6 +33,7 @@
 #  include "netutil.h"
 #endif
 
+#include "vm_assert.h"
 #include "vmtools.h"
 #include "wiper.h"
 
@@ -41,8 +42,6 @@
 #include "vmtoolslib_version.h"
 VM_EMBED_VERSION(VMTOOLSLIB_VERSION_STRING);
 #endif
-
-extern void VMTools_InitLogging(void);
 
 
 /**
@@ -87,16 +86,16 @@ VMToolsDllInit(void *lib)
 #if defined(_WIN32)
    WiperInitData wiperData;
    CoreDump_SetUnhandledExceptionFilter();
-   VMTools_InitLogging();
+   VMTools_ResetLogging(FALSE);
    wiperData.resourceModule = lib;
    success = (NetUtil_LoadIpHlpApiDll() == ERROR_SUCCESS);
-   g_assert(success);
-   success = Wiper_Init(&wiperData.resourceModule);
-   g_assert(success);
+   ASSERT(success);
+   success = Wiper_Init(&wiperData);
+   ASSERT(success);
 #else
-   VMTools_InitLogging();
+   VMTools_ResetLogging(FALSE);
    success = Wiper_Init(NULL);
-   g_assert(success);
+   ASSERT(success);
 #endif
 }
 
@@ -114,6 +113,7 @@ VMToolsDllFini(void)
 #if defined(_WIN32)
    NetUtil_FreeIpHlpApiDll();
 #endif
+   VMTools_ResetLogging(TRUE);
 }
 
 

@@ -37,6 +37,9 @@
 EXTERN Bool ImageUtil_ReadPNG(ImageInfo *image,
                               ConstUnicode pathName,
                               int pngReadFlags);
+EXTERN Bool ImageUtil_WritePNG(const ImageInfo *image,
+                               ConstUnicode pathName,
+                               const ImagePngWriteOptions *options);
 
 EXTERN Bool ImageUtil_WriteImage(const ImageInfo *image,
                                  ConstUnicode pathName,
@@ -46,20 +49,14 @@ EXTERN Bool ImageUtil_ReadPNGBuffer(ImageInfo *image,
                                     const unsigned char *imageData,
                                     size_t dataLen,
                                     int pngReadFlags);
-EXTERN Bool ImageUtil_ConstructPNGBuffer(const ImageInfo *image, DynBuf *imageData);
-EXTERN Bool ImageUtil_ConstructPNGBufferEx(const ImageInfo *image,
-                                           const ImagePngWriteOptions *options,
-                                           DynBuf *imageData);
+EXTERN Bool ImageUtil_ConstructPNGBuffer(const ImageInfo *image,
+                                         const ImagePngWriteOptions *options,
+                                         DynBuf *imageData);
 EXTERN Bool ImageUtil_ConstructBMPBuffer(const ImageInfo *image, DynBuf *imageData);
-EXTERN Bool ImageUtil_ConstructBuffer(const ImageInfo *image, ImageType imageType,
-                                      DynBuf *imageData);
+
 EXTERN void ImageUtil_FreeImageData(ImageInfo *image);
 
-EXTERN Bool ImageUtil_CopyImageRect(const ImageInfo *srcImage,
-                                    uint32 x,
-                                    uint32 y,
-                                    uint32 width,
-                                    uint32 height,
-                                    ImageInfo *dstImage);
+EXTERN Bool ImageUtil_Combine(const ImageInfo *images, const VMPoint *origins,
+                              size_t n, ImageInfo *combined);
 
 #endif // _IMAGEUTIL_H_

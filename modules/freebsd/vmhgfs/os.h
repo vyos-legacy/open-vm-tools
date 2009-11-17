@@ -20,21 +20,23 @@
 /*
  * os.h --
  *
- *   Implementation OS X / FreeBSD independent memory allocation and
+ *   Wrappers for OS specific functions that are different between Mac OS and FreeBsd.
+ *   1. Implementation Mac OS / FreeBSD independent memory allocation and
  *   thread synchronization routines.
+ *   2. Interaction with memory manager/pager.
  */
 
 #ifndef _OS_H_
 #define _OS_H_
 
-#if defined(__FreeBSD__)
+#if defined __FreeBSD__
 #  include <sys/param.h>          // for <everything>
 #  include <sys/proc.h>
 #  include <sys/condvar.h>
 #  include <sys/lock.h>           // for struct mtx
 #  include <sys/mutex.h>          // for struct mtx
 #  include <sys/sx.h>
-#elif defined(__APPLE__)
+#elif defined __APPLE__
 #  include <kern/thread.h>
 #  include <kern/locks.h>
 #endif
@@ -42,17 +44,17 @@
 #include <sys/malloc.h>
 #include "vm_basic_types.h"
 
-#if defined(__FreeBSD__)
+#if defined __FreeBSD__
    typedef struct proc *OS_THREAD_T;
    typedef struct mtx OS_MUTEX_T;
    typedef struct sx OS_RWLOCK_T;
    typedef struct cv OS_CV_T;
-#elif defined(__APPLE__)
+#elif defined __APPLE__
    typedef thread_t OS_THREAD_T;
    typedef lck_mtx_t OS_MUTEX_T;
    typedef lck_rw_t OS_RWLOCK_T;
    /*
-    * In OS X, a kernel thread waits on a 32-bit integer. To avoid collision,
+    * In Mac OS, a kernel thread waits on a 32-bit integer. To avoid collision,
     * Apple recommends that threads wait on the address of an object.
     */
    typedef void *OS_CV_T;
@@ -65,9 +67,9 @@ int os_init(void);
 void os_cleanup(void);
 
 /*
- * There does not seem to be a public zone allocator exposed in OS X. We create
+ * There does not seem to be a public zone allocator exposed in Mac OS. We create
  * a zone wrapper around the FreeBSD zone allocator so that we can keep the
- * FreeBSD zone allocator and support OS X at the same time.
+ * FreeBSD zone allocator and support Mac OS at the same time.
  */
 
 struct os_zone_struct;
@@ -76,7 +78,7 @@ typedef struct os_zone_struct OS_ZONE_T;
 /*
  * Provide zone allocator function prototypes with the same signature as
  * the ones used in the FreeBSD kernel. This way they can be used both with
- * the FreeBSD uma allocator and the custom mac os allocation functions.
+ * the FreeBSD uma allocator and the custom Mac OS allocation functions.
  */
 typedef int (*os_zone_ctor)(void *mem, int size, void *arg, int flags);
 typedef void (*os_zone_dtor)(void *mem, int size, void *arg);
@@ -126,5 +128,8 @@ extern int os_path_to_utf8_precomposed(const char *bufIn, uint32 bufInSize, char
                                        uint32 bufOutSize);
 extern Bool os_utf8_conversion_needed(void);
 
+// Memory manager/pager functions
+void os_SetSize(struct vnode *vp, off_t newSize);
+int os_FlushRange(struct vnode *vp, off_t start, uint32_t length);
 
 #endif // ifndef _OS_H_

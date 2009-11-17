@@ -27,7 +27,11 @@
 
 #include <linux/errno.h>
 #include <linux/pagemap.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27)
+#include <linux/namei.h>
+#endif
 
+#include "compat_cred.h"
 #include "compat_fs.h"
 #include "compat_highmem.h"
 #include "compat_kernel.h"
@@ -45,26 +49,6 @@
 #include "request.h"
 #include "fsutil.h"
 #include "vm_assert.h"
-
-/*
- * The inode_operations structure changed in 2.5.18:
- * before:
- * . 'getattr' was defined but unused
- * . 'revalidate' was defined and used
- * after:
- * 1) 'getattr' changed and became used
- * 2) 'revalidate' was removed
- *
- * Note: Mandrake backported 1) but not 2) starting with 2.4.8-26mdk
- *
- *   --hpreg
- */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 18)
-#   define HGFS_GETATTR_ONLY 1
-#else
-#   undef HGFS_GETATTR_ONLY
-#endif
-
 
 /* Private functions. */
 static int HgfsDelete(struct inode *dir,
@@ -88,7 +72,6 @@ static int HgfsPackSymlinkCreateRequest(struct dentry *dentry,
                                         HgfsReq *req);
 
 /* HGFS inode operations. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 75)
 static int HgfsCreate(struct inode *dir,
                       struct dentry *dentry,
                       int mode,
@@ -96,13 +79,6 @@ static int HgfsCreate(struct inode *dir,
 static struct dentry *HgfsLookup(struct inode *dir,
                                  struct dentry *dentry,
                                  struct nameidata *nd);
-#else
-static int HgfsCreate(struct inode *dir,
-                      struct dentry *dentry,
-                      int mode);
-static struct dentry *HgfsLookup(struct inode *dir,
-                                 struct dentry *dentry);
-#endif
 static int HgfsMkdir(struct inode *dir,
                      struct dentry *dentry,
                      int mode);
@@ -117,11 +93,17 @@ static int HgfsRename(struct inode *oldDir,
 static int HgfsSymlink(struct inode *dir,
                        struct dentry *dentry,
                        const char *symname);
-#ifdef HGFS_GETATTR_ONLY
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27)
+static int HgfsPermission(struct inode *inode,
+                          int mask,
+                          struct nameidata *nameidata);
+#else
+static int HgfsPermission(struct inode *inode,
+                          int mask);
+#endif
 static int HgfsGetattr(struct vfsmount *mnt,
                        struct dentry *dentry,
                        struct kstat *stat);
-#endif
 
 #define HGFS_CREATE_DIR_MASK (HGFS_CREATE_DIR_VALID_FILE_NAME | \
                               HGFS_CREATE_DIR_VALID_SPECIAL_PERMS | \
@@ -142,28 +124,20 @@ struct inode_operations HgfsDirInodeOperations = {
    .unlink      = HgfsUnlink,
    .rename      = HgfsRename,
    .symlink     = HgfsSymlink,
+   .permission  = HgfsPermission,
    .setattr     = HgfsSetattr,
 
-#ifdef HGFS_GETATTR_ONLY
    /* Optional */
    .getattr     = HgfsGetattr,
-#else
-   /* Optional */
-   .revalidate  = HgfsRevalidate,
-#endif
 };
 
 /* HGFS inode operations structure for files. */
 struct inode_operations HgfsFileInodeOperations = {
+   .permission  = HgfsPermission,
    .setattr     = HgfsSetattr,
 
-#ifdef HGFS_GETATTR_ONLY
    /* Optional */
    .getattr     = HgfsGetattr,
-#else
-   /* Optional */
-   .revalidate  = HgfsRevalidate,
-#endif
 };
 
 /*
@@ -228,9 +202,9 @@ HgfsDelete(struct inode *dir,      // IN: Parent dir of file/dir to delete
 
   retry:
    if (op == HGFS_OP_DELETE_FILE) {
-      opUsed = atomic_read(&hgfsVersionDeleteFile);
+      opUsed = hgfsVersionDeleteFile;
    } else {
-      opUsed = atomic_read(&hgfsVersionDeleteDir);
+      opUsed = hgfsVersionDeleteDir;
    }
 
    if (opUsed == HGFS_OP_DELETE_FILE_V3 ||
@@ -345,12 +319,12 @@ HgfsDelete(struct inode *dir,      // IN: Parent dir of file/dir to delete
          if (opUsed == HGFS_OP_DELETE_DIR_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsDelete: Version 3 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionDeleteDir, HGFS_OP_DELETE_DIR);
+            hgfsVersionDeleteDir = HGFS_OP_DELETE_DIR;
             goto retry;
          } else if (opUsed == HGFS_OP_DELETE_FILE_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsDelete: Version 3 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionDeleteFile, HGFS_OP_DELETE_FILE);
+            hgfsVersionDeleteFile = HGFS_OP_DELETE_FILE;
             goto retry;
          }
 
@@ -790,7 +764,7 @@ HgfsPackCreateDirRequest(struct dentry *dentry, // IN: Directory to create
       requestV3->ownerPerms = (mode & S_IRWXU) >> 6;
       requestV3->groupPerms = (mode & S_IRWXG) >> 3;
       requestV3->otherPerms = (mode & S_IRWXO);
-      requestV3->reserved = 0;
+      requestV3->fileAttr = 0;
       break;
    }
    case HGFS_OP_CREATE_DIR_V2: {
@@ -970,18 +944,11 @@ HgfsTruncatePages(struct inode *inode, // IN: Inode whose page to truncate
  *----------------------------------------------------------------------
  */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 75)
 static int
 HgfsCreate(struct inode *dir,     // IN: Parent dir to create in
            struct dentry *dentry, // IN: Dentry containing name to create
            int mode,              // IN: Mode of file to be created
 	   struct nameidata *nd)  // IN: Intent, vfsmount, ...
-#else
-static int
-HgfsCreate(struct inode *dir,     // IN: Parent dir to create in
-           struct dentry *dentry, // IN: Dentry containing name to create
-           int mode)              // IN: Mode of file to be created
-#endif
 {
    HgfsAttrInfo attr;
    int result;
@@ -1051,16 +1018,10 @@ HgfsCreate(struct inode *dir,     // IN: Parent dir to create in
  *----------------------------------------------------------------------
  */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 75)
 static struct dentry *
 HgfsLookup(struct inode *dir,      // IN: Inode of parent directory
            struct dentry *dentry,  // IN: Dentry containing name to look up
-	   struct nameidata *nd)   // IN: Intent, vfsmount, ...
-#else
-static struct dentry *
-HgfsLookup(struct inode *dir,      // IN: Inode of parent directory
-           struct dentry *dentry)  // IN: Dentry containing name to look up
-#endif
+           struct nameidata *nd)   // IN: Intent, vfsmount, ...
 {
    HgfsAttrInfo attr;
    struct inode *inode;
@@ -1082,8 +1043,7 @@ HgfsLookup(struct inode *dir,      // IN: Inode of parent directory
 
    /* Do a getattr on the file to see if it exists on the server. */
    inode = NULL;
-   attr.fileName = NULL;
-   error = HgfsPrivateGetattr(dentry, &attr);
+   error = HgfsPrivateGetattr(dentry, &attr, NULL);
    if (!error) {
       /* File exists on the server. */
 
@@ -1092,7 +1052,6 @@ HgfsLookup(struct inode *dir,      // IN: Inode of parent directory
        * the server.
        */
       inode = HgfsIget(dir->i_sb, 0, &attr);
-      kfree(attr.fileName);
       if (!inode) {
          error = -ENOMEM;
          LOG(4, (KERN_DEBUG "VMware hgfs: HgfsLookup: out of memory getting "
@@ -1164,7 +1123,7 @@ HgfsMkdir(struct inode *dir,     // IN: Inode of parent directory
    }
 
   retry:
-   opUsed = atomic_read(&hgfsVersionCreateDir);
+   opUsed = hgfsVersionCreateDir;
    result = HgfsPackCreateDirRequest(dentry, mode, opUsed, req);
    if (result != 0) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsMkdir: error packing request\n"));
@@ -1194,8 +1153,7 @@ HgfsMkdir(struct inode *dir,     // IN: Inode of parent directory
              * a Linux machine and as root, but we might as well give it
              * a go.
              */
-	     HgfsSetUidGid(dir, dentry, 
-			   compat_current_fsuid(), compat_current_fsgid());
+            HgfsSetUidGid(dir, dentry, current_fsuid(), current_fsgid());
          }
 
          /*
@@ -1208,12 +1166,12 @@ HgfsMkdir(struct inode *dir,     // IN: Inode of parent directory
          if (opUsed == HGFS_OP_CREATE_DIR_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsMkdir: Version 3 not "
                     "supported. Falling back to version 2.\n"));
-            atomic_set(&hgfsVersionCreateDir, HGFS_OP_CREATE_DIR_V2);
+            hgfsVersionCreateDir = HGFS_OP_CREATE_DIR_V2;
             goto retry;
          } else if (opUsed == HGFS_OP_CREATE_DIR_V2) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsMkdir: Version 2 not "
                     "supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionCreateDir, HGFS_OP_CREATE_DIR);
+            hgfsVersionCreateDir = HGFS_OP_CREATE_DIR;
             goto retry;
          }
 
@@ -1350,6 +1308,27 @@ HgfsRename(struct inode *oldDir,      // IN: Inode of original directory
       goto out;
    }
 
+   if (oldDentry->d_inode && newDentry->d_inode) {
+      HgfsInodeInfo *oldIinfo;
+      HgfsInodeInfo *newIinfo;
+      /*
+       * Don't do rename if the source and target are identical (from the
+       * viewpoint of the host). It is possible that multiple guest inodes
+       * point to the same host inode under the case that both one folder
+       * and its subfolder are mapped as hgfs sharese. Please also see the
+       * comments at fsutil.c/HgfsIget.
+       */
+      oldIinfo = INODE_GET_II_P(oldDentry->d_inode);
+      newIinfo = INODE_GET_II_P(newDentry->d_inode);
+      if (oldIinfo->hostFileId !=0 && newIinfo->hostFileId != 0 &&
+          oldIinfo->hostFileId == newIinfo->hostFileId) {
+         LOG(4, ("VMware hgfs: %s: source and target are the same file.\n",
+                 __func__));
+         result = -EEXIST;
+         goto out;
+      }
+   }
+
    req = HgfsGetNewRequest();
    if (!req) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsRename: out of memory while "
@@ -1359,7 +1338,7 @@ HgfsRename(struct inode *oldDir,      // IN: Inode of original directory
    }
 
 retry:
-   opUsed = atomic_read(&hgfsVersionRename);
+   opUsed = hgfsVersionRename;
    if (opUsed == HGFS_OP_RENAME_V3) {
       HgfsRequestRenameV3 *request = (HgfsRequestRenameV3 *)HGFS_REQ_PAYLOAD_V3(req);
       HgfsRequest *header = (HgfsRequest *)HGFS_REQ_PAYLOAD(req);
@@ -1467,7 +1446,7 @@ retry:
       if (result == -EPROTO) {
          /* Retry with older version(s). Set globally. */
          if (opUsed == HGFS_OP_RENAME_V3) {
-            atomic_set(&hgfsVersionRename, HGFS_OP_RENAME);
+            hgfsVersionRename = HGFS_OP_RENAME;
             goto retry;
          } else {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsRename: server "
@@ -1630,8 +1609,8 @@ HgfsPackSymlinkCreateRequest(struct dentry *dentry,   // IN: File pointer for th
    /* Convert target name to CPName-lite format. */
    CPNameLite_ConvertTo(targetName, targetNameBytes - 1, '/');
 
-   *targetNameLength = result;
-   req->payloadSize += result;
+   *targetNameLength = targetNameBytes - 1;
+   req->payloadSize += targetNameBytes - 1;
 
    return 0;
 }
@@ -1677,7 +1656,7 @@ HgfsSymlink(struct inode *dir,     // IN: Inode of parent directory
    }
 
   retry:
-   opUsed = atomic_read(&hgfsVersionCreateSymlink);
+   opUsed = hgfsVersionCreateSymlink;
    result = HgfsPackSymlinkCreateRequest(dentry, symname, opUsed, req);
    if (result != 0) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsSymlink: error packing request\n"));
@@ -1698,7 +1677,7 @@ HgfsSymlink(struct inode *dir,     // IN: Inode of parent directory
          if (opUsed == HGFS_OP_CREATE_SYMLINK_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsSymlink: Version 3 "
                     "not supported. Falling back to version 2.\n"));
-            atomic_set(&hgfsVersionCreateSymlink, HGFS_OP_CREATE_SYMLINK);
+            hgfsVersionCreateSymlink = HGFS_OP_CREATE_SYMLINK;
             goto retry;
          } else {
             LOG(6, (KERN_DEBUG "VMware hgfs: HgfsSymlink: symlink was not "
@@ -1722,7 +1701,107 @@ out:
 }
 
 
-#ifdef HGFS_GETATTR_ONLY
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsAccessInt --
+ *
+ *      Check to ensure the user has the specified type of access to the file.
+ *
+ * Results:
+ *      Returns 0 if access is allowed and a non-zero error code otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+HgfsAccessInt(struct dentry *dentry, // IN: dentry to check access for
+              int mask)              // IN: access mode requested.
+{
+
+   HgfsAttrInfo attr;
+   int ret;
+
+   if (!dentry) {
+      return 0;
+   }
+   ret = HgfsPrivateGetattr(dentry, &attr, NULL);
+   if (ret == 0) {
+      uint32 effectivePermissions;
+
+      if (attr.mask & HGFS_ATTR_VALID_EFFECTIVE_PERMS) {
+         effectivePermissions = attr.effectivePerms;
+      } else {
+         /*
+          * If the server did not return actual effective permissions then
+          * need to calculate ourselves. However we should avoid unnecessary
+          * denial of access so perform optimistic permissions calculation.
+          * It is safe since host enforces necessary restrictions regardless of
+          * the client's decisions.
+          */
+         effectivePermissions =
+            attr.ownerPerms | attr.groupPerms | attr.otherPerms;
+      }
+
+      if ((effectivePermissions & mask) != mask) {
+         ret = -EPERM;
+      }
+      LOG(8, ("VMware Hgfs: %s: effectivePermissions: %d, ret: %d\n",
+              __func__, effectivePermissions, ret));
+   } else {
+      LOG(4, ("VMware Hgfs: %s: HgfsPrivateGetattr failed.\n", __func__));
+   }
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HgfsPermission --
+ *
+ *    Check for access rights on Hgfs. Called from VFS layer for each
+ *    file access.
+ *
+ * Results:
+ *    Returns zero on success, or a negative error on failure.
+ *
+ * Side effects:
+ *    None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static int
+HgfsPermission(struct inode *inode,
+               int mask
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27)
+               , struct nameidata *nd
+#endif
+               )
+{
+   LOG(8, ("VMware hgfs: %s: inode->mode: %8x mask: %8x\n", __func__,
+           inode->i_mode, mask));
+   /*
+    * For sys_access, we go to the host for permission checking;
+    * otherwise return 0.
+    */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27)
+   if (nd != NULL && (nd->flags & LOOKUP_ACCESS)) { /* For sys_access. */
+#else
+   if (mask & MAY_ACCESS) { /* For sys_access. */
+#endif
+      struct dentry *dentry = list_entry(inode->i_dentry.next,
+                                         struct dentry, d_alias);
+      return HgfsAccessInt(dentry, mask & (MAY_READ | MAY_WRITE | MAY_EXEC));
+   }
+   return 0;
+}
+
+
 /*
  *-----------------------------------------------------------------------------
  *
@@ -1762,7 +1841,6 @@ HgfsGetattr(struct vfsmount *mnt,  // Unused
 
    return 0;
 }
-#endif
 
 /*
  * Public function implementations.
@@ -1813,7 +1891,7 @@ HgfsSetattr(struct dentry *dentry,  // IN: File to set attributes of
 
   retry:
    /* Fill out the request packet. */
-   opUsed = atomic_read(&hgfsVersionSetattr);
+   opUsed = hgfsVersionSetattr;
    result = HgfsPackSetattrRequest(iattr, dentry, allowHandleReuse,
                                    opUsed, req, &changed);
    if (result != 0 || !changed) {
@@ -1823,9 +1901,9 @@ HgfsSetattr(struct dentry *dentry,  // IN: File to set attributes of
 
    /*
     * Flush all dirty pages prior to sending the request if we're going to
-    * modify the file size.
+    * modify the file size or change the last write time.
     */
-   if (iattr->ia_valid & ATTR_SIZE) {
+   if (iattr->ia_valid & ATTR_SIZE || iattr->ia_valid & ATTR_MTIME) {
       compat_filemap_write_and_wait(dentry->d_inode->i_mapping);
    }
 
@@ -1890,12 +1968,12 @@ HgfsSetattr(struct dentry *dentry,  // IN: File to set attributes of
          if (opUsed == HGFS_OP_SETATTR_V3) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsSetattr: Version 3 "
                     "not supported. Falling back to version 2.\n"));
-            atomic_set(&hgfsVersionSetattr, HGFS_OP_SETATTR_V2);
+            hgfsVersionSetattr = HGFS_OP_SETATTR_V2;
             goto retry;
          } else if (opUsed == HGFS_OP_SETATTR_V2) {
             LOG(4, (KERN_DEBUG "VMware hgfs: HgfsSetattr: Version 2 "
                     "not supported. Falling back to version 1.\n"));
-            atomic_set(&hgfsVersionSetattr, HGFS_OP_SETATTR);
+            hgfsVersionSetattr = HGFS_OP_SETATTR;
             goto retry;
          }
 
@@ -1944,7 +2022,6 @@ out:
 int
 HgfsRevalidate(struct dentry *dentry)  // IN: Dentry to revalidate
 {
-   HgfsAttrInfo attr;
    int error = 0;
    HgfsSuperInfo *si;
    unsigned long age;
@@ -1962,6 +2039,7 @@ HgfsRevalidate(struct dentry *dentry)  // IN: Dentry to revalidate
 
    age = jiffies - dentry->d_time;
    if (age > si->ttl) {
+      HgfsAttrInfo attr;
       LOG(6, (KERN_DEBUG "VMware hgfs: HgfsRevalidate: dentry is too old, "
               "getting new attributes\n"));
       /*
@@ -1969,14 +2047,28 @@ HgfsRevalidate(struct dentry *dentry)  // IN: Dentry to revalidate
        * be current with our view of the file.
        */
       compat_filemap_write_and_wait(dentry->d_inode->i_mapping);
-      attr.fileName = NULL;
-      error = HgfsPrivateGetattr(dentry,
-                                 &attr);
+      error = HgfsPrivateGetattr(dentry, &attr, NULL);
       if (!error) {
-         /* No error, so update inode's attributes and reset the age. */
+         /*
+          * If server provides file ID, we need to check whether it has changed
+          * since last revalidation. There might be a case that at server side
+          * the same file name has been used for other file during the period.
+          */
+         if (attr.mask & HGFS_ATTR_VALID_FILEID) {
+            HgfsInodeInfo *iinfo = INODE_GET_II_P(dentry->d_inode);
+            if (iinfo->hostFileId == 0) {
+               /* It should not happen, just in case. */
+               iinfo->hostFileId = attr.hostFileId;
+            } else if (iinfo->hostFileId != attr.hostFileId) {
+               LOG(4, ("VMware hgfs: %s: host file id mismatch. Expected "
+                       "%"FMT64"u, got %"FMT64"u.\n", __func__,
+                       iinfo->hostFileId, attr.hostFileId));
+               return -EINVAL;
+            }
+         }
+         /* Update inode's attributes and reset the age. */
          HgfsChangeFileAttributes(dentry->d_inode, &attr);
          HgfsDentryAgeReset(dentry);
-         kfree(attr.fileName);
       }
    } else {
       LOG(6, (KERN_DEBUG "VMware hgfs: HgfsRevalidate: using cached dentry "

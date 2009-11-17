@@ -1,0 +1,46 @@
+.TH VMMEMCTL 9 "2008\-07\-04" "2008.07.01\-102166" "Open VM Tools"
+
+.SH NAME
+vmmemctl \- vmware kernel module
+
+.SH SYNOPSIS
+modprobe vmmemctl
+
+.SH DESCRIPTION
+This is a kernel module. It isn't backed by a virtual hardware device, so it must be loaded manually. It has no dependencies, nor do any Tools components depend on it, so it can be loaded at any time during the boot process. Once loaded, no further action is needed.
+
+.SH OPTIONS
+vmmemctl has no options.
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmsync\fR(9)
+.br
+\fIvmxnet\fR(9)
+
+.SH HOMEPAGE
+More information about vmmemctl and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).

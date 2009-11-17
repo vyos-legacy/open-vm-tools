@@ -38,7 +38,7 @@
 #include "vm_basic_types.h"
 
 /* Macros for accessing the payload portion of the HGFS request packet. */
-#define HGFS_REQ_PAYLOAD(hgfsReq) ((hgfsReq)->packet + HGFS_CLIENT_CMD_LEN)
+#define HGFS_REQ_PAYLOAD(hgfsReq) ((hgfsReq)->payload)
 
 /* XXX: Needs change when VMCI is supported. */
 #define HGFS_REQ_PAYLOAD_V3(hgfsReq) (HGFS_REQ_PAYLOAD(hgfsReq) + sizeof(HgfsRequest))
@@ -52,31 +52,28 @@
  * HGFS_REQ_STATE_UNSENT:
  *    The filesystem half of the driver has filled in the request fields
  *    and placed the request in the global unsent list. It is now the
- *    backdoor handler's responsibility to submit this request to
- *    the backdoor. Requests in this state are on the global unsent list.
+ *    request handler's responsibility to submit this request to
+ *    the channel. Requests in this state are on the global unsent list.
  *
- * HGFS_REQ_STATE_SENT:
- *    The backdoor handler has sent the packet, but the reply will arrive
- *    asynchronously. The request is now on the sent list, and whenever
- *    the reply arrives, the backdoor handler will remove the request from
- *    the sent list and stuff the reply into the request's packet buffer.
+ * HGFS_REQ_STATE_SUBMITTED:
+ *    The packet has been sent, but the reply will arrive asynchronously.
+ *    The request will be on the hgfsRepPending list, and whenever
+ *    the reply arrives, the reply handler will remove the request from
+ *    the hgfsRepPending list and stuff the reply into the request's
+ *    packet buffer.
  *
- * HGFS_REQ_STATE_ERROR:
- *    The backdoor handler encountered an error while sending the request
- *    or getting the reply. The filesystem half of the driver should
- *    free the request. Requests in this state are not on any list.
+ *    This is only for asynchronous channel communication.
  *
  * HGFS_REQ_STATE_COMPLETED:
- *    The backdoor handler sent the request and received a reply. The reply
+ *    The request handler sent the request and received a reply. The reply
  *    is stuffed in the request's packet buffer. Requests in this state
  *    are not on any list.
  */
 typedef enum {
    HGFS_REQ_STATE_ALLOCATED,
    HGFS_REQ_STATE_UNSENT,
-   HGFS_REQ_STATE_SENT,
-   HGFS_REQ_STATE_ERROR,
-   HGFS_REQ_STATE_COMPLETED,
+   HGFS_REQ_STATE_SUBMITTED,
+   HGFS_REQ_STATE_COMPLETED,  /* Both header and payload were received. */
 } HgfsState;
 
 /*
@@ -84,8 +81,14 @@ typedef enum {
  */
 typedef struct HgfsReq {
 
+   /* Reference count */
+   struct kref kref;
+
    /* Links to place the object on various lists. */
    struct list_head list;
+
+   /* ID of the transport (its address) */
+   void *transportId;
 
    /*
     * When clients wait for the reply to a request, they'll wait on this
@@ -99,20 +102,35 @@ typedef struct HgfsReq {
    /* ID of this request */
    uint32 id;
 
+   /* Pointer to payload in the buffer */
+   void *payload;
+
    /* Total size of the payload.*/
    size_t payloadSize;
+
+   /*
+    * Size of the data buffer (below), not including size of chunk
+    * used by transport. Must be enough to hold both request and
+    * reply (but not at the same time).
+    */
+   size_t bufferSize;
 
    /*
     * Packet of data, for both incoming and outgoing messages.
     * Include room for the command.
     */
-   char packet[HGFS_PACKET_MAX + HGFS_CLIENT_CMD_LEN];
+   unsigned char buffer[];
 } HgfsReq;
 
 /* Public functions (with respect to the entire module). */
 HgfsReq *HgfsGetNewRequest(void);
+HgfsReq *HgfsCopyRequest(HgfsReq *req);
 int HgfsSendRequest(HgfsReq *req);
-void HgfsFreeRequest(HgfsReq *req);
-HgfsStatus HgfsReplyStatus(HgfsReq *req); // IN
+HgfsReq *HgfsRequestGetRef(HgfsReq *req);
+void HgfsRequestPutRef(HgfsReq *req);
+#define HgfsFreeRequest(req)  HgfsRequestPutRef(req)
+HgfsStatus HgfsReplyStatus(HgfsReq *req);
+void HgfsCompleteReq(HgfsReq *req);
+void HgfsFailReq(HgfsReq *req, int error);
 
 #endif // _HGFS_DRIVER_REQUEST_H_

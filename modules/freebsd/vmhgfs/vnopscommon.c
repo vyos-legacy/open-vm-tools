@@ -19,7 +19,7 @@
 /*
  * vnopscommon.c --
  *
- * Common VFS vnop implementations that are shared between both OS X and FreeBSD.
+ * Common VFS vnop implementations that are shared between both Mac OS and FreeBSD.
  */
 
 #include <sys/param.h>          // for everything
@@ -39,7 +39,7 @@ int HgfsGetNextDirEntry(HgfsSuperInfo *sip, HgfsHandle handle,
                                HgfsFileType *type, Bool *done);
 int HgfsDirOpen(HgfsSuperInfo *sip, struct vnode *vp);
 int HgfsFileOpen(HgfsSuperInfo *sip, struct vnode *vp,
-                        int flag, int permissions);
+                        int flag, int permissions, Bool implicit);
 int HgfsDirClose(HgfsSuperInfo *sip, struct vnode *vp);
 int HgfsFileClose(HgfsSuperInfo *sip, struct vnode *vp, int flag);
 int HgfsDoRead(HgfsSuperInfo *sip, HgfsHandle handle, uint64_t offset,
@@ -53,6 +53,8 @@ static int HgfsDoGetattrByName(const char *path, HgfsSuperInfo *sip, HgfsAttrV2 
 int HgfsReadlinkInt(struct vnode *vp, struct uio *uiop);
 static int HgfsQueryAttrInt(const char *path, HgfsHandle handle, HgfsSuperInfo *sip,
                             HgfsKReqHandle req);
+static int HgfsRefreshHandle(struct vnode *vp, HgfsSuperInfo *sip, HgfsHandle *handle);
+
 #if 0
 static int HgfsDoGetattrByHandle(HgfsHandle handle, HgfsSuperInfo *sip, HgfsAttrV2 *hgfsAttrV2);
 #endif
@@ -331,8 +333,28 @@ HgfsReaddirInt(struct vnode *vp, // IN    : Directory vnode to get entries from.
       /* If the filename was too long, we skip to the next entry ... */
       if (ret == EOVERFLOW) {
          continue;
-      /* ... but if another error occurred, we return that error code ... */
+      } else if (ret == EBADF) {
+         /*
+          * If we got invalid handle from the server, this was because user
+          * enabled/disabled the shared folders. We should get a new handle
+          * from the server, now.
+          */
+         ret = HgfsRefreshHandle(vp, sip, &handle);
+         if (ret == 0) {
+            /*
+             * Now we have valid handle, let's try again from the same
+             * offset.
+             */
+            offset--;
+            continue;
+         } else {
+            ret = EBADF;
+            goto out;
+         }
       } else if (ret) {
+         if (ret != EPROTO) {
+            ret = EINVAL;
+         }
          DEBUG(VM_DEBUG_FAIL, "failure occurred in HgfsGetNextDirEntry\n");
          goto out;
       /*
@@ -346,13 +368,13 @@ HgfsReaddirInt(struct vnode *vp, // IN    : Directory vnode to get entries from.
          }
          break;
       }
-      /* 
+      /*
        * Convert an input string to utf8 decomposed form and then escape its
        * buffer.
        */
       ret = HgfsNameFromWireEncoding(nameBuf, strlen(nameBuf), dirp->d_name,
                                      sizeof dirp->d_name);
-      /* 
+      /*
        * If the name didn't fit in the buffer or illegal utf8 characters
        * were encountered, skip to the next entry.
        */
@@ -474,10 +496,8 @@ HgfsGetattrInt(struct vnode *vp,      // IN : vnode of the file
  *
  * HgfsSetattrInt --
  *
- *      Maps the Solaris attributes to Hgfs attributes (by calling
+ *      Maps the Mac OS/FreeBsd attributes to Hgfs attributes (by calling
  *      HgfsSetattrCopy()) and sends a set attribute request to the Hgfs server.
- *
- *      "Sets the attributes for the supplied vnode." (Solaris Internals, p537)
  *
  * Results:
  *      Returns 0 on success and a non-zero error code on error.
@@ -490,7 +510,7 @@ HgfsGetattrInt(struct vnode *vp,      // IN : vnode of the file
 
 int
 HgfsSetattrInt(struct vnode *vp,     // IN : vnode of the file
-	       HgfsVnodeAttr *vap) // IN : attributes container
+               HgfsVnodeAttr *vap)   // IN : attributes container
 {
    HgfsSuperInfo *sip = HGFS_VP_TO_SIP(vp);
    HgfsKReqHandle req;
@@ -536,7 +556,7 @@ HgfsSetattrInt(struct vnode *vp,     // IN : vnode of the file
    reqSize = HGFS_REQ_PAYLOAD_SIZE_V3(request);
    reqBufferSize = HGFS_NAME_BUFFER_SIZET(reqSize);
 
-   /* 
+   /*
     * Convert an input string to utf8 precomposed form, convert it to
     * the cross platform name format and finally unescape any illegal
     * filesystem characters.
@@ -581,6 +601,10 @@ HgfsSetattrInt(struct vnode *vp,     // IN : vnode of the file
          DEBUG(VM_DEBUG_FAIL, "Error encountered with ret = %d\n", ret);
       }
       goto destroyOut;
+   } else {
+      if (HGFS_VATTR_SIZE_IS_ACTIVE(vap, HGFS_VA_DATA_SIZE)) {
+         HgfsSetFileSize(vp, vap->HGFS_VA_DATA_SIZE);
+      }
    }
 
 destroyOut:
@@ -644,8 +668,6 @@ HgfsRmdirInt(struct vnode *dvp,          // IN: parent directory
  *      Composes the full pathname of this file and sends a DELETE_FILE request
  *      by calling HgfsDelete().
  *
- *      "Removes the file for the supplied vnode." (Solaris Internals, p537)
- *
  * Results:
  *      Returns 0 on success or a non-zero error code on error.
  *
@@ -671,6 +693,9 @@ int HgfsRemoveInt(struct vnode *vp) // IN: Vnode to delete
       ret = EPERM;
       goto out;
    }
+
+    os_FlushRange(vp, 0, HGFS_VP_TO_FILESIZE(vp));
+    os_SetSize(vp, 0);
 
    /* We can now send the delete request. */
    ret = HgfsDelete(sip, HGFS_VP_TO_FILENAME(vp), HGFS_OP_DELETE_FILE_V3);
@@ -763,7 +788,8 @@ HgfsCloseInt(struct vnode *vp, // IN: Vnode to close.
 
 int
 HgfsOpenInt(struct vnode *vp, // IN: Vnode to open.
-	    int mode)         // IN: Mode of vnode being opened.
+            int mode,         // IN: Mode of vnode being opened.
+            Bool implicit)    // IN: TRUE if called outside of VNOP_OPEN.
 {
    HgfsSuperInfo *sip = HGFS_VP_TO_SIP(vp);
    DEBUG(VM_DEBUG_LOG, "Enter %s.\n",  HGFS_VP_TO_FILENAME(vp));
@@ -782,7 +808,7 @@ HgfsOpenInt(struct vnode *vp, // IN: Vnode to open.
           * are ignored by HgfsFileOpen.
           */
          DEBUG(VM_DEBUG_COMM, "opening a file with flag %x\n", mode);
-         return HgfsFileOpen(sip, vp, mode, HGFS_VP_TO_PERMISSIONS(vp));
+         return HgfsFileOpen(sip, vp, mode, HGFS_VP_TO_PERMISSIONS(vp), implicit);
       }
 
    default:
@@ -794,7 +820,6 @@ HgfsOpenInt(struct vnode *vp, // IN: Vnode to open.
    DEBUG(VM_DEBUG_LOG, "Exit %s.\n",  HGFS_VP_TO_FILENAME(vp));
    return 0;
 }
-
 
 
 /*
@@ -845,7 +870,7 @@ HgfsLookupInt(struct vnode *dvp,         // IN : directory vnode
       if (fp->parent == NULL) {
          return EIO; // dvp is root directory
       } else {
-#if defined(__FreeBSD__)
+#if defined __FreeBSD__
          vref(fp->parent);
 #else
          vnode_get(fp->parent);
@@ -855,7 +880,7 @@ HgfsLookupInt(struct vnode *dvp,         // IN : directory vnode
       }
    }
    if (cnp->cn_namelen == 1 && *cnp->cn_nameptr == '.') {
-#if defined(__FreeBSD__)
+#if defined __FreeBSD__
       vref(dvp);
 #else
       vnode_get(dvp);
@@ -863,7 +888,7 @@ HgfsLookupInt(struct vnode *dvp,         // IN : directory vnode
       *vpp = dvp;
       return 0;
    }
-   
+
    /*
     * Get pointer to the superinfo.  If the device is not attached,
     * hgfsInstance will not be valid and we immediately return an error.
@@ -901,7 +926,7 @@ HgfsLookupInt(struct vnode *dvp,         // IN : directory vnode
       *vpp = sip->rootVnode;
       /*
        * If we are returning the root vnode, then we need to get a reference
-       * to it. Under OS X this gets an I/O Count.
+       * to it. Under Mac OS this gets an I/O Count.
        */
       HGFS_VPP_GET_IOCOUNT(vpp);
       goto out;
@@ -936,7 +961,8 @@ HgfsLookupInt(struct vnode *dvp,         // IN : directory vnode
                       attrV2.type,             // Type of file
                       &sip->fileHashTable,     // File hash table
                       FALSE,                   // Not a new file creation
-                      0);                      // No permissions - not a new file
+                      0,                       // No permissions - not a new file
+                      attrV2.size);            // File size
 
    if (ret) {
       DEBUG(VM_DEBUG_FAIL, "couldn't create vnode for \"%s\".\n", path);
@@ -1020,9 +1046,23 @@ int HgfsCreateInt(struct vnode *dvp,         // IN : Directory vnode
    if (ret >= 0) {
       /* Create the vnode for this file. */
       ret = HgfsVnodeGet(vpp, dvp, sip, HGFS_VP_TO_MP(dvp), fullname,
-                         HGFS_FILE_TYPE_REGULAR, &sip->fileHashTable, FALSE, mode);
+                         HGFS_FILE_TYPE_REGULAR, &sip->fileHashTable, TRUE,
+                         mode, 0);
       /* HgfsVnodeGet() guarantees this. */
       ASSERT(ret != 0 || *vpp);
+      /*
+       * NOTE: This is a temporary workaround.
+       * This condition may occur because we look up vnodes by file name in the
+       * vnode cache.
+       * There is a race condition when file is already deleted but still referenced -
+       * thus vnode still exist. If a new file with the same name is created I
+       * can neither use the vnode of the deleted file nor insert a new vnode with
+       * the same name - thus I fail the request. This behavior is not correct and will
+       * be fixed after further restructuring if the source code.
+       */
+      if (ret == EEXIST) {
+         ret = EIO;
+      }
    } else {
       DEBUG(VM_DEBUG_FAIL, "couldn't create full path name.\n");
       ret = ENAMETOOLONG;
@@ -1063,7 +1103,8 @@ int HgfsCreateInt(struct vnode *dvp,         // IN : Directory vnode
 
 int
 HgfsReadInt(struct vnode *vp, // IN    : Vnode to read from
-	    struct uio *uiop) // IN/OUT: Buffer to write data into.
+            struct uio *uiop, // IN/OUT: Buffer to write data into.
+            Bool pagingIo)    // IN: True if the read is a result of a page fault
 {
    HgfsSuperInfo *sip = HGFS_VP_TO_SIP(vp);
    HgfsHandle handle;
@@ -1073,9 +1114,9 @@ HgfsReadInt(struct vnode *vp, // IN    : Vnode to read from
    DEBUG(VM_DEBUG_ENTRY, "entry %s.\n",  HGFS_VP_TO_FILENAME(vp));
 
    /* We can't read from directories, that's what readdir() is for. */
-   if (HGFS_VP_TO_VTYPE(vp) == VDIR) {
-      DEBUG(VM_DEBUG_FAIL, "cannot read directories.\n");
-      return EISDIR;
+   if (HGFS_VP_TO_VTYPE(vp) != VREG) {
+      DEBUG(VM_DEBUG_FAIL, "Can only read regular files.\n");
+      return (HGFS_VP_TO_VTYPE(vp) == VDIR) ? EISDIR : EPERM;
    }
 
    /* off_t is a signed quantity */
@@ -1094,9 +1135,18 @@ HgfsReadInt(struct vnode *vp, // IN    : Vnode to read from
     */
    ret = HgfsGetOpenFileHandle(vp, &handle);
    if (ret) {
-         DEBUG(VM_DEBUG_FAIL, "could not get handle.\n");
+      DEBUG(VM_DEBUG_FAIL, "could not get handle.\n");
+      return EINVAL;
+   }
+
+   /* Flush mmaped data to maintain data coherence between mmap and read. */
+   if (!pagingIo) {
+      ret = os_FlushRange(vp, offset, HGFS_UIOP_TO_RESID(uiop));
+      if (ret) {
+         DEBUG(VM_DEBUG_FAIL, "could not flush data.\n");
          return EINVAL;
       }
+   }
 
    /*
     * Here we loop around HgfsDoRead with requests less than or equal to
@@ -1113,13 +1163,14 @@ HgfsReadInt(struct vnode *vp, // IN    : Vnode to read from
    do {
       uint32_t size;
 
-      DEBUG(VM_DEBUG_INFO, "offset=%"FMT64"d, uio_offset=%jd\n",
+      DEBUG(VM_DEBUG_INFO, "offset=%"FMT64"d, uio_offset=%"FMT64"d\n",
             offset, HGFS_UIOP_TO_OFFSET(uiop));
       DEBUG(VM_DEBUG_HANDLE, "** handle=%d, file=%s\n",
             handle, HGFS_VP_TO_FILENAME(vp));
 
       /* Request at most HGFS_IO_MAX bytes */
-      size = (HGFS_UIOP_TO_RESID(uiop) > HGFS_IO_MAX) ? HGFS_IO_MAX : HGFS_UIOP_TO_RESID(uiop);
+      size = (HGFS_UIOP_TO_RESID(uiop) > HGFS_IO_MAX) ? HGFS_IO_MAX :
+                                                        HGFS_UIOP_TO_RESID(uiop);
 
       /* Send one read request. */
       ret = HgfsDoRead(sip, handle, offset, size, uiop);
@@ -1127,14 +1178,26 @@ HgfsReadInt(struct vnode *vp, // IN    : Vnode to read from
          /* On end of file we return success */
          DEBUG(VM_DEBUG_DONE, "end of file reached.\n");
          return 0;
-      } else  if (ret < 0) {
+      } else if (ret == -EBADF) { // Stale host handle
+         ret = HgfsRefreshHandle(vp, sip, &handle);
+         if (ret == 0) {
+            ret = HgfsDoRead(sip, handle, offset, size, uiop);
+            if (ret < 0) {
+               DEBUG(VM_DEBUG_FAIL, "Failed to read from a fresh handle.\n");
+               return -ret;
+            }
+         } else {
+            DEBUG(VM_DEBUG_FAIL, "Failed to get a fresh handle.\n");
+            return EBADF;
+         }
+      } else if (ret < 0) {
          /*
           * HgfsDoRead() returns the negative of an appropriate error code to
           * differentiate between success and error cases.  We flip the sign
           * and return the appropriate error code.  See the HgfsDoRead()
           * function header for a fuller explanation.
           */
-         DEBUG(VM_DEBUG_FAIL, "HgfsDoRead() failed.\n");
+         DEBUG(VM_DEBUG_FAIL, "HgfsDoRead() failed, error %d.\n", ret);
          return -ret;
       }
 
@@ -1158,10 +1221,6 @@ HgfsReadInt(struct vnode *vp, // IN    : Vnode to read from
  *      We call HgfsDoWrite() once with requests less than or equal to
  *      HGFS_IO_MAX bytes until the user's write request has completed.
  *
- *      "Writes the range supplied for the given vnode.  The write system call
- *      typically maps the requested range of a file into kernel memory and then
- *      uses vop_putpage() to do the real work." (Solaris Internals, p538)
- *
  * Results:
  *      Returns 0 on success and error code on error.
  *
@@ -1173,13 +1232,15 @@ HgfsReadInt(struct vnode *vp, // IN    : Vnode to read from
 
 int
 HgfsWriteInt(struct vnode *vp, // IN    : the vnode of the file
-	     struct uio *uiop, // IN/OUT: location of data to be written
-	     int ioflag)       // IN    : hints & other directives
+             struct uio *uiop, // IN/OUT: location of data to be written
+             int ioflag,       // IN    : hints & other directives
+             Bool pagingIo)    // IN: True if the write is originated by memory manager
 {
    HgfsSuperInfo *sip = HGFS_VP_TO_SIP(vp);
    HgfsHandle handle;
    uint64_t offset;
    int ret;
+   int error = 0;
 
    DEBUG(VM_DEBUG_ENTRY, "entry. (vp=%p)\n", vp);
 
@@ -1207,6 +1268,11 @@ HgfsWriteInt(struct vnode *vp, // IN    : the vnode of the file
       return EINVAL;
    }
 
+   /* Flush mmaped data to maintain data coherence between mmap and read. */
+   if (!pagingIo && (ioflag & IO_APPEND) == 0) {
+      ret = os_FlushRange(vp, offset, HGFS_UIOP_TO_RESID(uiop));
+   }
+
    /*
     * We loop around calls to HgfsDoWrite() until either (1) we have written all
     * of our data or (2) an error has occurred.  HGFS_UIOP_TO_RESID(uiop) is decremented
@@ -1217,7 +1283,7 @@ HgfsWriteInt(struct vnode *vp, // IN    : the vnode of the file
    do {
       uint32_t size;
 
-      DEBUG(VM_DEBUG_INFO, "** offset=%"FMT64"d, uio_offset=%jd\n",
+      DEBUG(VM_DEBUG_INFO, "** offset=%"FMT64"d, uio_offset=%"FMT64"d\n",
             offset, HGFS_UIOP_TO_OFFSET(uiop));
       DEBUG(VM_DEBUG_HANDLE, "** handle=%d, file=%s\n",
             handle, HGFS_VP_TO_FILENAME(vp));
@@ -1227,13 +1293,28 @@ HgfsWriteInt(struct vnode *vp, // IN    : the vnode of the file
 
       /* Send one write request. */
       ret = HgfsDoWrite(sip, handle, ioflag, offset, size, uiop);
-      if (ret < 0) {
+      if (ret == -EBADF) { // Stale host handle
+         ret = HgfsRefreshHandle(vp, sip, &handle);
+         if (ret == 0) {
+            ret = HgfsDoWrite(sip, handle, ioflag, offset, size, uiop);
+            if (ret < 0) {
+               DEBUG(VM_DEBUG_FAIL, "Failed to write to a fresh handle.\n");
+               error = -ret;
+               break;
+            }
+         } else {
+            DEBUG(VM_DEBUG_FAIL, "Failed to get a fresh handle, error %d.\n", ret);
+            error = EBADF;
+            break;
+         }
+      } else if (ret < 0) {
          /*
           * As in HgfsRead(), we need to flip the sign.  See the comment in the
           * function header of HgfsDoWrite() for a more complete explanation.
           */
          DEBUG(VM_DEBUG_INFO, "HgfsDoWrite failed, returning %d\n", -ret);
-         return -ret;
+         error = -ret;
+         break;
       }
 
       /* Increment the offest by the amount already written. */
@@ -1241,10 +1322,20 @@ HgfsWriteInt(struct vnode *vp, // IN    : the vnode of the file
 
    } while (HGFS_UIOP_TO_RESID(uiop));
 
-   /* We have completed the user's write request, so return success. */
+   /* Need to notify memory manager if written data extended the file. */
+   if (!pagingIo && (offset > HGFS_VP_TO_FILESIZE(vp))) {
+      if ((ioflag & IO_APPEND) == 0) {
+         os_SetSize(vp, offset);
+      } else {
+         off_t oldSize = HGFS_VP_TO_FILESIZE(vp);
+         off_t writtenData = offset - HGFS_UIOP_TO_OFFSET(uiop);
+         os_SetSize(vp, oldSize + writtenData);
+      }
+   }
+   /* We have completed the user's write request, so return. */
    DEBUG(VM_DEBUG_LOG, "Exit %s.\n",  HGFS_VP_TO_FILENAME(vp));
 
-   return 0;
+   return error;
 }
 
 
@@ -1328,7 +1419,7 @@ HgfsMkdirInt(struct vnode *dvp,         // IN : directory vnode
 
    HGFS_INIT_REQUEST_HDR(requestHeader, req, HGFS_OP_CREATE_DIR_V3);
 
-   request->reserved = 0;
+   request->fileAttr = 0;
    request->mask = HGFS_CREATE_DIR_MASK;
    request->specialPerms = (mode & (S_ISUID | S_ISGID | S_ISVTX)) >>
                               HGFS_ATTR_SPECIAL_PERM_SHIFT;
@@ -1379,7 +1470,8 @@ HgfsMkdirInt(struct vnode *dvp,         // IN : directory vnode
    }
 
    ret = HgfsVnodeGet(vpp, dvp, sip, HGFS_VP_TO_MP(dvp), fullName,
-                      HGFS_FILE_TYPE_DIRECTORY, &sip->fileHashTable, TRUE, mode);
+                      HGFS_FILE_TYPE_DIRECTORY, &sip->fileHashTable, TRUE,
+                      mode, 0);
    if (ret) {
       ret = EIO;
       goto destroyOut;
@@ -1440,7 +1532,7 @@ HgfsDirOpen(HgfsSuperInfo *sip, // IN: Superinfo pointer
     *  There is no different open modes for directories thus the handle is compatible.
     */
    os_rw_lock_lock_exclusive(fp->handleLock);
-   ret = HgfsCheckAndReferenceHandle(vp, 0);
+   ret = HgfsCheckAndReferenceHandle(vp, FALSE, 0);
    if (ret ==  ENOENT) {  // Handle is not set, need to get one from the host
 
       if (HGFS_IS_ROOT_VNODE(sip, vp)) {
@@ -1457,12 +1549,71 @@ HgfsDirOpen(HgfsSuperInfo *sip, // IN: Superinfo pointer
           * We successfully received a reply, so we need to save the handle in
           * this file's HgfsOpenFile and return success.
           */
-         HgfsSetOpenFileHandle(vp, handle, 0);
+         HgfsSetOpenFileHandle(vp, handle, HGFS_OPEN_MODE_READ_ONLY, FALSE);
       }
    }
    os_rw_lock_unlock_exclusive(fp->handleLock);
 
    DEBUG(VM_DEBUG_LOG, "Exit %s.\n",  HGFS_VP_TO_FILENAME(vp));
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsRequestHostFileHandle --
+ *
+ *    Sends a open request to the server to get a file handle.
+ *    If client needs a readonly handle the function first asks for
+ *    read-write handle since this handle may be shared between multiple
+ *    file descriptors. If getting read-write handle fails the function
+ *    sends another request for readonly handle.
+ *
+ * Results:
+ *      Returns zero on success and an error code on error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+HgfsRequestHostFileHandle(HgfsSuperInfo *sip,   // IN: Superinfo pointer
+                          struct vnode *vp,     // IN: Vnode of file to open
+                          int *openMode,        // IN OUT: open mode
+                          int openFlags,        // IN: flags for the open request
+                          int permissions,      // IN: Permissions for new files
+                          HgfsHandle *handle)   // OUT: file handle
+{
+   char *fullPath;
+   uint32 fullPathLen;
+   int ret;
+
+   fullPath = HGFS_VP_TO_FILENAME(vp);
+   fullPathLen = HGFS_VP_TO_FILENAME_LENGTH(vp);
+
+   /* First see if we can get the most permissive read/write open mode */
+   ret = HgfsSendOpenRequest(sip, HGFS_OPEN_MODE_READ_WRITE, openFlags,
+                             permissions, fullPath, fullPathLen, handle);
+   if (ret) {
+      if (ret == EACCES && HGFS_OPEN_MODE_READ_WRITE != *openMode) {
+         /*
+          * Failed to open in read/write open mode because of denied access.
+          * It means file's permissions do not allow opening for read/write.
+          * However caller does not need this mode and may be satisfied with
+          * less permissive mode.
+          * Try exact open mode now.
+          */
+         DEBUG(VM_DEBUG_FAIL, "RW mode failed, re-submitting original mode = %d.\n",
+               *openMode);
+         ret = HgfsSendOpenRequest(sip, *openMode, openFlags,
+                                   permissions, fullPath, fullPathLen, handle);
+      }
+   } else {
+      *openMode = HGFS_OPEN_MODE_READ_WRITE;
+   }
    return ret;
 }
 
@@ -1491,10 +1642,9 @@ int
 HgfsFileOpen(HgfsSuperInfo *sip,        // IN: Superinfo pointer
              struct vnode *vp,          // IN: Vnode of file to open
              int flag,                  // IN: Flags of open
-             int permissions)           // IN: Permissions of open (only when creating)
+             int permissions,           // IN: Permissions of open (only when creating)
+             Bool implicit)             // IN: TRUE if called outside of HgfsOpenInt
 {
-   char *fullPath = NULL;
-   uint32 fullPathLen;
    int ret;
    int openMode;
    int openFlags;
@@ -1511,14 +1661,14 @@ HgfsFileOpen(HgfsSuperInfo *sip,        // IN: Superinfo pointer
 
    /*
     * Check if the user is trying to create a new share. This check was
-    * mainly implemented to address the issue with OS X. When the user
+    * mainly implemented to address the issue with Mac OS. When the user
     * attempts to create a file in the root folder, the server returns ENOENT
-    * error code. However, OS X specifically checks for this case. If OS X asks for
-    * the creation of a new file and if it gets ENOENT as a return error code, 
+    * error code. However, Mac OS specifically checks for this case. If Mac OS asks for
+    * the creation of a new file and if it gets ENOENT as a return error code,
     * then it assumes that the error was because of some race condition and tries it
-    * again. Thus, returning ENOENT to the OS X puts the guest kernel into infinite
+    * again. Thus, returning ENOENT to the Mac OS puts the guest kernel into infinite
     * loop. In order to resolve this issue, before passing on the request to the
-    * server, we validate if user is attempting to create a new share. If yes, 
+    * server, we validate if user is attempting to create a new share. If yes,
     * we return EPERM as the error code.
     */
    if (HgfsAttemptToCreateShare(HGFS_VP_TO_FILENAME(vp), flag)) {
@@ -1549,46 +1699,82 @@ HgfsFileOpen(HgfsSuperInfo *sip,        // IN: Superinfo pointer
     *  If it is true then add reference to vnode and grant the access, otherwise
     *  deny the access.
     */
-   ret = HgfsCheckAndReferenceHandle(vp, openMode);
+   ret = HgfsCheckAndReferenceHandle(vp, FALSE, openMode);
    if (ret == ENOENT) {  // Handle is not set, need to get one from the host
-
-      int requestedMode = HGFS_OPEN_MODE_READ_WRITE;
-      fullPath = HGFS_VP_TO_FILENAME(vp);
-      fullPathLen = HGFS_VP_TO_FILENAME_LENGTH(vp);
-
-      /* First see if we can get the most permissive read/write open mode */
-      ret = HgfsSendOpenRequest(sip, requestedMode, openFlags,
-                                permissions, fullPath, fullPathLen, &handle);
-      if (ret) {
-         if (ret == EACCES && HGFS_OPEN_MODE_READ_WRITE != openMode) {
-           /*
-            * Failed to open in read/write open mode because of denied access.
-            * It means file's permissions do not allow opening for read/write.
-            * However caller does not need this mode and may be satisfied with
-            * less permissive mode.
-            * Try exact open mode now.
-            */
-           DEBUG(VM_DEBUG_FAIL, "RW mode failed, re-submitting original mode = %d.\n",
-                 ret);
-           requestedMode = openMode;
-           ret = HgfsSendOpenRequest(sip, requestedMode, openFlags,
-                                     permissions, fullPath, fullPathLen, &handle);
-         }
-      }
-
+      ret = HgfsRequestHostFileHandle(sip, vp, &openMode, openFlags,
+                                      permissions, &handle);
       /*
        * We successfully received a reply, so we need to save the handle in
        * this file's HgfsOpenFile and return success.
        */
       if (ret == 0) {
-         HgfsSetOpenFileHandle(vp, handle, requestedMode);
+         HgfsSetOpenFileHandle(vp, handle, openMode, implicit);
       }
    }
 
    os_rw_lock_unlock_exclusive(fp->handleLock);
 
 out:
-   DEBUG(VM_DEBUG_LOG, "Exit %s.\n",  HGFS_VP_TO_FILENAME(vp));
+   DEBUG(VM_DEBUG_LOG, "Exit (%d) %s.\n", ret,  HGFS_VP_TO_FILENAME(vp));
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsRefreshHandle --
+ *
+ *      Request a new HgfsHandle for the vnode. Needed when original handle
+ *      become stale because HGFS has been disabled and re-enabled or VM
+ *      has been suspened and then resumed.
+ *
+ * Results:
+ *      Returns zero on success and an error code on error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+HgfsRefreshHandle(struct vnode *vp,          // IN: Vnode of file to open
+                  HgfsSuperInfo *sip,        // IN: Superinfo pointer
+                  HgfsHandle *handle)        // IN OUT: Pointer to the stale handle
+{
+   int ret = 0;
+   HgfsFile *fp;
+
+   ASSERT(vp);
+   fp = HGFS_VP_TO_FP(vp);
+   ASSERT(fp);
+
+   DEBUG(VM_DEBUG_ENTRY, "Refresh handle\n");
+   os_rw_lock_lock_exclusive(fp->handleLock);
+   if (fp->handle != *handle) {
+      /* Handle has been refreshed in another thread. */
+      *handle = fp->handle;
+   } else {
+      /* Retrieve a new handle from the host. */
+      if (HGFS_VP_TO_VTYPE(vp) == VREG) {
+         ret = HgfsRequestHostFileHandle(sip, vp, (int *)&fp->mode,
+                                         HGFS_OPEN, 0, handle);
+      } else if (HGFS_VP_TO_VTYPE(vp) == VDIR) {
+         char *fullPath = HGFS_VP_TO_FILENAME(vp);
+         uint32 fullPathLen = HGFS_VP_TO_FILENAME_LENGTH(vp);
+         ret = HgfsSendOpenDirRequest(sip, fullPath, fullPathLen, handle);
+      } else {
+         goto out;
+      }
+      if (ret == 0) {
+         fp->handle = *handle;
+      }
+   }
+
+out:
+   os_rw_lock_unlock_exclusive(fp->handleLock);
+
    return ret;
 }
 
@@ -1627,7 +1813,7 @@ HgfsDirClose(HgfsSuperInfo *sip,        // IN: Superinfo pointer
     * Check to see if we should close the file handle on the host ( which happen when
     * the reference count of the current handle become 0.
     */
-   if (HgfsReleaseOpenFileHandle(vp, &handleToClose) == 0) {
+   if (HgfsReleaseOpenFileHandle(vp, FALSE, &handleToClose) == 0) {
       ret = HgfsCloseServerDirHandle(sip, handleToClose);
    }
    DEBUG(VM_DEBUG_LOG, "Exit %s.\n",  HGFS_VP_TO_FILENAME(vp));
@@ -1670,7 +1856,7 @@ HgfsFileClose(HgfsSuperInfo *sip,       // IN: Superinfo pointer
     * Check to see if we should close the file handle on the host ( which happen when
     * the reference count of the current handle become 0.
     */
-   if (HgfsReleaseOpenFileHandle(vp, &handleToClose) == 0) {
+   if (HgfsReleaseOpenFileHandle(vp, FALSE, &handleToClose) == 0) {
       ret = HgfsCloseServerFileHandle(sip, handleToClose);
    }
    DEBUG(VM_DEBUG_LOG, "Exit %s.\n",  HGFS_VP_TO_FILENAME(vp));
@@ -1763,7 +1949,7 @@ HgfsDoRead(HgfsSuperInfo *sip,  // IN: Superinfo pointer
    ret = HgfsGetStatus(req, sizeof *replyHeader);
    if (ret) {
       DEBUG(VM_DEBUG_FAIL, "Error encountered with ret = %d\n", ret);
-      if (ret != EPROTO) {
+      if (ret != EPROTO && ret != EBADF) {
          ret = EACCES;
       }
       ret = -ret;
@@ -1910,7 +2096,7 @@ HgfsDoWrite(HgfsSuperInfo *sip, // IN: Superinfo pointer
    ret = HgfsGetStatus(req, sizeof *replyHeader);
    if (ret) {
       DEBUG(VM_DEBUG_FAIL, "Error encountered with ret = %d\n", ret);
-      if (ret != EPROTO) {
+      if (ret != EPROTO && ret != EBADF) {
          ret = EACCES;
       }
       ret = -ret;
@@ -2124,9 +2310,6 @@ HgfsGetNextDirEntry(HgfsSuperInfo *sip,         // IN: Superinfo pointer
    ret = HgfsGetStatus(req, sizeof *replyHeader);
    if (ret) {
       DEBUG(VM_DEBUG_FAIL, "Error encountered with ret = %d\n", ret);
-      if (ret != EPROTO) {
-         ret = EINVAL;
-      }
       goto destroyOut;
    }
 
@@ -2376,7 +2559,7 @@ HgfsSymlinkInt(struct vnode *dvp,         // IN : directory vnode
 	* In the long term we should fix the protocol and have only one name
 	* format which is suitable for all names.
 	* The following code compensates for this problem before there is such
-	* universal name representation.  
+	* universal name representation.
 	*/
    if (*targetName == '/') {
       fileNameP->length = 1;
@@ -2421,7 +2604,7 @@ HgfsSymlinkInt(struct vnode *dvp,         // IN : directory vnode
    ret = HgfsGetStatus(req, repSize);
    if (ret == 0) {
       ret = HgfsVnodeGet(vpp, dvp, sip, HGFS_VP_TO_MP(dvp), fullName,
-                         HGFS_FILE_TYPE_SYMLINK, &sip->fileHashTable, TRUE, 0);
+                         HGFS_FILE_TYPE_SYMLINK, &sip->fileHashTable, TRUE, 0, 0);
       if (ret) {
          ret = EIO;
       }
@@ -2551,6 +2734,7 @@ HgfsDoGetattrInt(const char *path,       // IN : Path to get attributes for
    }
    return ret;
 }
+
 
 /*
  *----------------------------------------------------------------------------
@@ -2698,6 +2882,63 @@ out:
 /*
  *----------------------------------------------------------------------------
  *
+ * IsModeCompatible --
+ *
+ *      Checks if the requested mode is compatible with permissions.
+ *
+ * Results:
+ *       Returns TRUE if the mode is compatible, FALSE otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static Bool
+IsModeCompatible(HgfsAccessMode mode,  // IN: Requested open mode
+                 uint32 permissions)   // IN: Effective user permissions
+{
+   if ((permissions & HGFS_PERM_READ) == 0) {
+      if ((mode & (HGFS_MODE_GENERIC_READ |
+                   HGFS_MODE_READ_DATA |
+                   HGFS_MODE_LIST_DIRECTORY |
+                   HGFS_MODE_READ_ATTRIBUTES |
+                   HGFS_MODE_READ_EXTATTRIBUTES |
+                   HGFS_MODE_READ_SECURITY)) != 0) {
+         return FALSE;
+      }
+   }
+
+   if ((permissions & HGFS_PERM_WRITE) == 0) {
+      if ((mode & (HGFS_MODE_GENERIC_WRITE |
+                   HGFS_MODE_WRITE_DATA |
+                   HGFS_MODE_APPEND_DATA |
+                   HGFS_MODE_DELETE |
+                   HGFS_MODE_ADD_SUBDIRECTORY |
+                   HGFS_MODE_DELETE_CHILD |
+                   HGFS_MODE_WRITE_ATTRIBUTES |
+                   HGFS_MODE_WRITE_EXTATTRIBUTES |
+                   HGFS_MODE_WRITE_SECURITY |
+                   HGFS_MODE_TAKE_OWNERSHIP |
+                   HGFS_MODE_ADD_FILE)) != 0) {
+         return FALSE;
+      }
+   }
+
+   if ((permissions & HGFS_PERM_EXEC) == 0) {
+      if ((mode & (HGFS_MODE_GENERIC_EXECUTE |
+                   HGFS_MODE_TRAVERSE_DIRECTORY)) != 0) {
+         return FALSE;
+      }
+   }
+   return TRUE;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
  * HgfsAccessInt --
  *
  *      Check to ensure the user has the specified type of access to the file.
@@ -2712,94 +2953,106 @@ out:
  */
 
 int
-HgfsAccessInt(struct vnode *vp, // IN: Vnode to check access for
-	      int mode)         // IN: Access mdoe requested.
+HgfsAccessInt(struct vnode *vp,     // IN: Vnode to check access for
+              HgfsAccessMode mode)  // IN: Access mode requested.
 {
-   HgfsVnodeAttr va;
    int ret = 0;
+   HgfsSuperInfo *sip = HGFS_VP_TO_SIP(vp);
+   HgfsAttrV2 hgfsAttrV2;
 
-   DEBUG(VM_DEBUG_LOG, "Enter %s.\n",  HGFS_VP_TO_FILENAME(vp));
+   DEBUG(VM_DEBUG_ENTRY, "HgfsAccessInt is called\n");
 
-   /* Get the attributes for this file from the Hgfs server. */
-   ret = HgfsGetattrInt(vp, &va);
-   if (ret) {
-      return ret;
+   ret = HgfsDoGetattrByName(HGFS_VP_TO_FILENAME(vp), sip, &hgfsAttrV2);
+   if (ret == 0) {
+      uint32 effectivePermissions;
+      if (hgfsAttrV2.mask & HGFS_ATTR_VALID_EFFECTIVE_PERMS) {
+         effectivePermissions = hgfsAttrV2.effectivePerms;
+      } else {
+         /*
+          * If the server did not return actual effective permissions then
+          * need to calculate ourselves. However we should avoid unnecessary denial of
+          * access so perform optimistic permissions calculation.
+          * It is safe since host enforces necessary restrictions regardless of
+          * the client's decisions.
+          */
+         effectivePermissions =
+            hgfsAttrV2.ownerPerms | hgfsAttrV2.groupPerms | hgfsAttrV2.otherPerms;
+      }
+      if (!IsModeCompatible(mode, effectivePermissions)) {
+         ret = EPERM;
+         DEBUG(VM_DEBUG_FAIL, "HgfsAccessInt denied access: %s (%d, %d)\n",
+               HGFS_VP_TO_FILENAME(vp), mode, effectivePermissions);
+      }
+   } else {
+      DEBUG(VM_DEBUG_FAIL, "HgfsAccessInt failed getting attrib: %s (%d)\n",
+            HGFS_VP_TO_FILENAME(vp), ret);
    }
+   return ret;
+}
 
-   DEBUG(VM_DEBUG_INFO, "vp's mode: %o\n", va.va_mode);
 
-   if ((mode & S_ISUID) && !(va.va_mode & S_ISUID)) {
-      DEBUG(VM_DEBUG_FAIL, "Special: user id not set on execution (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsMmapInt --
+ *
+ *      HgfsMmapInt is invoked invoked from HgfsVnopMmap to verify parameters
+ *      and mark vnode as mmapped if necessary.
+ *
+ * Results:
+ *      Zero on success or non-zero error code otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+int
+HgfsMmapInt(struct vnode *vp,
+            int accessMode)
+{
+   ASSERT(vp);
+
+   DEBUG(VM_DEBUG_ENTRY, "mmapping \"%s\"\n", HGFS_VP_TO_FILENAME(vp));
+
+   return HgfsCheckAndReferenceHandle(vp, TRUE, accessMode);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * HgfsMnomapInt --
+ *
+ *      HgfsMnomapInt is invoked invoked from HgfsVnopNomap to tear down memory
+ *      mapping and dereference file handle.
+ *
+ * Results:
+ *      Zero on success or non-zero error code otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+int
+HgfsMnomapInt(struct vnode *vp)
+{
+   int error = 0;
+   HgfsHandle handleToClose;
+   HgfsSuperInfo *sip = HGFS_VP_TO_SIP(vp);
+
+   ASSERT(vp);
+   DEBUG(VM_DEBUG_ENTRY, "unmmapping \"%s\"\n", HGFS_VP_TO_FILENAME(vp));
+
+   /*
+    * Check to see if we should close the file handle on the host, which happen when
+    * the reference count of the current handle become 0.
+    */
+   if (HgfsReleaseOpenFileHandle(vp, TRUE, &handleToClose) == 0) {
+      error = HgfsCloseServerFileHandle(sip, handleToClose);
    }
-
-   if ((mode & S_ISGID) && !(va.va_mode & S_ISGID)) {
-      DEBUG(VM_DEBUG_FAIL, "Special: group id not set on execution(%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_ISVTX) && !(va.va_mode & S_ISVTX)) {
-      DEBUG(VM_DEBUG_FAIL, "Special: sticky bit not set (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IRUSR) && !(va.va_mode & S_IRUSR)) {
-      DEBUG(VM_DEBUG_FAIL, "Owner: read access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IWUSR) && !(va.va_mode & S_IWUSR)) {
-      DEBUG(VM_DEBUG_FAIL, "Owner: write access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IXUSR) && !(va.va_mode & S_IXUSR)) {
-      DEBUG(VM_DEBUG_FAIL, "Owner: execute access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IRGRP) && !(va.va_mode & S_IRGRP)) {
-      DEBUG(VM_DEBUG_FAIL, "Group: read access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IWGRP) && !(va.va_mode & S_IWGRP)) {
-      DEBUG(VM_DEBUG_FAIL, "Group: write access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IXGRP) && !(va.va_mode & S_IXGRP)) {
-      DEBUG(VM_DEBUG_FAIL, "Group: execute access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IROTH) && !(va.va_mode & S_IROTH)) {
-      DEBUG(VM_DEBUG_FAIL, "Other: read access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IWOTH) && !(va.va_mode & S_IWOTH)) {
-      DEBUG(VM_DEBUG_FAIL, "Other: write access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   if ((mode & S_IXOTH) && !(va.va_mode & S_IXOTH)) {
-      DEBUG(VM_DEBUG_FAIL, "Other: execute access not allowed (%s).\n",
-            HGFS_VP_TO_FILENAME(vp));
-      return EPERM;
-   }
-
-   return 0;
-
+   return error;
 }

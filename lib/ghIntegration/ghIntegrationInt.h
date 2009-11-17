@@ -27,6 +27,7 @@
 
 #include "dynbuf.h"
 #include "unityCommon.h"
+#include "guestrpc/ghiGetExecInfoHash.h"
 #include "guestrpc/ghiProtocolHandler.h"
 
 typedef struct _GHIPlatform GHIPlatform;
@@ -46,6 +47,7 @@ Bool GHIPlatformGetBinaryHandlers(GHIPlatform *ghip,
                                   XDR *xdrs);
 Bool GHIPlatformOpenStartMenuTree(GHIPlatform *ghip,
                                   const char *rootUtf8,
+                                  uint32 flags,
                                   DynBuf *buf);
 Bool GHIPlatformGetStartMenuItem(GHIPlatform *ghip,
                                  uint32 handle,
@@ -64,7 +66,65 @@ void GHIPlatformUnregisterCaps(GHIPlatform *ghip);
 Bool GHIPlatformGetProtocolHandlers(GHIPlatform *ghip,
                                     GHIProtocolHandlerList *protocolHandlerList);
 
+/*
+ * Set the temporary folder used by Outlook to store attachments.
+ */
+Bool GHIPlatformSetOutlookTempFolder(GHIPlatform* ghip, const XDR* xdrs);
+
+/*
+ * Restore the temporary folder used by Outlook to store attachments.
+ */
+Bool GHIPlatformRestoreOutlookTempFolder(GHIPlatform* ghip);
+
+/*
+ * Perform an action on the Trash (aka Recycle Bin) folder, such as opening it
+ * or emptying it.
+ */
+Bool GHIPlatformTrashFolderAction(GHIPlatform* ghip, const XDR *xdrs);
+
+/* Get the icon for the Trash (aka Recycle Bin) folder. */
+Bool GHIPlatformTrashFolderGetIcon(GHIPlatform *ghip, XDR *xdrs);
+
+/*
+ * Send a mouse event to a tray icon.
+ */
+Bool GHIPlatformTrayIconSendEvent(GHIPlatform *ghip, const XDR *xdrs);
+
+/*
+ * Start sending tray icon updates to the VMX.
+ */
+Bool GHIPlatformTrayIconStartUpdates(GHIPlatform *ghip);
+
+/*
+ * Stop sending tray icon updates to the VMX.
+ */
+Bool GHIPlatformTrayIconStopUpdates(GHIPlatform *ghip);
+
 /* Implemented by ghIntegration.c for use by the platform-specific code */
-Bool GHILaunchMenuChangeRPC(void);
+Bool GHILaunchMenuChangeRPC(int numFolderKeys, const char **folderKeysChanged);
+
+/*
+ * Used by the platform-specific code to send the "ghi.guest.trashFolder.state"
+ * RPC to the host.
+ */
+Bool GHISendTrashFolderStateRPC(XDR *xdrs);
+
+/*
+ * Used by the platform-specific code to send the "ghi.guest.trayIcon.update"
+ * RPC to the host.
+ */
+Bool GHISendTrayIconUpdateRpc(XDR *xdrs);
+
+/*
+ * Set the specified window to be focused.
+ */
+Bool GHIPlatformSetFocusedWindow(GHIPlatform *ghip, const XDR *xdrs);
+
+/*
+ * Get the hash (or timestamp) of information returned by get.binary.info.
+ */
+Bool GHIPlatformGetExecInfoHash(GHIPlatform *ghip,
+                                const GHIGetExecInfoHashRequest *request,
+                                GHIGetExecInfoHashReply *reply);
 
 #endif

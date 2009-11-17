@@ -32,7 +32,7 @@
 # endif
 # include <limits.h>
 # include <stdio.h>      /* Needed before sys/mnttab.h in Solaris */
-# ifdef sun
+# if defined(sun)
 #  include <sys/mnttab.h>
 # elif __APPLE__
 #  include <sys/mount.h>
@@ -41,6 +41,9 @@
 # endif
 #include <signal.h>
 #endif
+#if defined(GLIBC_VERSION_24)
+#define _GNU_SOURCE
+#endif
 #include <unistd.h>
 #include <errno.h>
 #include <sys/stat.h>
@@ -48,7 +51,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <dirent.h>
-#ifdef __linux__
+#if defined(__linux__)
 #   include <pwd.h>
 #endif
 
@@ -72,8 +75,7 @@ static char *FilePosixLookupMountPoint(char const *canPath, Bool *bind);
 #endif
 static char *FilePosixNearestExistingAncestor(char const *path);
 
-# ifdef VMX86_SERVER
-#define VMFS2CONST 456
+#if defined(VMX86_SERVER)
 #define VMFS3CONST 256
 #include "hostType.h"
 /* Needed for VMFS implementation of File_GetFreeSpace() */
@@ -81,7 +83,7 @@ static char *FilePosixNearestExistingAncestor(char const *path);
 # endif
 #endif
 
-#ifdef VMX86_SERVER
+#if defined(VMX86_SERVER)
 #include "fs_user.h"
 #endif
 
@@ -164,14 +166,15 @@ FileRename(ConstUnicode oldName,  // IN:
  *----------------------------------------------------------------------
  *
  *  FileDeletion --
- *	Delete the specified file
+ *	     Delete the specified file.  A NULL pathName will result in an error
+ *	     and errno will be set to EFAULT.
  *
  * Results:
  *	0	success
  *	> 0	failure (errno)
  *
  * Side effects:
- *      May change the host file system.
+ *      May change the host file system.  errno may be set.
  *
  *----------------------------------------------------------------------
  */
@@ -182,13 +185,17 @@ FileDeletion(ConstUnicode pathName,   // IN:
 {
    int err;
    char *linkPath = NULL;
-   char *primaryPath = Unicode_GetAllocBytes(pathName,
-                                             STRING_ENCODING_DEFAULT);
+   char *primaryPath;
 
-   if (primaryPath == NULL && pathName != NULL) {
+   if (pathName == NULL) {
+      errno = EFAULT;
+      return errno;
+   } else if ((primaryPath = Unicode_GetAllocBytes(pathName,
+                               STRING_ENCODING_DEFAULT)) == NULL) {
       Log(LGPFX" %s: failed to convert \"%s\" to current encoding\n",
           __FUNCTION__, UTF8(pathName));
-      return UNICODE_CONVERSION_ERRNO;
+      errno = UNICODE_CONVERSION_ERRNO;
+      return errno;
    }
 
    if (handleLink) {
@@ -274,6 +281,20 @@ FileAttributes(ConstUnicode pathName,  // IN:
 {
    int err;
    struct stat statbuf;
+
+#if defined(GLIBC_VERSION_24)
+   char *path;
+
+   if (fileData == NULL) {
+      if (!PosixConvertToCurrent(pathName, &path)) {
+         return -1;
+      }
+      ret = euidaccess(path, F_OK);
+      free(path);
+
+      return ret;
+   }
+#endif
 
    if (Posix_Stat(pathName, &statbuf) == -1) {
       err = errno;
@@ -375,6 +396,9 @@ File_IsRemote(ConstUnicode pathName)  // IN: Path name
       return TRUE;
    }
    if (SMB_SUPER_MAGIC == sfbuf.f_type) {
+      return TRUE;
+   }
+   if (CIFS_SUPER_MAGIC == sfbuf.f_type) {
       return TRUE;
    }
    return FALSE;
@@ -536,7 +560,6 @@ File_FullPath(ConstUnicode pathName)  // IN:
 {
    Unicode cwd;
    Unicode ret;
-   Unicode temp;
 
    if ((pathName != NULL) && File_IsFullPath(pathName)) {
       cwd = NULL;
@@ -548,26 +571,25 @@ File_FullPath(ConstUnicode pathName)  // IN:
    }
 
    if ((pathName == NULL) || Unicode_IsEmpty(pathName)) {
-      temp = Unicode_Duplicate(cwd);
+      ret = Unicode_Duplicate(cwd);
    } else if (File_IsFullPath(pathName)) {
-      temp = Unicode_Duplicate(pathName);
+       ret = Posix_RealPath(pathName);
+       if (ret == NULL) {
+          ret = FileStripFwdSlashes(pathName);
+       }
    } else {
       Unicode path;
 
       path = Unicode_Join(cwd, DIRSEPS, pathName, NULL);
 
-      temp = Posix_RealPath(path);
+      ret = Posix_RealPath(path);
 
-      if (temp == NULL) {
-         temp = path;
-      } else {
-         Unicode_Free(path);
-      }
+      if (ret == NULL) {
+         ret = FileStripFwdSlashes(path);
+      } 
+      Unicode_Free(path);
    }
 
-   ret = FileStripFwdSlashes(temp);
-
-   Unicode_Free(temp);
    Unicode_Free(cwd);
 
    return ret;
@@ -813,6 +835,37 @@ File_SetTimes(ConstUnicode pathName,      // IN:
 }
 
 
+/*
+ *----------------------------------------------------------------------
+ *
+ * File_SetFilePermissions --
+ *
+ *      Set file permissions.
+ *
+ * Results:
+ *      TRUE if succeed or FALSE if error.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+Bool
+File_SetFilePermissions(ConstUnicode pathName,     // IN:
+                        int perms)                 // IN: permissions
+{
+   ASSERT(pathName);
+   if (Posix_Chmod(pathName, perms) == -1) {
+      /* The error is not critical, just log it. */
+      Log(LGPFX" %s: failed to change permissions on file \"%s\": %s\n", __FUNCTION__,
+          UTF8(pathName), strerror(errno));
+      return FALSE;
+   }
+   return TRUE;
+}
+
+
 #if !defined(__FreeBSD__) && !defined(sun)
 /*
  *-----------------------------------------------------------------------------
@@ -968,26 +1021,69 @@ File_GetFreeSpace(ConstUnicode pathName,  // IN: File name
    if (statfsbuf.f_type == VMFS_MAGIC_NUMBER) {
       int fd;
       FS_FreeSpaceArgs args = { 0 };
-      Unicode directory = NULL;
+      Unicode specialPath = NULL;
 
-      File_SplitName(fullPath, NULL, &directory, NULL);
-      /* Must use an ioctl() to get free space for a VMFS file. */
+      /*
+       * If the file exists and can be opened we're all set. If the file
+       * doesn't exist we can use the parent directory for the ioctl.
+       * However, if the file exists and can't be opened (e.g. permissions
+       * issues) a correct answer can only be returned if the target isn't a
+       * directory. If the target is a directory its parent may be a mount
+       * point - leading across a mount point to a different file system.
+       * PR 412387
+       */
+
       ret = -1;
-      fd = Posix_Open(directory, O_RDONLY, 0);
+
+      fd = Posix_Open(fullPath, O_RDONLY, 0);
+
+      if (fd == -1) {
+         switch (errno) {
+         case EPERM:
+         case EACCES:
+            {
+               int err = errno;
+               struct stat statbuf;
+
+               if (Posix_Stat(fullPath, &statbuf) == -1) {
+                  errno = err;
+                  break;
+               }
+
+               if (S_ISDIR(statbuf.st_mode)) {
+                  Warning(LGPFX" %s: directory (%s) present but inaccessible\n",
+                          __func__, UTF8(fullPath));
+                  errno = err;
+                  break;
+               }
+            }
+            /* FALLTHROUGH */
+
+         case ENOENT:
+         default:
+            File_SplitName(fullPath, NULL, &specialPath, NULL);
+
+            fd = Posix_Open(specialPath, O_RDONLY, 0);
+         }
+      }
+
       if (fd == -1) {
          Warning(LGPFX" %s: open of %s failed with: %s\n", __func__,
-                 UTF8(directory), Msg_ErrString());
+                 (specialPath == NULL) ? UTF8(fullPath) : UTF8(specialPath),
+                 Msg_ErrString());
       } else {
          if (ioctl(fd, IOCTLCMD_VMFS_GET_FREE_SPACE, &args) == -1) {
             Warning(LGPFX" %s: ioctl on %s failed with: %s\n", __func__,
-                    UTF8(fullPath), Msg_ErrString());
+                    (specialPath == NULL) ? UTF8(fullPath) : UTF8(specialPath),
+                    Msg_ErrString());
          } else {
             ret = args.bytesFree;
          }
+
          close(fd);
       }
 
-      Unicode_Free(directory);
+      Unicode_Free(specialPath);
    }
 #endif
 
@@ -1318,13 +1414,13 @@ end:
  *      Returns a string which uniquely identifies the underlying filesystem
  *      for a given path.
  *
- *      'path' can be relative (including empty) or absolute, and any number of
- *      non-existing components at the end of 'path' are simply ignored.
+ *      'path' can be relative (including empty) or absolute, and any number
+ *      of non-existing components at the end of 'path' are simply ignored.
  *
  *      XXX: On Posix systems, we choose the underlying device's name as the
- *           unique ID. I make no claim that this is 100% unique so if you need
- *           this functionality to be 100% perfect, I suggest you think about
- *           it more deeply than I did. -meccleston
+ *           unique ID. I make no claim that this is 100% unique so if you
+ *           need this functionality to be 100% perfect, I suggest you think
+ *           about it more deeply than I did. -meccleston
  *
  * Results:
  *      On success: Allocated and NUL-terminated filesystem ID.
@@ -1626,6 +1722,7 @@ FilePosixNearestExistingAncestor(char const *path) // IN: File path
 {
    size_t resultSize;
    char *result;
+   struct stat statbuf;
 
    resultSize = MAX(strlen(path), 1) + 1;
    result = Util_SafeMalloc(resultSize);
@@ -1639,7 +1736,7 @@ FilePosixNearestExistingAncestor(char const *path) // IN: File path
          break;
       }
 
-      if (File_Exists(result)) {
+      if (Posix_Stat(result, &statbuf) == 0) {
          break;
       }
 
@@ -1799,13 +1896,14 @@ File_IsSameFile(ConstUnicode path1,  // IN:
  * File_Replace --
  *
  *      Replace old file with new file, and attempt to reproduce
- *      file permissions.
+ *      file permissions.  A NULL value for either the oldName or
+ *      newName will result in failure and errno will be set to EFAULT.
  *
  * Results:
  *      TRUE on success.
  *
  * Side effects:
- *      None.
+ *      errno may be set.
  *
  *-----------------------------------------------------------------------------
  */
@@ -1820,16 +1918,22 @@ File_Replace(ConstUnicode oldName,  // IN: old file
    char *oldPath = NULL;
    struct stat st;
 
-   newPath = Unicode_GetAllocBytes(newName, STRING_ENCODING_DEFAULT);
-   if (newPath == NULL && newName != NULL) {
+   if (newName == NULL) {
+      status = EFAULT;
+      goto bail;
+   } else if ((newPath = Unicode_GetAllocBytes(newName,
+                           STRING_ENCODING_DEFAULT)) == NULL) {
       status = UNICODE_CONVERSION_ERRNO;
       Msg_Append(MSGID(filePosix.replaceConversionFailed)
                  "Failed to convert file path \"%s\" to current encoding\n",
                  newName);
       goto bail;
    }
-   oldPath = Unicode_GetAllocBytes(oldName, STRING_ENCODING_DEFAULT);
-   if (oldPath == NULL && oldName != NULL) {
+   if (oldName == NULL) {
+      status = EFAULT;
+      goto bail;
+   } else if ((oldPath = Unicode_GetAllocBytes(oldName,
+                           STRING_ENCODING_DEFAULT)) == NULL) {
       status = UNICODE_CONVERSION_ERRNO;
       Msg_Append(MSGID(filePosix.replaceConversionFailed)
                  "Failed to convert file path \"%s\" to current encoding\n",
@@ -1964,9 +2068,6 @@ FilePosixCreateTestFileSize(ConstUnicode dirName, // IN: directory to create lar
  *
  *      Check if the given file is on a VMFS supports such a file size
  *
- *      In the case of VMFS2, the largest supported file size is
- *         456 * 1024 * B bytes
- *
  *      In the case of VMFS3/4, the largest supported file size is
  *         256 * 1024 * B bytes
  *
@@ -2008,14 +2109,12 @@ File_VMFSSupportsFileSize(ConstUnicode pathName,  // IN:
    }
 
    if (strcmp(fsType, "VMFS") == 0) {
-      if (version == 2) {
-         maxFileSize = (VMFS2CONST * (uint64) blockSize * 1024);
-      } else if (version >= 3) {
+      if (version >= 3) {
          /* Get ready for VMFS4 and perform sanity check on version */
          ASSERT(version == 3 || version == 4);
 
          maxFileSize = (VMFS3CONST * (uint64) blockSize * 1024);
-      } 
+      }
 
       if (fileSize <= maxFileSize && maxFileSize != -1) {
          free(fsType);
@@ -2090,8 +2189,8 @@ File_SupportsFileSize(ConstUnicode pathName,  // IN:
     * We acquire the full path name for testing in 
     * FilePosixCreateTestFileSize().  This is also done in the event that
     * a user tries to create a virtual disk in the directory that they want
-    * a vmdk created in (setting filePath only to the disk name, not the entire
-    * path.
+    * a vmdk created in (setting filePath only to the disk name, not the
+    * entire path.
     */
 
    fullPath = File_FullPath(pathName);
@@ -2101,9 +2200,9 @@ File_SupportsFileSize(ConstUnicode pathName,  // IN:
    }
 
    /* 
-    * This function expects a filename. If given one, truncate the name to point
-    * to the parent directory so we can get accurate results from FileIsVMFS.
-    * If handed a directory directly, no truncation is necessary.
+    * This function expects a filename. If given one, truncate the name to
+    * point to the parent directory so we can get accurate results from
+    * FileIsVMFS. If handed a directory directly, no truncation is necessary.
     */
 
    if (File_IsDirectory(pathName)) {
@@ -2724,10 +2823,11 @@ File_MakeCfgFileExecutable(ConstUnicode pathName)
  *
  * File_GetSizeAlternate --
  *
- *      An alternate way to determine the filesize. Useful for finding problems
- *      with files on remote fileservers, such as described in bug 19036.
- *      However, in Linux we do not have an alternate way, yet, to determine the
- *      problem, so we call back into the regular getSize function.
+ *      An alternate way to determine the filesize. Useful for finding
+ *      problems with files on remote fileservers, such as described in bug
+ *      19036. However, in Linux we do not have an alternate way, yet, to
+ *      determine the problem, so we call back into the regular getSize
+ *      function.
  *
  * Results:
  *      Size of file or -1.

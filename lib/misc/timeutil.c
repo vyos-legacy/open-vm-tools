@@ -24,6 +24,7 @@
 
 
 #include "safetime.h"
+#include "unicode.h"
 
 #if defined(N_PLAT_NLM)
 #  include <sys/timeval.h>
@@ -74,14 +75,18 @@
 static void TimeUtilInit(TimeUtil_Date *d);
 static Bool TimeUtilLoadDate(TimeUtil_Date *d, const char *date);
 static Bool TimeUtilIsLeapYear(unsigned int year);
-static Bool TimeUtilIsValidDate(unsigned int year, unsigned int month, unsigned int day);
+static Bool TimeUtilIsValidDate(unsigned int year,
+                                unsigned int month,
+                                unsigned int day);
 
 
 /*
- * Function to guess Windows TZ Index by using time offset in
+ * Function to guess Windows TZ Index and Name by using time offset in
  * a lookup table
  */
-static int TimeUtilFindIndexByUTCOffset(int utcToStdOffsetMins);
+
+static int TimeUtilFindIndexAndNameByUTCOffset(int utcStdOffMins,
+                                               const char **ptzName);
 
 #if defined(_WIN32)
 /*
@@ -157,6 +162,7 @@ TimeUtil_StringToDate(TimeUtil_Date *d,  // IN/OUT
     * Reduce the string to a known and handled format: YYYYMMDD.
     * Then, passed to internal function TimeUtilLoadDate.
     */
+
    if (strlen(date) == 8) {
       /* 'YYYYMMDD' */
       return TimeUtilLoadDate(d, date);
@@ -317,6 +323,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     *   intentionally subtract an additional 2 days for each year
     *   and an additional 3 days.
     */
+
    dayCount = dayCount + 3 + 2 * (dayCount / 365);
 
    subYear = dayCount / 365;
@@ -343,6 +350,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * making sure on the valid range, without checking
     * for leap year, etc.
     */
+
    if ((estDay > 28) && (estMonth == 2)) {
       estDay = 28;
    }
@@ -355,6 +363,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * we also copy the time from the original argument in making
     * sure that it does not play role in the comparison.
     */
+
    estRes.hour = d->hour;
    estRes.minute = d->minute;
    estRes.second = d->second;
@@ -364,6 +373,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * guaranteed to be lower than the actual result. Otherwise,
     * infinite loop will happen.
     */
+
    ASSERT(TimeUtil_DateLowerThan(&estRes, d));
 
    /*
@@ -371,6 +381,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * Done by moving up (moving forward) the estimated a day at a time
     *    until they are the correct one (i.e. estDate + arg #day = arg date)
     */
+
    temp = estRes;
    TimeUtil_DaysAdd(&temp, nr);
    while (TimeUtil_DateLowerThan(&temp, d)) {
@@ -537,12 +548,15 @@ TimeUtil_DaysLeft(TimeUtil_Date const *d) // IN
    /* Get the current local date. */
    TimeUtil_PopulateWithCurrent(TRUE, &c);
 
-   /* Compute how many days we can add to the current date before reaching
-      the given date */
+   /*
+    * Compute how many days we can add to the current date before reaching
+    * the given date
+    */
+
    for (i = 0; i < MAX_DAYSLEFT + 1; i++) {
-      if (    c.year > d->year
-          || (c.year == d->year && c.month > d->month)
-          || (c.year == d->year && c.month == d->month && c.day >= d->day)) {
+      if ((c.year > d->year) ||
+          (c.year == d->year && c.month > d->month) ||
+          (c.year == d->year && c.month == d->month && c.day >= d->day)) {
          /* current date >= given date */
          return i;
       }
@@ -768,7 +782,8 @@ TimeUtil_GetTimeFormat(int64 utcTime,  // IN
       return NULL;
    }
 
-   if (!TimeUtil_UTCTimeToSystemTime((const __time64_t) utcTime, &systemTime)) {
+   if (!TimeUtil_UTCTimeToSystemTime((const __time64_t) utcTime,
+                                      &systemTime)) {
       return NULL;
    }
 
@@ -788,6 +803,7 @@ TimeUtil_GetTimeFormat(int64 utcTime,  // IN
    char *str;
    str = Util_SafeStrdup(ctime((const time_t *) &utcTime));
    str[strlen(str)-1] = '\0';
+
    return str;
 #endif // _WIN32
 }
@@ -841,14 +857,14 @@ TimeUtil_NtTimeToUnixTime(struct timespec *unixTime,   // OUT: Time in Unix form
       return -1;
    }
 
-#ifndef VM_X86_64
+#ifdef __i386__ // only for 32-bit x86
    Div643232(ntTime - UNIX_EPOCH, 10000000, &sec, &nsec);
    unixTime->tv_sec = sec;
    unixTime->tv_nsec = nsec * 100;
 #else
    unixTime->tv_sec = (ntTime - UNIX_EPOCH) / 10000000;
    unixTime->tv_nsec = ((ntTime - UNIX_EPOCH) % 10000000) * 100;
-#endif // VM_X86_64
+#endif // __i386__
 
    return 0;
 }
@@ -874,7 +890,7 @@ VmTimeType
 TimeUtil_UnixTimeToNtTime(struct timespec unixTime) // IN: Time in Unix format
 {
    return (VmTimeType)unixTime.tv_sec * 10000000 +
-      unixTime.tv_nsec / 100 + UNIX_EPOCH;
+                                          unixTime.tv_nsec / 100 + UNIX_EPOCH;
 }
 #endif // _WIN32 && N_PLAT_NLM
 
@@ -908,6 +924,7 @@ TimeUtil_UTCTimeToSystemTime(const __time64_t utcTime,   // IN
     * _localtime64 support years up through 3000.  At least it says
     * so.  I'm getting garbage only after reaching year 4408.
     */
+
    if (utcTime < 0 || utcTime > (60LL * 60 * 24 * 365 * (3000 - 1970))) {
       return FALSE;
    }
@@ -925,6 +942,7 @@ TimeUtil_UTCTimeToSystemTime(const __time64_t utcTime,   // IN
     * Main reason for this test is to cut out negative values _localtime64
     * likes to return for some inputs.
     */
+
    if (atmYear < 1601 || atmYear > 30827 ||
        atmMonth < 1 || atmMonth > 12 ||
        atm->tm_wday < 0 || atm->tm_wday > 6 ||
@@ -953,9 +971,9 @@ TimeUtil_UTCTimeToSystemTime(const __time64_t utcTime,   // IN
 /*
  *----------------------------------------------------------------------
  *
- * TimeUtil_GetLocalWindowsTimeZoneIndex --
+ * TimeUtil_GetLocalWindowsTimeZoneIndexAndName --
  *
- *    Gets Windows TZ index for local time zone.
+ *    Gets Windows TZ Index and Name for local time zone.
  *
  * Results:
  *    -1 if there is any error, else the Windows Time Zone ID of the
@@ -968,71 +986,81 @@ TimeUtil_UTCTimeToSystemTime(const __time64_t utcTime,   // IN
  *----------------------------------------------------------------------
  */
 int
-TimeUtil_GetLocalWindowsTimeZoneIndex(void)
+TimeUtil_GetLocalWindowsTimeZoneIndexAndName(char **ptzName)   // OUT: returning TZ Name
 {
    int utcStdOffMins = 0;
    int winTimeZoneIndex = (-1);
+   const char *tzNameByUTCOffset = NULL;
+
+   *ptzName = NULL;
 
 #if defined(_WIN32)
 
-   TIME_ZONE_INFORMATION tz;
-   char name[256] = { 0 };
-   size_t nameLen = 0, nc = 0;
-   if (GetTimeZoneInformation(&tz) == TIME_ZONE_ID_INVALID) {
-      return (-1);
-   }
-
-   /* 'Bias' = diff between UTC and local standard time */
-   utcStdOffMins = 0-tz.Bias; // already in minutes
-
-   /* Get TZ name */
-   nameLen = wcslen(tz.StandardName);
-   if (wcstombs(name, tz.StandardName, 255) <= 0) {
+   {
+      TIME_ZONE_INFORMATION tz;
+      if (GetTimeZoneInformation(&tz) == TIME_ZONE_ID_INVALID) {
          return (-1);
-   }
+      }
 
-   /* Convert name to Windows TZ index */
-   winTimeZoneIndex = Win32TimeUtilLookupZoneIndex(name);
+      /* 'Bias' = diff between UTC and local standard time */
+      utcStdOffMins = 0 - tz.Bias; // already in minutes
+
+      /* Find Windows TZ index */
+      *ptzName = Unicode_AllocWithUTF16(tz.StandardName);
+      winTimeZoneIndex = Win32TimeUtilLookupZoneIndex(*ptzName);
+      if (winTimeZoneIndex < 0) {
+         Unicode_Free(*ptzName);
+         *ptzName = NULL;
+      }
+   }
 
 #else // NOT _WIN32
 
-   /*
-    * Use localtime_r() to get offset between our local
-    * time and UTC. This varies by platform. Also, the structure
-    * fields are named "*gmt*" but the man pages claim offsets are
-    * to UTC, not GMT.
-    */
-
-   time_t now = time(NULL);
-   struct tm tim;
-   localtime_r(&now, &tim);
-
-   #if defined SOL9 || defined SOL10 || defined N_PLAT_NLM
+   {
       /*
-       * Offset is to standard (no need for DST adjustment).
-       * Negative is east of prime meridian.
+       * Use localtime_r() to get offset between our local
+       * time and UTC. This varies by platform. Also, the structure
+       * fields are named "*gmt*" but the man pages claim offsets are
+       * to UTC, not GMT.
        */
-      utcStdOffMins = 0 - timezone/60;
-   #else
-      /*
-       * FreeBSD, Apple, Linux only:
-       * Offset is to local (need to adjust for DST).
-       * Negative is west of prime meridian.
-       */
-      utcStdOffMins = tim.tm_gmtoff/60;
-      if (tim.tm_isdst) {
-         utcStdOffMins -= 60;
-      }
-   #endif
 
-   /* can't figure this out directly for non-Win32 */
-   winTimeZoneIndex = (-1);
+      time_t now = time(NULL);
+      struct tm tim;
+      localtime_r(&now, &tim);
+
+      #if defined(sun) || defined N_PLAT_NLM
+         /*
+          * Offset is to standard (no need for DST adjustment).
+          * Negative is east of prime meridian.
+          */
+
+         utcStdOffMins = 0 - timezone/60;
+      #else
+         /*
+          * FreeBSD, Apple, Linux only:
+          * Offset is to local (need to adjust for DST).
+          * Negative is west of prime meridian.
+          */
+
+         utcStdOffMins = tim.tm_gmtoff/60;
+         if (tim.tm_isdst) {
+            utcStdOffMins -= 60;
+         }
+      #endif
+
+      /* can't figure this out directly for non-Win32 */
+      winTimeZoneIndex = (-1);
+   }
 
 #endif
 
    /* If we don't have it yet, look up windowsCode. */
    if (winTimeZoneIndex < 0) {
-      winTimeZoneIndex = TimeUtilFindIndexByUTCOffset(utcStdOffMins);
+      winTimeZoneIndex = TimeUtilFindIndexAndNameByUTCOffset(utcStdOffMins,
+                                                         &tzNameByUTCOffset);
+      if (winTimeZoneIndex >= 0) {
+         *ptzName = Unicode_AllocWithUTF8(tzNameByUTCOffset);
+      }
    }
 
    return winTimeZoneIndex;
@@ -1105,6 +1133,7 @@ TimeUtilIsValidDate(unsigned int year,   // IN
    /*
     * Initialize the table
     */
+
    if (TimeUtilIsLeapYear(year)) {
       monthdays[2] = 29;
    } else {
@@ -1219,7 +1248,8 @@ TimeUtilLoadDate(TimeUtil_Date *d,  // IN/OUT
       return FALSE;
    }
 
-   if (!TimeUtilIsValidDate((unsigned int) year, (unsigned int) month, (unsigned int) day)) {
+   if (!TimeUtilIsValidDate((unsigned int) year, (unsigned int) month,
+                            (unsigned int) day)) {
       return FALSE;
    }
 
@@ -1234,15 +1264,11 @@ TimeUtilLoadDate(TimeUtil_Date *d,  // IN/OUT
 /*
  *----------------------------------------------------------------------
  *
- * TimeUtilFindIndexByUTCOffset --
+ * TimeUtilFindIndexAndNameByUTCOffset --
  *
  *    Private function. Scans a table for a given UTC-to-Standard
  *    offset and returns the Windows TZ Index of the first match
- *    found.
- *
- * Parameters:
- *    utcStdOffMins   Offset to look for (in minutes)
- *                    <0 is west of PM, >0 is east of PM.
+ *    found together with its Windows TZ Name.
  *
  * Results:
  *    Returns Windows TZ Index (>=0) if found, else -1.
@@ -1252,96 +1278,110 @@ TimeUtilLoadDate(TimeUtil_Date *d,  // IN/OUT
  *
  *----------------------------------------------------------------------
  */
-static int TimeUtilFindIndexByUTCOffset(int utcStdOffMins)
+static int
+TimeUtilFindIndexAndNameByUTCOffset(int utcStdOffMins,      // IN: offset (in minutes)
+                                    const char **ptzName)   // OUT: returning TZ Name
 {
    static struct _tzinfo {
       int winTzIndex;
+      char winTzName[256];
       int utcStdOffMins;
    } TABLE[] = {
-      {   0, /* "Dateline Standard Time",*/        -720 }, // -12
-      {   1, /* "Samoa Standard Time",*/           -660 }, // -11
-      {   2, /* "Hawaiian Standard Time",*/        -600 }, // -10
-      {   3, /* "Alaskan Standard Time",*/         -540 }, // -9
-      {   4, /* "Pacific Standard Time",*/         -480 }, // -8
-      {  10, /* "Mountain Standard Time",*/        -420 }, // -7
-      {  13, /* "Mexico Standard Time 2",*/        -420 }, // -7
-      {  15, /* "U.S. Mountain Standard Time",*/   -420 }, // -7
-      {  20, /* "Central Standard Time",*/         -360 }, // -6
-      {  25, /* "Canada Central Standard Time",*/  -360 }, // -6
-      {  30, /* "Mexico Standard Time",*/          -360 }, // -6
-      {  33, /* "Central America Standard Time",*/ -360 }, // -6
-      {  35, /* "Eastern Standard Time",*/         -300 }, // -5
-      {  40, /* "U.S. Eastern Standard Time",*/    -300 }, // -5
-      {  45, /* "S.A. Pacific Standard Time",*/    -300 }, // -5
-      {  50, /* "Atlantic Standard Time",*/        -240 }, // -4
-      {  55, /* "S.A. Western Standard Time",*/    -240 }, // -4
-      {  56, /* "Pacific S.A. Standard Time",*/    -240 }, // -4
-      {  60, /* "Newfoundland Standard Time",*/    -210 }, // -3.5
-      {  65, /* "E. South America Standard Time",*/-180 }, // -3
-      {  70, /* "S.A. Eastern Standard Time",*/    -180 }, // -3
-      {  73, /* "Greenland Standard Time",*/       -180 }, // -3
-      {  75, /* "Mid-Atlantic Standard Time",*/    -120 }, // -2
-      {  80, /* "Azores Standard Time",*/           -60 }, // -1
-      {  83, /* "Cape Verde Standard Time",*/       -60 }, // -1
-      {  85, /* "GMT Standard Time",*/                0 }, // 0
-      {  90, /* "Greenwich Standard Time",*/          0 }, // 0
-      {  95, /* "Central Europe Standard Time",*/    60 }, // +1
-      { 100, /* "Central European Standard Time",*/  60 }, // +1
-      { 105, /* "Romance Standard Time",*/           60 }, // +1
-      { 110, /* "W. Europe Standard Time",*/         60 }, // +1
-      { 113, /* "W. Central Africa Standard Time",*/ 60 }, // +1
-      { 115, /* "E. Europe Standard Time",*/        120 }, // +2
-      { 120, /* "Egypt Standard Time",*/            120 }, // +2
-      { 125, /* "FLE Standard Time",*/              120 }, // +2
-      { 130, /* "GTB Standard Time",*/              120 }, // +2
-      { 135, /* "Israel Standard Time",*/           120 }, // +2
-      { 140, /* "South Africa Standard Time",*/     120 }, // +2
-      { 145, /* "Russian Standard Time",*/          180 }, // +3
-      { 150, /* "Arab Standard Time",*/             180 }, // +3
-      { 155, /* "E. Africa Standard Time",*/        180 }, // +3
-      { 158, /* "Arabic Standard Time",*/           180 }, // +3
-      { 160, /* "Iran Standard Time",*/             210 }, // +3.5
-      { 165, /* "Arabian Standard Time",*/          240 }, // +4
-      { 170, /* "Caucasus Standard Time",*/         240 }, // +4
-      { 175, /* "Afghanistan Standard Time",*/      270 }, // +4.5
-      { 180, /* "Ekaterinburg Standard Time",*/     300 }, // +5
-      { 185, /* "West Asia Standard Time",*/        300 }, // +5
-      { 190, /* "India Standard Time",*/            330 }, // +5.5
-      { 193, /* "Nepal Standard Time",*/            345 }, // +5.75
-      { 195, /* "Central Asia Standard Time",*/     360 }, // +6
-      { 200, /* "Sri Lanka Standard Time",*/        360 }, // +6
-      { 201, /* "N. Central Asia Standard Time",*/  360 }, // +6
-      { 203, /* "Myanmar Standard Time",*/          390 }, // +6.5
-      { 205, /* "S.E. Asia Standard Time",*/        420 }, // +7
-      { 207, /* "North Asia Standard Time",*/       420 }, // +7
-      { 210, /* "China Standard Time",*/            480 }, // +8
-      { 215, /* "Singapore Standard Time",*/        480 }, // +8
-      { 220, /* "Taipei Standard Time",*/           480 }, // +8
-      { 225, /* "W. Australia Standard Time",*/     480 }, // +8
-      { 227, /* "North Asia East Standard Time",*/  480 }, // +8
-      { 230, /* "Korea Standard Time",*/            540 }, // +9
-      { 235, /* "Tokyo Standard Time",*/            540 }, // +9
-      { 240, /* "Yakutsk Standard Time",*/          540 }, // +9
-      { 245, /* "A.U.S. Central Standard Time",*/   570 }, // +9.5
-      { 250, /* "Cen. Australia Standard Time",*/   570 }, // +9.5
-      { 255, /* "A.U.S. Eastern Standard Time",*/   600 }, // +10
-      { 260, /* "E. Australia Standard Time",*/     600 }, // +10
-      { 265, /* "Tasmania Standard Time",*/         600 }, // +10
-      { 270, /* "Vladivostok Standard Time",*/      600 }, // +10
-      { 275, /* "West Pacific Standard Time",*/     600 }, // +10
-      { 280, /* "Central Pacific Standard Time",*/  660 }, // +11
-      { 285, /* "Fiji Islands Standard Time",*/     720 }, // +12
-      { 290, /* "New Zealand Standard Time",*/      720 }, // +12
-      { 300, /* "Tonga Standard Time",*/            780 }};// +13
 
-   int tableSize = sizeof(TABLE) / sizeof(TABLE[0]);
-   int look;
+      /*
+       * These values are from Microsoft's TimeZone documentation:
+       *
+       * http://technet.microsoft.com/en-us/library/cc749073.aspx
+       */
+
+      {   0, "Dateline Standard Time",          -720 }, // -12
+      {   1, "Samoa Standard Time",             -660 }, // -11
+      {   2, "Hawaiian Standard Time",          -600 }, // -10
+      {   3, "Alaskan Standard Time",           -540 }, // -9
+      {   4, "Pacific Standard Time",           -480 }, // -8
+      {  10, "Mountain Standard Time",          -420 }, // -7
+      {  13, "Mountain Standard Time (Mexico)", -420 }, // -7
+      {  15, "US Mountain Standard Time",       -420 }, // -7
+      {  20, "Central Standard Time",           -360 }, // -6
+      {  25, "Canada Central Standard Time",    -360 }, // -6
+      {  30, "Central Standard Time (Mexico)",  -360 }, // -6
+      {  33, "Central America Standard Time",   -360 }, // -6
+      {  35, "Eastern Standard Time",           -300 }, // -5
+      {  40, "US Eastern Standard Time",        -300 }, // -5
+      {  45, "SA Pacific Standard Time",        -300 }, // -5
+      {  50, "Atlantic Standard Time",          -240 }, // -4
+      {  55, "SA Western Standard Time",        -240 }, // -4
+      {  56, "Pacific SA Standard Time",        -240 }, // -4
+      {  60, "Newfoundland Standard Time",      -210 }, // -3.5
+      {  65, "E. South America Standard Time",  -180 }, // -3
+      {  70, "SA Eastern Standard Time",        -180 }, // -3
+      {  73, "Greenland Standard Time",         -180 }, // -3
+      {  75, "Mid-Atlantic Standard Time",      -120 }, // -2
+      {  80, "Azores Standard Time",             -60 }, // -1
+      {  83, "Cape Verde Standard Time",         -60 }, // -1
+      {  85, "GMT Standard Time",                  0 }, // 0
+      {  90, "Greenwich Standard Time",            0 }, // 0
+      { 110, "W. Europe Standard Time",           60 }, // +1
+      {  95, "Central Europe Standard Time",      60 }, // +1
+      { 100, "Central European Standard Time",    60 }, // +1
+      { 105, "Romance Standard Time",             60 }, // +1
+      { 113, "W. Central Africa Standard Time",   60 }, // +1
+      { 115, "E. Europe Standard Time",          120 }, // +2
+      { 120, "Egypt Standard Time",              120 }, // +2
+      { 125, "FLE Standard Time",                120 }, // +2
+      { 130, "GTB Standard Time",                120 }, // +2
+      { 135, "Israel Standard Time",             120 }, // +2
+      { 140, "South Africa Standard Time",       120 }, // +2
+      { 145, "Russian Standard Time",            180 }, // +3
+      { 150, "Arab Standard Time",               180 }, // +3
+      { 155, "E. Africa Standard Time",          180 }, // +3
+      { 158, "Arabic Standard Time",             180 }, // +3
+      { 160, "Iran Standard Time",               210 }, // +3.5
+      { 165, "Arabian Standard Time",            240 }, // +4
+      { 170, "Caucasus Standard Time",           240 }, // +4
+      { 175, "Afghanistan Standard Time",        270 }, // +4.5
+      { 180, "Ekaterinburg Standard Time",       300 }, // +5
+      { 185, "West Asia Standard Time",          300 }, // +5
+      { 190, "India Standard Time",              330 }, // +5.5
+      { 193, "Nepal Standard Time",              345 }, // +5.75
+      { 195, "Central Asia Standard Time",       360 }, // +6
+      { 200, "Sri Lanka Standard Time",          360 }, // +6
+      { 201, "N. Central Asia Standard Time",    360 }, // +6
+      { 203, "Myanmar Standard Time",            390 }, // +6.5
+      { 205, "SE Asia Standard Time",            420 }, // +7
+      { 207, "North Asia Standard Time",         420 }, // +7
+      { 210, "China Standard Time",              480 }, // +8
+      { 215, "Singapore Standard Time",          480 }, // +8
+      { 220, "Taipei Standard Time",             480 }, // +8
+      { 225, "W. Australia Standard Time",       480 }, // +8
+      { 227, "North Asia East Standard Time",    480 }, // +8
+      { 230, "Korea Standard Time",              540 }, // +9
+      { 235, "Tokyo Standard Time",              540 }, // +9
+      { 240, "Yakutsk Standard Time",            540 }, // +9
+      { 245, "AUS Central Standard Time",        570 }, // +9.5
+      { 250, "Cen. Australia Standard Time",     570 }, // +9.5
+      { 255, "AUS Eastern Standard Time",        600 }, // +10
+      { 260, "E. Australia Standard Time",       600 }, // +10
+      { 265, "Tasmania Standard Time",           600 }, // +10
+      { 270, "Vladivostok Standard Time",        600 }, // +10
+      { 275, "West Pacific Standard Time",       600 }, // +10
+      { 280, "Central Pacific Standard Time",    660 }, // +11
+      { 285, "Fiji Standard Time",               720 }, // +12
+      { 290, "New Zealand Standard Time",        720 }, // +12
+      { 300, "Tonga Standard Time",              780 }};// +13
+
+   size_t tableSize = ARRAYSIZE(TABLE);
+   size_t look;
    int tzIndex = (-1);
 
+   *ptzName = NULL;
+
    /* XXX Finds the first match, not necessariy the right match! */
-   for (look = 0; look < tableSize && tzIndex < 0; look++) {
+   for (look = 0; look < tableSize; look++) {
       if (TABLE[look].utcStdOffMins == utcStdOffMins) {
          tzIndex = TABLE[look].winTzIndex;
+         *ptzName = TABLE[look].winTzName;
+         break;
       }
    }
 
@@ -1386,9 +1426,7 @@ static int Win32TimeUtilLookupZoneIndex(const char* targetName)
                            "Windows NT\\"
                            "CurrentVersion\\"
                            "Time Zones",
-                           0,
-                           KEY_READ,
-                           &parentKey) != ERROR_SUCCESS) {
+                           0, KEY_READ, &parentKey) != ERROR_SUCCESS) {
       /* Failed to open registry */
       return (-1);
    }
@@ -1397,13 +1435,9 @@ static int Win32TimeUtilLookupZoneIndex(const char* targetName)
    keyIndex = 0;
    while (
          timeZoneIndex < 0 &&
-         Win32U_RegEnumKeyEx(parentKey,
-                             keyIndex,
-                             childKeyName,
-                             &childKeyLen,
+         Win32U_RegEnumKeyEx(parentKey, keyIndex, childKeyName, &childKeyLen,
                              0,0,0,0) == ERROR_SUCCESS) {
-
-      char* std;
+      char *std;
       DWORD stdSize;
 
       /* Open child key */
@@ -1413,28 +1447,25 @@ static int Win32TimeUtilLookupZoneIndex(const char* targetName)
       }
 
       /* Get size of "Std" value */
-      if (Win32U_RegQueryValueEx(childKey,
-                                 "Std", 0, 0,
+      if (Win32U_RegQueryValueEx(childKey, "Std", 0, 0,
                                  NULL, &stdSize) == ERROR_SUCCESS) {
 
          /* Get value of "Std" */
          std = (char*) calloc(stdSize+1, sizeof(char));
          if (std != NULL) {
-            if (Win32U_RegQueryValueEx(childKey,
-                                       "Std", 0, 0,
-                                       (LPBYTE) std, &stdSize) == ERROR_SUCCESS) {
+            if (Win32U_RegQueryValueEx(childKey, "Std", 0, 0, (LPBYTE) std,
+                                       &stdSize) == ERROR_SUCCESS) {
 
                /* Make sure there is at least one EOS */
                std[stdSize] = '\0';
 
                /* Is this the name we want? */
                if (!strcmp(std, targetName)) {
-
                   /* yes: look up value of "Index" */
                   DWORD val = 0;
                   DWORD valSize = sizeof(val);
-                  if (Win32U_RegQueryValueEx(childKey,
-                                             "Index", 0, 0,
+
+                  if (Win32U_RegQueryValueEx(childKey, "Index", 0, 0,
                                              (LPBYTE) &val,
                                              &valSize) == ERROR_SUCCESS) {
                      timeZoneIndex = val;

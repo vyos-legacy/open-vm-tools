@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * hgfsBd.c --
  *
@@ -292,8 +306,8 @@ HgfsBd_Enabled(RpcOut *out,         // IN: RPCI Channel
                char *requestPacket) // IN: Buffer (obtained from HgfsBd_GetBuf)
 {
    char const *replyPacket; // Buffer returned by HgfsBd_Dispatch
-   size_t packetSize;
-   int error;
+   size_t replyLen;
+   Bool success;
 
    /*
     * Send a bogus (empty) request to the VMX. If hgfs is disabled on
@@ -302,16 +316,14 @@ HgfsBd_Enabled(RpcOut *out,         // IN: RPCI Channel
     * (it will be an error packet because our request was malformed,
     * but we just discard it anyway).
     */
-   packetSize = 0;
-   error = HgfsBd_Dispatch(out,
-                           requestPacket,
-                           &packetSize,
-                           &replyPacket);
-   if (error < 0) {
-      return FALSE;
+   success = RpcOut_send(out, requestPacket - HGFS_CLIENT_CMD_LEN,
+                         HGFS_CLIENT_CMD_LEN,
+                         &replyPacket, &replyLen);
+   if (success == TRUE) {
+      ASSERT(replyLen <= HGFS_LARGE_PACKET_MAX);
    }
 
-   return TRUE;
+   return success;
 }
 
 

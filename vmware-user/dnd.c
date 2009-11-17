@@ -122,7 +122,6 @@
 #include <X11/Xatom.h>                  /* for XA_WINDOW */
 
 #include "vmwareuserInt.h"
-#include "vm_app.h"
 #include "vm_assert.h"
 #include "vm_basic_defs.h"
 #include "eventManager.h"
@@ -139,7 +138,7 @@
 #include "hgfsServerPolicy.h"
 #include "vmblock.h"
 #include "escape.h"
-
+#include "vmware/guestrpc/tclodefs.h"
 
 #define DND_MAX_PATH                    6144
 #define DRAG_TARGET_NAME_URI_LIST       "text/uri-list"
@@ -337,7 +336,7 @@ DnDRpcInEnterCB(char const **result,     // OUT
                               "bad clientData passed to callback", FALSE);
    }
 
-   if (gBlockFd < 0) {
+   if (!DnD_BlockIsReady(&gBlockCtrl)) {
       Debug("DnDRpcInEnterCB: cannot allow H->G DnD without vmblock.\n");
       return RpcIn_SetRetVals(result, resultLen,
                               "blocking file system unavailable", FALSE);
@@ -422,7 +421,7 @@ DnDRpcInDataSetCB(char const **result,  // OUT
 
    Debug("DnDRpcInDataSetCB: enter\n");
 
-   if (gBlockFd < 0) {
+   if (!DnD_BlockIsReady(&gBlockCtrl)) {
       Debug("DnDRpcInDataSetCB: blocking file system not available.\n");
       return RpcIn_SetRetVals(result, resultLen,
                               "blocking file system not available", FALSE);
@@ -457,7 +456,7 @@ DnDRpcInDataSetCB(char const **result,  // OUT
       goto out;
    }
 
-   if (sizeof VMBLOCK_MOUNT_POINT - 1 +
+   if (strlen(gBlockCtrl.blockRoot) +
        (sizeof DIRSEPS - 1) * 2 + strlen(perDnDDir) >= sizeof blockDir) {
       Debug("DnDRpcInDataSetCB: blocking directory path too large.\n");
       retStr = "blocking directory path too large";
@@ -465,7 +464,7 @@ DnDRpcInDataSetCB(char const **result,  // OUT
    }
 
    Str_Sprintf(blockDir, sizeof blockDir,
-               VMBLOCK_MOUNT_POINT DIRSEPS "%s" DIRSEPS, perDnDDir);
+               "%s" DIRSEPS "%s" DIRSEPS, gBlockCtrl.blockRoot, perDnDDir);
 
    /* Add the file root to the relative paths received from host */
    if (!DnD_PrependFileRoot(blockDir, &data, &dataSize)) {
@@ -626,7 +625,8 @@ DnDRpcInDataFinishCB(char const **result,   // OUT
 
    free(state);
 
-   if (gBlockFd >= 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+   if (DnD_BlockIsReady(&gBlockCtrl) &&
+       !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
       Warning("DnDRpcInDataFinishCB: could not remove block on %s\n",
               gFileRoot);
    }
@@ -710,7 +710,7 @@ DnDRpcInDropCB(char const **result,   // OUT
     * release.  Make sure we'll succeed before modifying any mouse state in the
     * guest.
     */
-   if (gBlockFd < 0) {
+   if (!DnD_BlockIsReady(&gBlockCtrl)) {
       /*
        * We shouldn't get here since DnDRpcInEnterCB() checks this, but we'll
        * check rather than ASSERT just in case.
@@ -719,7 +719,7 @@ DnDRpcInDropCB(char const **result,   // OUT
                               "blocking file system unavailable", FALSE);
    }
 
-   if (!DnD_AddBlock(gBlockFd, gFileRoot)) {
+   if (!gBlockCtrl.AddBlock(gBlockCtrl.fd, gFileRoot)) {
       return RpcIn_SetRetVals(result, resultLen, "could not add block", FALSE);
    }
 
@@ -2590,6 +2590,17 @@ DnD_Unregister(GtkWidget *hgWnd,        // IN: The widget for hg dnd
    gtk_signal_disconnect_by_func(GTK_OBJECT(ghWnd),
                                  GTK_SIGNAL_FUNC(DnDGtkDragDropCB),
                                  ghWnd);
+
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.data.set");
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.enter");
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.move");
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.drop");
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.data.finish");
+
+   /* Guest->Host RPC callbacks */
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.ungrab");
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.data.get.file");
+   RpcIn_UnregisterCallback(gRpcIn, "dnd.finish");
 }
 
 
@@ -2619,7 +2630,8 @@ DnD_OnReset(GtkWidget *hgWnd,   // IN: The widget for hg dnd
    /* Cancel file transfer. */
    if (gHGDnDInProgress || gHGDataPending) {
       DnD_DeleteStagingFiles(gFileRoot, FALSE);
-      if (gBlockFd >= 0 && !DnD_RemoveBlock(gBlockFd, gFileRoot)) {
+      if (DnD_BlockIsReady(&gBlockCtrl) &&
+          !gBlockCtrl.RemoveBlock(gBlockCtrl.fd, gFileRoot)) {
          Warning("DnD_OnReset: could not remove block on %s\n",
                  gFileRoot);
       }

@@ -99,11 +99,14 @@ static int UtilTokenHasGroup(HANDLE token, SID *group);
 #ifdef UTIL_BACKTRACE_USE_UNWIND
 #include <unwind.h>
 
+#define MAX_SKIPPED_FRAMES 10
+
 struct UtilBacktraceFromPointerData {
    uintptr_t        basePtr;
    Util_OutputFunc  outFunc;
    void            *outFuncData;
    unsigned int     frameNr;
+   unsigned int     skippedFrames;
 };
 
 struct UtilBacktraceToBufferData {
@@ -174,7 +177,7 @@ Util_Init(void)
  */
 
 uint32
-Util_Checksum32(uint32 *buf, int len)
+Util_Checksum32(const uint32 *buf, int len)
 {
    uint32 checksum = 0;
    int i;
@@ -197,7 +200,7 @@ Util_Checksum32(uint32 *buf, int len)
  */
 
 uint32
-Util_Checksum(uint8 *buf, int len)
+Util_Checksum(const uint8 *buf, int len)
 {
    uint32 checksum;
    int remainder, shift;
@@ -258,10 +261,13 @@ Util_Checksumv(void *iov,      // IN
 /*
  *-----------------------------------------------------------------------------
  *
- * Util_LogWrapper --
+ * UtilLogWrapper --
  *
  *      Adapts the Log function to meet the interface required by backtracing
  *      functions by adding an ignored void* argument.
+ *
+ *      NOTE: This function needs to be static on linux (and any other
+ *      platform appLoader might be ported to).  See bug 403780.
  *
  * Results:
  *      Same effect as Log(fmt, ...)
@@ -271,16 +277,28 @@ Util_Checksumv(void *iov,      // IN
  *
  *-----------------------------------------------------------------------------
  */
-void
-Util_LogWrapper(void *ignored, const char *fmt, ...)
+
+static void
+UtilLogWrapper(void *ignored,    // IN:
+               const char *fmt,  // IN:
+               ...)              // IN:
 {
+   uint32 len;
    va_list ap;
    char thisLine[UTIL_BACKTRACE_LINE_LEN];
 
    va_start(ap, fmt);
-   Str_Vsnprintf(thisLine, UTIL_BACKTRACE_LINE_LEN-1, fmt, ap);
-   thisLine[UTIL_BACKTRACE_LINE_LEN-1] = '\0';
+   len = Str_Vsnprintf(thisLine, UTIL_BACKTRACE_LINE_LEN - 2, fmt, ap);
    va_end(ap);
+
+   if (len >= UTIL_BACKTRACE_LINE_LEN - 2) {
+      len = UTIL_BACKTRACE_LINE_LEN - 3;
+   }
+
+   if (thisLine[len - 1] != '\n') {
+      thisLine[len] = '\n';
+      thisLine[len + 1] = '\0';
+   }
 
    Log("%s", thisLine);
 }
@@ -340,6 +358,7 @@ UtilBacktraceToBufferCallback(struct _Unwind_Context *ctx, // IN: Unwind context
  *
  * Results:
  *      _URC_NO_REASON : Please continue with backtrace.
+ *      _URC_END_OF_STACK : Abort backtrace.
  *
  * Side effects:
  *      None.
@@ -357,10 +376,13 @@ UtilBacktraceFromPointerCallback(struct _Unwind_Context *ctx, // IN: Unwind cont
    /*
     * Stack grows down.  So if we are below basePtr, do nothing...
     */
-   if (cfa >= data->basePtr) {
+
+   if (cfa >= data->basePtr && data->frameNr < 500) {
 #ifndef VM_X86_64
 #   error You should not build this on 32bit - there is no eh_frame there.
 #endif
+      /* bump basePtr for glibc unwind bug, see [302237] */
+      data->basePtr = cfa + 8;
       /* Do output without leading '0x' to save some horizontal space... */
       data->outFunc(data->outFuncData,
                     "Backtrace[%u] %016lx rip=%016lx rbx=%016lx rbp=%016lx "
@@ -370,8 +392,17 @@ UtilBacktraceFromPointerCallback(struct _Unwind_Context *ctx, // IN: Unwind cont
                     _Unwind_GetGR(ctx, 12), _Unwind_GetGR(ctx, 13),
                     _Unwind_GetGR(ctx, 14), _Unwind_GetGR(ctx, 15));
       data->frameNr++;
+      return _URC_NO_REASON;
+   } else if (data->skippedFrames < MAX_SKIPPED_FRAMES && !data->frameNr) {
+      /*
+       * Skip over the frames before the specified starting point of the
+       * backtrace.
+       */
+
+      data->skippedFrames++;
+      return _URC_NO_REASON;
    }
-   return _URC_NO_REASON;
+   return _URC_END_OF_STACK;
 }
 
 #if !defined(_WIN32) && !defined(N_PLAT_NLM) && !defined(VMX86_TOOLS)
@@ -398,21 +429,28 @@ UtilSymbolBacktraceFromPointerCallback(struct _Unwind_Context *ctx, // IN: Unwin
                                        void *cbData)                // IN/OUT: Our status
 {
    struct UtilBacktraceFromPointerData *data = cbData;
-   uintptr_t cfa = _Unwind_GetCFA(ctx);
-   void *encl_func_addr;
-   Dl_info dli;
-   
+   uintptr_t cfa = _Unwind_GetCFA(ctx);   
 
    /*
     * Stack grows down.  So if we are below basePtr, do nothing...
     */
-   if (cfa >= data->basePtr) {
+
+   if (cfa >= data->basePtr && data->frameNr < 500) {
 #ifndef VM_X86_64
 #   error You should not build this on 32bit - there is no eh_frame there.
 #endif
-      encl_func_addr = _Unwind_FindEnclosingFunction((void *)_Unwind_GetIP(ctx));
-      if ( (dladdr(encl_func_addr, &dli)  != 0) ||
-           (dladdr((void *)_Unwind_GetIP(ctx), &dli) != 0 )) {
+      void *enclFuncAddr;
+      Dl_info dli;
+
+      /* bump basePtr for glibc unwind bug, see [302237] */
+      data->basePtr = cfa + 8;
+#ifdef __linux__
+      enclFuncAddr = _Unwind_FindEnclosingFunction((void *)_Unwind_GetIP(ctx));
+#else
+      enclFuncAddr = NULL;
+#endif
+      if (dladdr(enclFuncAddr, &dli) ||
+          dladdr((void *)_Unwind_GetIP(ctx), &dli)) {
          data->outFunc(data->outFuncData,
                       "SymBacktrace[%u] %016lx rip=%016lx in function %s "
                       "in object %s loaded at %016lx\n",
@@ -424,8 +462,17 @@ UtilSymbolBacktraceFromPointerCallback(struct _Unwind_Context *ctx, // IN: Unwin
                       data->frameNr, cfa, _Unwind_GetIP(ctx));
       }
       data->frameNr++;
+      return _URC_NO_REASON;
+   } else if (data->skippedFrames < MAX_SKIPPED_FRAMES && !data->frameNr) {
+      /*
+       * Skip over the frames before the specified starting point of the
+       * backtrace.
+       */
+
+      data->skippedFrames++;
+      return _URC_NO_REASON;
    }
-   return _URC_NO_REASON;
+   return _URC_END_OF_STACK;
 }
 #endif
 #endif
@@ -451,7 +498,7 @@ UtilSymbolBacktraceFromPointerCallback(struct _Unwind_Context *ctx, // IN: Unwin
 void
 Util_BacktraceFromPointer(uintptr_t *basePtr)
 {
-   Util_BacktraceFromPointerWithFunc(basePtr, Util_LogWrapper, NULL);
+   Util_BacktraceFromPointerWithFunc(basePtr, UtilLogWrapper, NULL);
 }
 
 
@@ -485,18 +532,20 @@ Util_BacktraceFromPointerWithFunc(uintptr_t *basePtr,
    data.outFunc = outFunc;
    data.outFuncData = outFuncData;
    data.frameNr = 0;
+   data.skippedFrames = 0;
    _Unwind_Backtrace(UtilBacktraceFromPointerCallback, &data);
 
 #if !defined(_WIN32) && !defined(N_PLAT_NLM) && !defined(VMX86_TOOLS)
    /* 
     * We do a separate pass here that includes symbols in order to
-    * make sure the base backtrace that does not call dladdr etc.
-    * is safely produced
+    * make sure the base backtrace that does not call dladdr() etc.
+    * is safely produced.
     */
    data.basePtr = (uintptr_t)basePtr;
    data.outFunc = outFunc;
    data.outFuncData = outFuncData;
    data.frameNr = 0;
+   data.skippedFrames = 0;
    _Unwind_Backtrace(UtilSymbolBacktraceFromPointerCallback, &data);
 #endif
 
@@ -519,8 +568,8 @@ Util_BacktraceFromPointerWithFunc(uintptr_t *basePtr,
 #if !defined(_WIN32) && !defined(N_PLAT_NLM) && !defined(VMX86_TOOLS)
    /* 
     * We do a separate pass here that includes symbols in order to
-    * make sure the base backtrace that does not call dladdr etc.
-    * is safely produced
+    * make sure the base backtrace that does not call dladdr() etc.
+    * is safely produced.
     */
    x = basePtr;
    for (i = 0; i < 256; i++) {
@@ -528,7 +577,7 @@ Util_BacktraceFromPointerWithFunc(uintptr_t *basePtr,
 	  (uintptr_t) x - (uintptr_t) basePtr > 0x8000) {
          break;
       }
-      if ( dladdr((uintptr_t *)x[1], &dli)  != 0 ) {
+      if (dladdr((uintptr_t *)x[1], &dli)) {
          outFunc(outFuncData, "SymBacktrace[%d] %#08x eip %#08x in function %s "
                               "in object %s loaded at %#08x\n",
                                i, x[0], x[1], dli.dli_sname, dli.dli_fname,
@@ -606,20 +655,34 @@ Util_BacktraceToBuffer(uintptr_t *basePtr,
 Bool
 Util_Data2Buffer(char *buf,         // OUT
                  size_t bufSize,    // IN
-                 const void* data0, // IN
+                 const void *data0, // IN
                  size_t dataSize)   // IN
 {
-   char* cp = buf;
-   const uint8* data = (const uint8*) data0;
-   size_t n = MIN(dataSize, ((bufSize-1) / 3));
+   size_t n;
 
-   while (n > 0) {
-      Str_Sprintf(cp, 4, " %02X", *data);
-      cp += 3;
-      data++, n--;
+   /* At least 1 byte (for NUL) must be available. */
+   if (!bufSize) {
+      return FALSE;
    }
-   *cp = '\0';
-   return (dataSize <= bufSize);
+
+   bufSize = bufSize / 3;
+   n = MIN(dataSize, bufSize);
+   if (n != 0) {
+      const uint8 *data = data0;
+
+      while (n > 0) {
+         static const char digits[] = "0123456789ABCDEF";
+
+         *buf++ = digits[*data >> 4];
+         *buf++ = digits[*data & 0xF];
+         *buf++ = ' ';
+         data++;
+         n--;
+      }
+      buf--;
+   }
+   *buf = 0;
+   return dataSize <= bufSize;
 }
 
 
@@ -643,7 +706,7 @@ Util_Data2Buffer(char *buf,         // OUT
 void
 Util_Backtrace(int bugNr) // IN
 {
-   Util_BacktraceWithFunc(bugNr, Util_LogWrapper, NULL);
+   Util_BacktraceWithFunc(bugNr, UtilLogWrapper, NULL);
 }
 
 

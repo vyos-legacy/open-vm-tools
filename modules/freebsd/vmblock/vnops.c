@@ -188,7 +188,7 @@
 #include <sys/filedesc.h>
 #include <sys/kdb.h>
 #include "compat_freebsd.h"
-#if __FreeBSD_version >= 700000
+#if __FreeBSD_version >= 700055
 #include <sys/priv.h>
 #endif
 
@@ -269,19 +269,21 @@ struct vop_vector VMBlockVnodeOps = {
    .vop_unlock =                  VMBlockVopUnlock,
 };
 
+
+
 /*
  * VMBlockFS file descriptor operations vector --
  *   There are a few special cases where we need to control behavior beyond
  *   the file system layer.  For this we define our own fdesc op vector,
  *   install our own handlers for these special cases, and fall back to the
- *   original vnode ops for everything else.
+ *   badfileops vnode ops for everything else.
  *
  *   VMBlock instances are keyed on/indexed by the file descriptor that received
  *   the ioctl request[1].  Since the relationship between file descriptors and
  *   vnodes is N:1, we need to intercept ioctl requests at the file descriptor
  *   level, rather than at the vnode level, in order to have a record of which
  *   descriptor received the request.  Similarly, we need to remove VMBlocks
- *   issued on a file descriptor when said descriptor is closed. 
+ *   issued on a file descriptor when said descriptor is closed.
  *
  *   NOTICE --
  *     This applies -only- when a user opens the FS mount point directly.  All
@@ -294,10 +296,34 @@ struct vop_vector VMBlockVnodeOps = {
  *     dies, even though the same descriptor is open.
  */
 
-struct fileops VMBlockFileOps = {
-   .fo_ioctl    = VMBlockFileIoctl,
-   .fo_close    = VMBlockFileClose,
-};
+static struct fileops VMBlockFileOps;
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMBlockSetupFileOps --
+ *
+ *      Sets up secial file operations vector used for root vnode _only_
+ *      (see the comment for VMBlockFileOps above).
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+VMBlockSetupFileOps(void)
+{
+   VMBlockFileOps = badfileops;
+   VMBlockFileOps.fo_stat = vnops.fo_stat;
+   VMBlockFileOps.fo_flags = vnops.fo_flags;
+   VMBlockFileOps.fo_ioctl = VMBlockFileIoctl;
+   VMBlockFileOps.fo_close = VMBlockFileClose;
+}
 
 
 /*
@@ -698,7 +724,10 @@ struct vop_open_args {
    int fflag;           // IN: fdesc flags (see fcntl(2))
    struct ucred *cred;  // IN: caller's credentials (usually real uid vs euid)
    struct thread *td;   // IN: calling thread's context      
-   int fdidx;           // IN: file descriptor number alloc'd to this open()
+   FreeBSD <= 6 --
+      int fdidx;        // IN: file descriptor number alloc'd to this open()
+   FreeBSD >= 7 --
+      struct file *fp   // IN: struct associated with this particular open()
 };
 */
 {
@@ -722,9 +751,12 @@ struct vop_open_args {
        *
        * NB:  Allowing only the superuser to open this directory breaks
        *      readdir() of the filesystem root for non-privileged users.
+       *
+       * Also, on FreeBSD 8.0 and newer we check for a specific module priv
+       * because none of the existing privs seemed to match very well.
        */
-      if ((retval = suser(ap->a_td)) == 0) {
-#if __FreeBSD_version >= 700000
+      if ((retval = compat_priv_check(ap->a_td, PRIV_DRIVER)) == 0) {
+#if __FreeBSD_version >= 700055
          fp = ap->a_fp;
 #else
          fp = ap->a_td->td_proc->p_fd->fd_ofiles[ap->a_fdidx];
@@ -1007,7 +1039,7 @@ struct vop_access_args {
 */
 {
    struct vnode *vp = ap->a_vp;
-   mode_t mode = ap->a_mode;
+   compat_accmode_t mode = ap->compat_a_accmode;
 
    /*
     * Disallow write attempts on read-only layers; unless the file is a
@@ -1082,7 +1114,7 @@ struct vop_rename_args {
       vrele(fvp);
       return EXDEV;
    }
-   
+
    return VMBlockVopBypass((struct vop_generic_args *)ap);
 }
 
@@ -1110,11 +1142,11 @@ struct vop_rename_args {
 static int
 VMBlockVopLock(compat_vop_lock_args *ap)
 /*
-struct {
-   struct vnode *a_vp;    // IN: vnode operand 
-   int a_flags;           // IN: lockmgr(9) flags
-   struct thread *a_td;   // IN: calling thread's context
-} *ap;
+struct vop_lock_args {
+   struct vnode *vp;    // IN: vnode operand
+   int flags;           // IN: lockmgr(9) flags
+   struct thread *td;   // IN: calling thread's context
+};
 */
 {
    struct vnode *vp = ap->a_vp;

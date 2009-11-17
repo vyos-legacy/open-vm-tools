@@ -23,7 +23,7 @@
  *
  * This file implements the guest-side Unity agent as part of the VMware Tools.
  * It contains entry points for embedding within the VMware Tools User Agent and
- * handles the GuestRpc (TCLO) interface.
+ * handles the GuestRpc (TCLO, RPCI) interface.
  *
  * UnityWindowTracker updates are sent to the MKS in two ways:
  *    @li @ref UNITY_RPC_GET_UPDATE GuestRpc (host-to-guest).
@@ -51,9 +51,9 @@
 #include "unityDebug.h"
 #include "dynxdr.h"
 #include "guestrpc/unityActive.h"
-#include "guestCaps.h"
 #include "appUtil.h"
 #include <stdio.h>
+
 
 /*
  * Singleton object for tracking the state of the service.
@@ -63,7 +63,7 @@ typedef struct UnityState {
    Bool forceEnable;
    Bool isEnabled;
    UnityVirtualDesktopArray virtDesktopArray;   // Virtual desktop configuration
-
+   UnityUpdateChannel updateChannel;            // Unity update transmission channel.
    UnityPlatform *up; // Platform-specific state
 } UnityState;
 
@@ -163,10 +163,14 @@ typedef struct {
 
 static UnityCommandElem unityCommandTable[] = {
    { UNITY_RPC_WINDOW_CLOSE, UnityPlatformCloseWindow },
+   { UNITY_RPC_WINDOW_SHOW, UnityPlatformShowWindow },
+   { UNITY_RPC_WINDOW_HIDE, UnityPlatformHideWindow },
    { UNITY_RPC_WINDOW_MINIMIZE, UnityPlatformMinimizeWindow },
    { UNITY_RPC_WINDOW_UNMINIMIZE, UnityPlatformUnminimizeWindow },
    { UNITY_RPC_WINDOW_MAXIMIZE, UnityPlatformMaximizeWindow },
    { UNITY_RPC_WINDOW_UNMAXIMIZE, UnityPlatformUnmaximizeWindow },
+   { UNITY_RPC_WINDOW_STICK, UnityPlatformStickWindow },
+   { UNITY_RPC_WINDOW_UNSTICK, UnityPlatformUnstickWindow },
    /* Add more commands and handlers above this. */
    { NULL, NULL }
 };
@@ -218,7 +222,7 @@ Unity_IsSupported(void)
  *
  * Unity_IsActive --
  *
- *      Determine whether we are in Unity mode at this moment. 
+ *      Determine whether we are in Unity mode at this moment.
  *
  * Results:
  *      TRUE if Unity is active.
@@ -255,8 +259,9 @@ Unity_IsActive(void)
  */
 
 void
-Unity_Init(GuestApp_Dict *conf, // IN
-           int* blockedWnd)     // IN
+Unity_Init(GuestApp_Dict *conf,                                    // IN
+           int *blockedWnd,                                        // IN
+           DesktopSwitchCallbackManager *desktopSwitchCallbackMgr) // IN
 {
    Debug("Unity_Init\n");
 
@@ -270,9 +275,20 @@ Unity_Init(GuestApp_Dict *conf, // IN
    UnityWindowTracker_Init(&unity.tracker, UnityUpdateCallbackFn);
 
    /*
+    * Initialize the update channel.
+    */
+   if (UnityUpdateChannelInit(&unity.updateChannel) == FALSE) {
+      Warning("%s: Unable to initialize Unity update channel.\n", __FUNCTION__);
+      return;
+   }
+
+   /*
     * Initialize the host-specific portion of the unity service.
     */
-   unity.up = UnityPlatformInit(&unity.tracker, blockedWnd);
+   unity.up = UnityPlatformInit(&unity.tracker,
+                                &unity.updateChannel,
+                                blockedWnd,
+                                desktopSwitchCallbackMgr);
 
    /*
     * Init our global dynbuf used to send results back.
@@ -323,20 +339,20 @@ Unity_Cleanup(void)
 
    Debug("%s\n", __FUNCTION__);
 
+
    /*
     * Exit Unity.
     */
-
    Unity_Exit();
 
    /*
     * Do one-time final platform-specific cleanup.
     */
-
    up = unity.up;
    unity.up = NULL;
    UnityPlatformCleanup(up);
 
+   UnityUpdateChannelCleanup(&unity.updateChannel);
    UnityWindowTracker_Cleanup(&unity.tracker);
    DynBuf_Destroy(&gTcloUpdate);
 }
@@ -369,6 +385,8 @@ Unity_InitBackdoor(struct RpcIn *rpcIn)   // IN
     */
 
    if (Unity_IsSupported()) {
+      UnityCommandElem *elem;
+
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_ENTER, UnityTcloEnter, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_GET_UPDATE_FULL, UnityTcloGetUpdate, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_GET_UPDATE_INCREMENTAL,
@@ -377,8 +395,6 @@ Unity_InitBackdoor(struct RpcIn *rpcIn)   // IN
                              UnityTcloGetWindowPath, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_SETTOP,
                              UnityTcloSetTopWindowGroup, NULL);
-      RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_CLOSE,
-                             UnityTcloWindowCommand, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_GET_WINDOW_CONTENTS,
                              UnityTcloGetWindowContents, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_GET_ICON_DATA,
@@ -389,20 +405,20 @@ Unity_InitBackdoor(struct RpcIn *rpcIn)   // IN
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_EXIT, UnityTcloExit, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_MOVE_RESIZE,
                              UnityTcloMoveResizeWindow, NULL);
-      RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_MINIMIZE,
-                             UnityTcloWindowCommand, NULL);
-      RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_UNMINIMIZE,
-                             UnityTcloWindowCommand, NULL);
-      RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_MAXIMIZE,
-                             UnityTcloWindowCommand, NULL);
-      RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_UNMAXIMIZE,
-                             UnityTcloWindowCommand, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_DESKTOP_CONFIG_SET,
                              UnityTcloSetDesktopConfig, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_DESKTOP_ACTIVE_SET,
                              UnityTcloSetDesktopActive, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_DESKTOP_SET,
                              UnityTcloSetWindowDesktop, NULL);
+
+      /*
+       * Handle all of the UnityTcloWindowCommand RPCs at once.
+       */
+      for (elem = unityCommandTable; elem->name != NULL; elem++) {
+         RpcIn_RegisterCallback(rpcIn, elem->name, UnityTcloWindowCommand,
+                                NULL);
+      }
    }
 }
 
@@ -433,7 +449,9 @@ Unity_InitBackdoor(struct RpcIn *rpcIn)   // IN
 void
 Unity_SetActiveDnDDetWnd(UnityDnD *state)
 {
-   UnityPlatformSetActiveDnDDetWnd(unity.up, state);
+   if (unity.up != NULL) {
+      UnityPlatformSetActiveDnDDetWnd(unity.up, state);
+   }
 }
 
 
@@ -469,13 +487,13 @@ Unity_Exit(void)
    if (unity.isEnabled) {
       /* Hide full-screen detection window for Unity DnD. */
       UnityPlatformUpdateDnDDetWnd(unity.up, FALSE);
-   
+
       /* Kill Unity helper threads. */
       UnityPlatformKillHelperThreads(unity.up);
-   
+
       /* Restore previously saved user settings. */
       UnityPlatformRestoreSystemSettings(unity.up);
-      
+
       unity.isEnabled = FALSE;
    }
 }
@@ -697,7 +715,9 @@ UnityTcloGetWindowPath(char const **result,     // OUT
 
 {
    UnityWindowId window;
-   DynBuf *buf = &gTcloUpdate;
+   DynBuf windowPathUtf8;
+   DynBuf execPathUtf8;
+
    unsigned int index = 0;
    Bool ret = TRUE;
 
@@ -719,20 +739,34 @@ UnityTcloGetWindowPath(char const **result,     // OUT
     * dynbuf passed in does not contain any existing data that needs to be appended to,
     * so this code should continue to accomodate that assumption.
     */
-   DynBuf_SetSize(buf, 0);
-   if (!UnityPlatformGetWindowPath(unity.up, window, buf)) {
+   DynBuf_Destroy(&gTcloUpdate);
+   DynBuf_Init(&gTcloUpdate);
+   DynBuf_Init(&windowPathUtf8);
+   DynBuf_Init(&execPathUtf8);
+   if (!UnityPlatformGetWindowPath(unity.up, window, &windowPathUtf8, &execPathUtf8)) {
       Debug("UnityTcloGetWindowInfo: Could not get window path.\n");
-      return RpcIn_SetRetVals(result, resultLen,
-                              "Could not get window path",
-                              FALSE);
+      ret = RpcIn_SetRetVals(result, resultLen,
+                             "Could not get window path",
+                             FALSE);
+      goto exit;
    }
+
+   /*
+    * Construct the buffer holding the result. Note that we need to use gTcloUpdate
+    * here to avoid leaking during the RPC handler.
+    */
+   DynBuf_Copy(&windowPathUtf8, &gTcloUpdate);
+   DynBuf_Append(&gTcloUpdate, DynBuf_Get(&execPathUtf8), DynBuf_GetSize(&execPathUtf8));
 
    /*
     * Write the final result into the result out parameters and return!
     */
-   *result = (char *)DynBuf_Get(buf);
-   *resultLen = DynBuf_GetSize(buf);
+   *result = (char *)DynBuf_Get(&gTcloUpdate);
+   *resultLen = DynBuf_GetSize(&gTcloUpdate);
 
+exit:
+   DynBuf_Destroy(&windowPathUtf8);
+   DynBuf_Destroy(&execPathUtf8);
    return ret;
 }
 
@@ -973,31 +1007,36 @@ UnityTcloGetUpdate(char const **result,     // OUT
                    size_t argsSize,         // ignored
                    void *clientData)        // ignored
 {
-   DynBuf *buf = &gTcloUpdate;
-   uint32 flags = 0;
+   Bool incremental = FALSE;
 
-   // Debug("UnityTcloGetUpdate name:%s args:'%s'", name, args);
+   Debug("UnityTcloGetUpdate name:%s args:'%s'", name, args);
 
    /*
     * Specify incremental or non-incremetal updates based on whether or
     * not the client set the "incremental" arg.
     */
    if (strstr(name, "incremental")) {
-      flags |= UNITY_UPDATE_INCREMENTAL;
+      incremental = TRUE;
    }
 
-   DynBuf_SetSize(buf, 0);
-
-   UnityGetUpdateCommon(flags, buf);
+   /*
+    * Call into platform-specific implementation to gather and send updates
+    * back via RPCI.  (This is done to ensure all updates are sent to the
+    * Unity server in sequence via the same channel.)
+    */
+   UnityPlatformDoUpdate(unity.up, incremental);
 
    /*
-    * Write the final result into the result out parameters.
+    * To maintain compatibility, we'll return a successful but empty response.
     */
-   *result = (char *)DynBuf_Get(buf);
-   *resultLen = DynBuf_GetSize(buf);
+   *result = "";
+   *resultLen = 0;
 
    /*
     * Give the debugger a crack to do something interesting at this point
+    *
+    * XXX Not sure if this is worth keeping around since this routine no
+    * longer returns updates directly.
     */
    UnityDebug_OnUpdate();
 
@@ -1097,11 +1136,23 @@ UnityUpdateCallbackFn(void *param,          // IN: dynbuf
    int i, n, count = 0;
    RegionPtr region;
    char *titleUtf8 = NULL;
+   char *windowPathUtf8 = "";
+   char *execPathUtf8 = "";
 
    switch (update->type) {
 
    case UNITY_UPDATE_ADD_WINDOW:
-      Str_Sprintf(data, sizeof data, "add %u", update->u.addWindow.id);
+      if (DynBuf_GetSize(&update->u.addWindow.windowPathUtf8) > 0) {
+         windowPathUtf8 = DynBuf_Get(&update->u.addWindow.windowPathUtf8);
+      }
+      if (DynBuf_GetSize(&update->u.addWindow.execPathUtf8) > 0) {
+         execPathUtf8 = DynBuf_Get(&update->u.addWindow.execPathUtf8);
+      }
+
+      Str_Sprintf(data, sizeof data, "add %u windowPath=%s execPath=%s",
+                  update->u.addWindow.id,
+                  windowPathUtf8,
+                  execPathUtf8);
       DynBuf_AppendString(buf, data);
       break;
 
@@ -1219,7 +1270,7 @@ UnityUpdateCallbackFn(void *param,          // IN: dynbuf
 /*
  *-----------------------------------------------------------------------------
  *
- * UnityUpdateThreadInit --
+ * UnityUpdateChannelInit --
  *
  *      Initialize the state for the update thread.
  *
@@ -1235,34 +1286,33 @@ UnityUpdateCallbackFn(void *param,          // IN: dynbuf
  */
 
 Bool
-UnityUpdateThreadInit(UnityUpdateThreadData *updateData) // IN
+UnityUpdateChannelInit(UnityUpdateChannel *updateChannel) // IN
 {
-   ASSERT(updateData);
+   ASSERT(updateChannel);
 
-   updateData->flags = UNITY_UPDATE_INCREMENTAL;
-   updateData->rpcOut = NULL;
-   updateData->cmdSize = 0;
+   updateChannel->rpcOut = NULL;
+   updateChannel->cmdSize = 0;
 
-   DynBuf_Init(&updateData->updates);
-   DynBuf_AppendString(&updateData->updates, UNITY_RPC_PUSH_UPDATE_CMD " ");
+   DynBuf_Init(&updateChannel->updates);
+   DynBuf_AppendString(&updateChannel->updates, UNITY_RPC_PUSH_UPDATE_CMD " ");
 
    /* Exclude the null. */
-   updateData->cmdSize = DynBuf_GetSize(&updateData->updates) - 1;
+   updateChannel->cmdSize = DynBuf_GetSize(&updateChannel->updates) - 1;
 
-   updateData->rpcOut = RpcOut_Construct();
-   if (updateData->rpcOut == NULL) {
+   updateChannel->rpcOut = RpcOut_Construct();
+   if (updateChannel->rpcOut == NULL) {
       goto error;
    }
 
-   if (!RpcOut_start(updateData->rpcOut)) {
-      RpcOut_Destruct(updateData->rpcOut);
+   if (!RpcOut_start(updateChannel->rpcOut)) {
+      RpcOut_Destruct(updateChannel->rpcOut);
       goto error;
    }
 
    return TRUE;
 
 error:
-   DynBuf_Destroy(&updateData->updates);
+   DynBuf_Destroy(&updateChannel->updates);
 
    return FALSE;
 }
@@ -1271,7 +1321,7 @@ error:
 /*
  *-----------------------------------------------------------------------------
  *
- * UnityUpdateThreadCleanup --
+ * UnityUpdateChannelCleanup --
  *
  *      Cleanup the unity update thread state.
  *
@@ -1286,18 +1336,56 @@ error:
  */
 
 void
-UnityUpdateThreadCleanup(UnityUpdateThreadData *updateData) // IN
+UnityUpdateChannelCleanup(UnityUpdateChannel *updateChannel) // IN
 {
-   ASSERT(updateData);
+   if (updateChannel && updateChannel->rpcOut) {
+      RpcOut_stop(updateChannel->rpcOut);
+      RpcOut_Destruct(updateChannel->rpcOut);
+      updateChannel->rpcOut = NULL;
 
-   if (updateData->rpcOut) {
-      RpcOut_stop(updateData->rpcOut);
-      RpcOut_Destruct(updateData->rpcOut);
-      updateData->rpcOut = NULL;
-
-      DynBuf_Destroy(&updateData->updates); // Avoid double-free by guarding this as well
+      DynBuf_Destroy(&updateChannel->updates); // Avoid double-free by guarding this as well
    }
 }
+
+
+#ifdef VMX86_DEVEL
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * DumpUpdate --
+ *
+ *      Prints a Unity update via debug output.  NUL is represented as '!'.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+DumpUpdate(UnityUpdateChannel *updateChannel)   // IN
+{
+   int i, len;
+   char *buf = NULL;
+
+   len = updateChannel->updates.size;
+   buf = Util_SafeMalloc(len + 1);
+   memcpy(buf, updateChannel->updates.data, len);
+   buf[len] = '\0';
+   for (i = 0 ; i < len; i++) {
+      if (buf[i] == '\0') {
+         buf[i] = '!';
+      }
+   }
+
+   Debug("%s: Sending update: %s\n", __FUNCTION__, buf);
+
+   free(buf);
+}
+#endif // ifdef VMX86_DEVEL
 
 
 /*
@@ -1306,7 +1394,7 @@ UnityUpdateThreadCleanup(UnityUpdateThreadData *updateData) // IN
  * UnitySendUpdates --
  *
  *      Gather and send a round of unity updates. The caller is responsible
- *      for gathering updates into updateData->updates buffer prior to the
+ *      for gathering updates into updateChannel->updates buffer prior to the
  *      function call. This function should only be called if there's data
  *      in the update buffer to avoid sending empty update string to the VMX.
  *
@@ -1321,21 +1409,25 @@ UnityUpdateThreadCleanup(UnityUpdateThreadData *updateData) // IN
  */
 
 Bool
-UnitySendUpdates(UnityUpdateThreadData *updateData) // IN
+UnitySendUpdates(UnityUpdateChannel *updateChannel) // IN
 {
    char const *myReply;
    size_t myRepLen;
    Bool retry = FALSE;
 
-   ASSERT(updateData);
-   ASSERT(updateData->rpcOut);
+   ASSERT(updateChannel);
+   ASSERT(updateChannel->rpcOut);
 
    /* Send 'tools.unity.push.update <updates>' to the VMX. */
 
+#ifdef VMX86_DEVEL
+   DumpUpdate(updateChannel);
+#endif
+
 retry_send:
-   if (!RpcOut_send(updateData->rpcOut,
-                    (char *)DynBuf_Get(&updateData->updates),
-                    DynBuf_GetSize(&updateData->updates),
+   if (!RpcOut_send(updateChannel->rpcOut,
+                    (char *)DynBuf_Get(&updateChannel->updates),
+                    DynBuf_GetSize(&updateChannel->updates),
                     &myReply, &myRepLen)) {
 
       /*
@@ -1348,8 +1440,8 @@ retry_send:
       if (!retry) {
          retry = TRUE;
          Debug("%s: could not send rpc. Reopening channel.\n", __FUNCTION__);
-         RpcOut_stop(updateData->rpcOut);
-         if (!RpcOut_start(updateData->rpcOut)) {
+         RpcOut_stop(updateChannel->rpcOut);
+         if (!RpcOut_start(updateChannel->rpcOut)) {
             Debug("%s: could not reopen rpc channel. Exiting...\n", __FUNCTION__);
             return FALSE;
          }
@@ -1784,12 +1876,6 @@ UnityTcloSetDesktopActive(char const **result,  // OUT
       goto error;
    }
 
-   /*
-    * Update the uwt with the new active desktop info.
-    */
-
-   UnityWindowTracker_ChangeActiveDesktop(&unity.tracker, desktopId);
-
    return RpcIn_SetRetVals(result, resultLen,
                            "",
                            TRUE);
@@ -1848,6 +1934,16 @@ UnityTcloSetWindowDesktop(char const **result,  // OUT
    }
 
    /*
+    * Set the desktop id for this window in the tracker.
+    * We need to do this before moving the window since on MS Windows platforms
+    * moving the window will hide it and there's a danger that we may enumerate the
+    * hidden window before changing it's desktop ID. The Window tracker will ignore
+    * hidden windows on the current desktop - which ultimately can lead to this window
+    * being reaped from the tracker.
+    */
+   UnityWindowTracker_ChangeWindowDesktop(&unity.tracker, windowId, desktopId);
+
+   /*
     * Call the platform specific function to move the window to the
     * specified desktop.
     */
@@ -1856,8 +1952,6 @@ UnityTcloSetWindowDesktop(char const **result,  // OUT
       errorMsg = "Could not move the window to the desktop";
       goto error;
    }
-
-   UnityWindowTracker_ChangeWindowDesktop(&unity.tracker, windowId, desktopId);
 
    return RpcIn_SetRetVals(result, resultLen,
                            "",
@@ -1875,14 +1969,14 @@ error:
  *
  * UnityUpdateState --
  *
- *     Communicate unity state changes to vmx.  
+ *     Communicate unity state changes to vmx.
  *
  * Results:
  *     TRUE if everything is successful.
  *     FALSE otherwise.
  *
  * Side effects:
- *     None. 
+ *     None.
  *
  *----------------------------------------------------------------------------
  */

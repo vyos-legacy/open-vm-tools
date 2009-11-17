@@ -26,7 +26,7 @@
 #define _VIX_COMMANDS_H_
 
 #include "vm_version.h"
-#include "vix.h"
+#include "vixOpenSource.h"
 
 /*
  * These describe the format of the message objects.
@@ -94,6 +94,7 @@ enum {
    VIX_REQUESTMSG_RETURN_ON_INITIATING_TOOLS_UPGRADE  = 0x02,
    VIX_REQUESTMSG_RUN_IN_ANY_VMX_STATE                = 0x04,
    VIX_REQUESTMSG_REQUIRES_INTERACTIVE_ENVIRONMENT    = 0x08,
+   VIX_REQUESTMSG_INCLUDES_AUTH_DATA_V1               = 0x10,
 };
 
 
@@ -104,6 +105,7 @@ enum VixResponseFlagsValues {
    VIX_RESPONSE_SOFT_POWER_OP       = 0x0001,
    VIX_RESPONSE_EXTENDED_RESULT_V1  = 0x0002,
    VIX_RESPONSE_TRUNCATED           = 0x0004,
+   VIX_RESPONSE_FSR                 = 0x0008
 };
 
 
@@ -324,6 +326,11 @@ typedef
 struct VixMsgPowerOpRequest {
    VixCommandRequestHeader   header;
    VixVMPowerOpOptions       powerOpOptions;
+   /*
+    * Starting in Workstation 7.0, a serialized property list buffer
+    * can be appended here. This was originally used for augmenting
+    * poweroff to support revert to snapshot upon poweroff functionality.
+    */
 }
 #include "vmware_pack_end.h"
 VixMsgPowerOpRequest;
@@ -398,6 +405,15 @@ struct VixMsgSetVMStateRequest {
 VixMsgSetVMStateRequest;
 
 
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgAuthDataV1 {
+   int64  nonce;
+   uint32 sequenceNumber;
+   uint8  hashValue[32];
+}
+#include "vmware_pack_end.h"
+VixMsgAuthDataV1;
 
 
 
@@ -578,8 +594,6 @@ enum VixKeyStrokeModifiers {
    VIX_KEYSTROKE_MODIFIER_CONTROL           = 0x04,
    VIX_KEYSTROKE_MODIFIER_SHIFT             = 0x08,
    VIX_KEYSTROKE_MODIFIER_ALT               = 0x10,
-   VIX_KEYSTROKE_MODIFIER_CAPS_LOCK         = 0x20,
-   VIX_KEYSTROKE_MODIFIER_NUM_LOCK          = 0x40,
    VIX_KEYSTROKE_MODIFIER_KEY_DOWN_ONLY     = 0x80,
    VIX_KEYSTROKE_MODIFIER_KEY_UP_ONLY       = 0x100,
 };
@@ -1043,6 +1057,111 @@ struct VixMsgSetSnapshotInfoResponse {
 #include "vmware_pack_end.h"
 VixMsgSetSnapshotInfoResponse;
 
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgRemoveBulkSnapshotRequest {
+   VixCommandRequestHeader    header;
+
+   int32                      options;
+   int32                      numSnapshots;
+   /*
+    * This is followed by numSnapshots snapshotIDs.
+    */
+}
+#include "vmware_pack_end.h"
+VixMsgRemoveBulkSnapshotRequest;
+
+/*
+ * Rolling Tier operations.
+ */
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgAddRollingTierRequest {
+   VixCommandRequestHeader    header;
+   int32                      options;
+   uint32                     interval;
+   int                        maximum;
+   uint32                     clientFlags;
+   uint32                     propertyListLength;
+   /*
+    * Followed by:
+    *   serialized property list.
+    */
+}
+#include "vmware_pack_end.h"  
+VixMsgAddRollingTierRequest;
+   
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgAddRollingTierResponse {
+   VixCommandResponseHeader  header;
+   uint32                     tierUid;
+   uint32                     propertyListLength;
+   /*
+    * Followed by:
+    *   serialized property list.
+    */
+}
+#include "vmware_pack_end.h"  
+VixMsgAddRollingTierResponse;
+   
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgRemoveRollingTierRequest {
+   VixCommandRequestHeader    header;
+
+   int32                      options;
+   int32                      tierUid;
+   uint32                     propertyListLength;
+   /*
+    * Followed by:
+    *   serialized property list.
+    */
+}  
+#include "vmware_pack_end.h"
+VixMsgRemoveRollingTierRequest;
+   
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgRemoveRollingTierResponse {
+   VixCommandResponseHeader  header;
+   uint32                     propertyListLength;
+   /*
+    * Followed by:
+    *   serialized property list.
+    */
+}
+#include "vmware_pack_end.h"
+VixMsgRemoveRollingTierResponse;
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgListRollingTierRequest {
+   VixCommandRequestHeader    header;
+
+   int32                      options;
+   uint32                     propertyListLength;
+   /*
+    * Followed by:
+    *   serialized property list.
+    */
+}
+#include "vmware_pack_end.h"
+VixMsgListRollingTierRequest;
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgListRollingTierResponse {
+   VixCommandResponseHeader  header;
+   uint32                     propertyListLength;
+   /*
+    * Followed by:
+    *   serialized property list.
+    */
+}
+#include "vmware_pack_end.h"
+VixMsgListRollingTierResponse;
+
 
 /*
  * Fork a running VM.
@@ -1178,6 +1297,15 @@ struct VixMsgFaultToleranceControlRequest {
 #include "vmware_pack_end.h"
 VixMsgFaultToleranceControlRequest;
 
+typedef
+#include "vmware_pack_begin.h"
+struct VixFaultToleranceControlResponse {
+   VixCommandResponseHeader header;
+   uint32 propertyListBufferSize;
+   // Followed by a serialized property list containing error context.
+}
+#include "vmware_pack_end.h"
+VixFaultToleranceControlResponse;
 
 
 /*
@@ -1377,6 +1505,17 @@ struct VixCommandMakeSessionKeyResponse {
 }
 #include "vmware_pack_end.h"
 VixCommandMakeSessionKeyResponse;
+
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandGenerateNonceResponse {
+   VixCommandResponseHeader     header;
+
+   int64                        nonce;
+}
+#include "vmware_pack_end.h"
+VixCommandGenerateNonceResponse;
 
 
 enum {
@@ -1777,7 +1916,7 @@ enum VixMsgPostStateValues {
 
 /*
  * This is one string in the message. It corresponds to a
- * single Msg_List object.
+ * single MsgList object.
  */
 typedef
 #include "vmware_pack_begin.h"
@@ -2022,6 +2161,40 @@ struct VixMsgWaitForUserActionResponse {
 VixMsgWaitForUserActionResponse;
 
 
+/*
+ * **********************************************************
+ * List filesystems
+ */
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandListFileSystemsRequest {
+   VixCommandRequestHeader    header;
+
+   uint32                     options;
+   uint32                     propertyListSize;
+}
+#include "vmware_pack_end.h"
+VixCommandListFileSystemsRequest;
+
+
+/*
+ * **********************************************************
+ * A simple request packet that contains an options field and a
+ * property list.
+ */
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandGenericRequest {
+   VixCommandRequestHeader    header;
+
+   uint32                     options;
+   uint32                     propertyListSize;
+   // This is followed by the buffer of serialized properties
+}
+#include "vmware_pack_end.h"
+VixCommandGenericRequest;
 
 
 /*
@@ -2153,7 +2326,7 @@ enum {
    VIX_COMMAND_SET_FILE_INFO                    = 95,
    VIX_COMMAND_MOUSE_EVENTS                     = 96,
    VIX_COMMAND_OPEN_TEAM                        = 97,
-   VIX_COMMAND_FIND_HOST_DEVICES                = 98,
+   /* DEPRECATED VIX_COMMAND_FIND_HOST_DEVICES                = 98, */
    VIX_COMMAND_ANSWER_MESSAGE                   = 99,
    VIX_COMMAND_ENABLE_SHARED_FOLDERS            = 100,
    VIX_COMMAND_MOUNT_HGFS_FOLDERS               = 101,
@@ -2172,16 +2345,8 @@ enum {
 
    VIX_COMMAND_STOP_SNAPSHOT_LOG_RECORDING      = 113,
    VIX_COMMAND_STOP_SNAPSHOT_LOG_PLAYBACK       = 114,
-   /*
-    * HOWTO: Adding a new Vix Command. Step 2a.
-    *
-    * Add a new ID for your new function prototype here. BE CAREFUL. The
-    * OFFICIAL list of id's is in the bfg-main tree, in bora/lib/public/vixCommands.h.
-    * When people add new command id's in different tree, they may collide and use
-    * the same ID values. This can merge without conflicts, and cause runtime bugs.
-    * Once a new command is added here, a command info field needs to be added
-    * in bora/lib/foundryMsg. as well.
-    */
+
+
    VIX_COMMAND_SAMPLE_COMMAND                   = 115,
 
    VIX_COMMAND_GET_GUEST_NETWORKING_CONFIG      = 116,
@@ -2249,7 +2414,39 @@ enum {
    VIX_COMMAND_TRANSFER_REQUEST                 = 161,
    VIX_COMMAND_TRANSFER_FINAL_DATA              = 162,
 
-   VIX_COMMAND_LAST_NORMAL_COMMAND              = 163,
+   VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER        = 163,
+   VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER     = 164,
+   VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER       = 165,
+
+   VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER_VMX    = 166,
+   VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER_VMX = 167,
+   VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER_VMX   = 168,
+
+   VIX_COMMAND_LIST_FILESYSTEMS                 = 169,
+
+   VIX_COMMAND_CHANGE_DISPLAY_TOPOLOGY          = 170,
+
+   VIX_COMMAND_SUSPEND_AND_RESUME               = 171,
+
+   VIX_COMMAND_REMOVE_BULK_SNAPSHOT             = 172,
+
+   VIX_COMMAND_COPY_FILE_FROM_READER_TO_GUEST   = 173,
+
+   VIX_COMMAND_GENERATE_NONCE                   = 174,
+
+   VIX_COMMAND_CHANGE_DISPLAY_TOPOLOGY_MODES    = 175,
+
+   /*
+    * HOWTO: Adding a new Vix Command. Step 2a.
+    *
+    * Add a new ID for your new function prototype here. BE CAREFUL. The
+    * OFFICIAL list of id's is in the bfg-main tree, in bora/lib/public/vixCommands.h.
+    * When people add new command id's in different tree, they may collide and use
+    * the same ID values. This can merge without conflicts, and cause runtime bugs.
+    * Once a new command is added here, a command info field needs to be added
+    * in bora/lib/foundryMsg. as well.
+    */
+   VIX_COMMAND_LAST_NORMAL_COMMAND              = 176,
 
    VIX_TEST_UNSUPPORTED_TOOLS_OPCODE_COMMAND    = 998,
    VIX_TEST_UNSUPPORTED_VMX_OPCODE_COMMAND      = 999,
@@ -2392,6 +2589,27 @@ Bool VixMsg_ValidateCommandInfoTable(void);
 const char *VixAsyncOp_GetDebugStrForOpCode(int opCode);
 
 VixCommandSecurityCategory VixMsg_GetCommandSecurityCategory(int opCode);
+
+/*
+ * Vix private internal properties shared between the Vix client
+ * and the VMX.
+ */
+
+enum {
+   VIX_PROPERTY_VM_POWER_OFF_TO_SNAPSHOT_UID       = 5102,
+};
+
+VixError VixMsg_AllocGenericRequestMsg(int opCode,
+                                       uint64 cookie,
+                                       int credentialType,
+                                       const char *userNamePassword,
+                                       int options,
+                                       VixPropertyListImpl *propertyList,
+                                       VixCommandGenericRequest **request);
+
+VixError VixMsg_ParseGenericRequestMsg(const VixCommandGenericRequest *request,
+                                       int *options,
+                                       VixPropertyListImpl *propertyList);
 
 #endif   // VIX_HIDE_FROM_JAVA
 

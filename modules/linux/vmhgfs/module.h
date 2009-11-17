@@ -76,40 +76,17 @@ extern int LOGLEVEL_THRESHOLD;
  * Macros for accessing members that are private to this code in
  * sb/inode/file structs.
  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 42)
-#define HGFS_SET_SB_TO_COMMON(sb, common) do { (sb)->u.generic_sbp = (common); } while (0)
-#define HGFS_SB_TO_COMMON(sb)             ((HgfsSuperInfo *)(sb)->u.generic_sbp)
-#else
 #define HGFS_SET_SB_TO_COMMON(sb, common) do { (sb)->s_fs_info = (common); } while (0)
 #define HGFS_SB_TO_COMMON(sb)             ((HgfsSuperInfo *)(sb)->s_fs_info)
-#endif
 
-#ifdef VMW_EMBED_INODE
 #define INODE_GET_II_P(_inode) container_of(_inode, HgfsInodeInfo, inode)
-#elif defined(VMW_INODE_2618)
-#define INODE_GET_II_P(inode) ((HgfsInodeInfo *)(inode)->i_private)
-#else
-#define INODE_GET_II_P(inode) ((HgfsInodeInfo *)(inode)->u.generic_ip)
-#endif
 
-#if defined(VMW_INODE_2618)
+#if defined VMW_INODE_2618
 #define INODE_SET_II_P(inode, info) do { (inode)->i_private = (info); } while (0)
 #else
 #define INODE_SET_II_P(inode, info) do { (inode)->u.generic_ip = (info); } while (0)
 #endif
 
-/* 2.5.x kernels support nanoseconds timestamps. */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 48)
-#define HGFS_DECLARE_TIME(unixtm) time_t unixtm
-#define HGFS_EQUAL_TIME(unixtm1, unixtm2) (unixtm1 == unixtm2)
-#define HGFS_SET_TIME(unixtm,nttime) HgfsConvertFromNtTime(&unixtm, nttime)
-#define HGFS_GET_TIME(unixtm) HgfsConvertToNtTime(unixtm, 0L)
-#define HGFS_GET_CURRENT_TIME() HgfsConvertToNtTime(CURRENT_TIME, 0L)
-/*
- * Beware! This macro returns list of two elements. Do not add braces around.
- */
-#define HGFS_PRINT_TIME(unixtm) unixtm, 0L
-#else
 #define HGFS_DECLARE_TIME(unixtm) struct timespec unixtm
 #define HGFS_EQUAL_TIME(unixtm1, unixtm2) timespec_equal(&unixtm1, &unixtm2)
 #define HGFS_SET_TIME(unixtm,nttime) HgfsConvertFromNtTimeNsec(&unixtm, nttime)
@@ -123,15 +100,6 @@ extern int LOGLEVEL_THRESHOLD;
  * Beware! This macro returns list of two elements. Do not add braces around.
  */
 #define HGFS_PRINT_TIME(unixtm) unixtm.tv_sec, unixtm.tv_nsec
-#endif
-
-/*
- * The writeback support we're using (set_page_dirty()) was added in
- * 2.5.12, so we only support writeback from then on.
- */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 12)
-#define HGFS_ENABLE_WRITEBACK
-#endif
 
 /*
  * For files opened in our actual Host/Guest filesystem, the
@@ -141,13 +109,6 @@ extern int LOGLEVEL_THRESHOLD;
  */
 #define FILE_SET_FI_P(file, info) do { (file)->private_data = info; } while (0)
 #define FILE_GET_FI_P(file)         ((HgfsFileInfo *)(file)->private_data)
-
-/*
- * When waking up the request handler thread, these are the possible operations
- * one can ask it to perform.
- */
-#define HGFS_REQ_THREAD_SEND  (1 << 0)
-#define HGFS_REQ_THREAD_EXIT  (1 << 1)
 
 /* Data kept in each superblock in sb->u. */
 typedef struct HgfsSuperInfo {
@@ -166,10 +127,11 @@ typedef struct HgfsSuperInfo {
  * HGFS specific per-inode data.
  */
 typedef struct HgfsInodeInfo {
-#ifdef VMW_EMBED_INODE
    /* Embedded inode. */
    struct inode inode;
-#endif
+
+   /* Inode number given by the host. */
+   uint64 hostFileId;
 
    /* Was the inode number for this inode generated via iunique()? */
    Bool isFakeInodeNumber;
@@ -200,6 +162,13 @@ typedef struct HgfsFileInfo {
     * choose one with appropriate permissions.
     */
    HgfsOpenMode mode;
+
+   /*
+    * Do we need to reopen a directory ? Note that this is only used
+    * for directories.
+    */
+   Bool isStale;
+
 } HgfsFileInfo;
 
 
@@ -213,19 +182,6 @@ typedef struct HgfsFileInfo {
  */
 extern spinlock_t hgfsBigLock;
 
-/*
- * The request handler thread uses hgfsReqThreadWait to wake up and handle
- * IO. Possible operations include:
- *   -Sending outgoing HGFS requests.
- *   -Shutting down the request handler thread.
- *
- * Finally, we use hgfsReqThread to synchronize the stopping of the
- * backdoor handler thread.
- */
-extern long hgfsReqThreadFlags;
-extern wait_queue_head_t hgfsReqThreadWait;
-extern struct task_struct *hgfsReqThread;
-
 /* Hgfs filesystem structs. */
 extern struct super_operations HgfsSuperOperations;
 extern struct dentry_operations HgfsDentryOperations;
@@ -237,26 +193,22 @@ extern struct file_operations HgfsDirFileOperations;
 extern struct address_space_operations HgfsAddressSpaceOperations;
 
 /* Other global state. */
-extern compat_kmem_cache *hgfsReqCache;
 extern compat_kmem_cache *hgfsInodeCache;
-extern RpcOut *hgfsRpcOut;
-extern unsigned int hgfsIdCounter;
-extern struct list_head hgfsReqsUnsent;
 
-extern atomic_t hgfsVersionOpen;
-extern atomic_t hgfsVersionRead;
-extern atomic_t hgfsVersionWrite;
-extern atomic_t hgfsVersionClose;
-extern atomic_t hgfsVersionSearchOpen;
-extern atomic_t hgfsVersionSearchRead;
-extern atomic_t hgfsVersionSearchClose;
-extern atomic_t hgfsVersionGetattr;
-extern atomic_t hgfsVersionSetattr;
-extern atomic_t hgfsVersionCreateDir;
-extern atomic_t hgfsVersionDeleteFile;
-extern atomic_t hgfsVersionDeleteDir;
-extern atomic_t hgfsVersionRename;
-extern atomic_t hgfsVersionQueryVolumeInfo;
-extern atomic_t hgfsVersionCreateSymlink;
+extern HgfsOp hgfsVersionOpen;
+extern HgfsOp hgfsVersionRead;
+extern HgfsOp hgfsVersionWrite;
+extern HgfsOp hgfsVersionClose;
+extern HgfsOp hgfsVersionSearchOpen;
+extern HgfsOp hgfsVersionSearchRead;
+extern HgfsOp hgfsVersionSearchClose;
+extern HgfsOp hgfsVersionGetattr;
+extern HgfsOp hgfsVersionSetattr;
+extern HgfsOp hgfsVersionCreateDir;
+extern HgfsOp hgfsVersionDeleteFile;
+extern HgfsOp hgfsVersionDeleteDir;
+extern HgfsOp hgfsVersionRename;
+extern HgfsOp hgfsVersionQueryVolumeInfo;
+extern HgfsOp hgfsVersionCreateSymlink;
 
 #endif // _HGFS_DRIVER_MODULE_H_

@@ -29,13 +29,10 @@
 #include "str.h"
 #include "rpcout.h"
 #include "vmcheck.h"
-#include "guestApp.h" // for ALLOW_TOOLS_IN_FOREIGN_VM
 #include "util.h"
 #include "debug.h"
 #include "strutil.h"
 #include "guestrpc/guestlibV3.h"
-
-#define Debug(fmt, arg...) do { } while(0)
 
 #define GUESTLIB_NAME "VMware Guest API"
 
@@ -90,11 +87,11 @@ typedef struct {
       void *_data;                                                              \
       GuestLibV3Stat _stat;                                                     \
                                                                                 \
-      ASSERT(HANDLE_VERSION(HANDLE) == 3);                                      \
       (ERROR) = VMGuestLibCheckArgs((HANDLE), (OUTPTR), &_data);                \
       if (VMGUESTLIB_ERROR_SUCCESS != (ERROR)) {                                \
          break;                                                                 \
       }                                                                         \
+      ASSERT(HANDLE_VERSION(HANDLE) == 3);                                      \
       (ERROR) = VMGuestLibGetStatisticsV3((HANDLE), (STATID), &_stat);          \
       if ((ERROR) != VMGUESTLIB_ERROR_SUCCESS) {                                \
          break;                                                                 \
@@ -126,6 +123,7 @@ typedef struct {
          VMGUESTLIB_GETSTAT_V3(HANDLE, ERROR, OUTPTR, FIELDNAME, STATID);       \
       }                                                                         \
    } while (0)
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -256,14 +254,11 @@ VMGuestLib_OpenHandle(VMGuestLibHandle *handle) // OUT
 {
    VMGuestLibHandleType *data;
 
-/*
- * #ifndef ALLOW_TOOLS_IN_FOREIGN_VM
- *   if (!VmCheck_IsVirtualWorld()) {
- *     Debug("VMGuestLib_OpenHandle: Not in a VM.\n");
- *     return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
- *   }
- * #endif
- */
+   if (!VmCheck_IsVirtualWorld()) {
+      Debug("VMGuestLib_OpenHandle: Not in a VM.\n");
+      return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
+   }
+
    if (NULL == handle) {
       return VMGUESTLIB_ERROR_INVALID_ARG;
    }
@@ -410,7 +405,7 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
           * XXX: Maybe use another error code for this case where the host
           * product doesn't support this feature?
           */
-         ret = VMGUESTLIB_ERROR_UNSUPPORTED_VERSION;
+         ret = VMGUESTLIB_ERROR_NOT_ENABLED;
          break;
       } else if (hostVersion == 3) {
          /*
@@ -603,7 +598,7 @@ VMGuestLib_UpdateInfo(VMGuestLibHandle handle) // IN
 
    error = VMGuestLibUpdateInfo(handle);
    if (error != VMGUESTLIB_ERROR_SUCCESS) {
-      /* Debug("VMGuestLibUpdateInfo failed: %d\n", error); */
+      Debug("VMGuestLibUpdateInfo failed: %d\n", error);
       return error;
    }
 
@@ -820,8 +815,8 @@ VMGuestLib_GetHostProcessorSpeed(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                mhz, hostMHz,
-                                GUESTLIB_HOST_MHZ);
+                         mhz, hostMHz,
+                         GUESTLIB_HOST_MHZ);
    return error;
 }
 
@@ -848,8 +843,8 @@ VMGuestLib_GetMemReservationMB(VMGuestLibHandle handle,  // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memReservationMB, memReservationMB,
-                                GUESTLIB_MEM_RESERVATION_MB);
+                         memReservationMB, memReservationMB,
+                         GUESTLIB_MEM_RESERVATION_MB);
    return error;
 }
 
@@ -876,8 +871,8 @@ VMGuestLib_GetMemLimitMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memLimitMB, memLimitMB,
-                                GUESTLIB_MEM_LIMIT_MB);
+                         memLimitMB, memLimitMB,
+                         GUESTLIB_MEM_LIMIT_MB);
    return error;
 }
 
@@ -904,8 +899,8 @@ VMGuestLib_GetMemShares(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memShares, memShares,
-                                GUESTLIB_MEM_SHARES);
+                         memShares, memShares,
+                         GUESTLIB_MEM_SHARES);
    return error;
 }
 
@@ -932,8 +927,8 @@ VMGuestLib_GetMemMappedMB(VMGuestLibHandle handle,  // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memMappedMB, memMappedMB,
-                                GUESTLIB_MEM_MAPPED_MB);
+                         memMappedMB, memMappedMB,
+                         GUESTLIB_MEM_MAPPED_MB);
    return error;
 }
 
@@ -960,8 +955,8 @@ VMGuestLib_GetMemActiveMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memActiveMB, memActiveMB,
-                                GUESTLIB_MEM_ACTIVE_MB);
+                         memActiveMB, memActiveMB,
+                         GUESTLIB_MEM_ACTIVE_MB);
    return error;
 }
 
@@ -988,8 +983,8 @@ VMGuestLib_GetMemOverheadMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memOverheadMB, memOverheadMB,
-                                GUESTLIB_MEM_OVERHEAD_MB);
+                         memOverheadMB, memOverheadMB,
+                         GUESTLIB_MEM_OVERHEAD_MB);
    return error;
 }
 
@@ -1016,8 +1011,8 @@ VMGuestLib_GetMemBalloonedMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memBalloonedMB, memBalloonedMB,
-                                GUESTLIB_MEM_BALLOONED_MB);
+                         memBalloonedMB, memBalloonedMB,
+                         GUESTLIB_MEM_BALLOONED_MB);
    return error;
 }
 
@@ -1072,8 +1067,8 @@ VMGuestLib_GetMemSharedMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memSharedMB, memSharedMB,
-                                GUESTLIB_MEM_SHARED_MB);
+                         memSharedMB, memSharedMB,
+                         GUESTLIB_MEM_SHARED_MB);
    return error;
 }
 
@@ -1100,8 +1095,8 @@ VMGuestLib_GetMemSharedSavedMB(VMGuestLibHandle handle,  // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memSharedSavedMB, memSharedSavedMB,
-                                GUESTLIB_MEM_SHARED_SAVED_MB);
+                         memSharedSavedMB, memSharedSavedMB,
+                         GUESTLIB_MEM_SHARED_SAVED_MB);
    return error;
 }
 
@@ -1128,8 +1123,8 @@ VMGuestLib_GetMemUsedMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memUsedMB, memUsedMB,
-                                GUESTLIB_MEM_USED_MB);
+                         memUsedMB, memUsedMB,
+                         GUESTLIB_MEM_USED_MB);
    return error;
 }
 
@@ -1156,8 +1151,8 @@ VMGuestLib_GetElapsedMs(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                elapsedMs, elapsedMs,
-                                GUESTLIB_ELAPSED_MS);
+                         elapsedMs, elapsedMs,
+                         GUESTLIB_ELAPSED_MS);
    return error;
 }
 
@@ -1254,3 +1249,340 @@ VMGuestLib_GetResourcePoolPath(VMGuestLibHandle handle, // IN
 
    return error;
 }
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetCpuStolenMs --
+ *
+ *      Retrieve CPU stolen.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetCpuStolenMs(VMGuestLibHandle handle, // IN
+                          uint64 *cpuStolenMs)     // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         cpuStolenMs, cpuStolenMs,
+                         GUESTLIB_CPU_STOLEN_MS);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetMemTargetSizeMB --
+ *
+ *      Retrieve Memory Target Size.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetMemTargetSizeMB(VMGuestLibHandle handle, // IN
+                              uint64 *memTargetSizeMB) // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         memTargetSizeMB, memTargetSizeMB,
+                         GUESTLIB_MEM_TARGET_SIZE_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostNumCpuCores --
+ *
+ *      Number of physical CPU cores on the host machine.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostNumCpuCores(VMGuestLibHandle handle, // IN
+                              uint32 *hostNumCpuCores) // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostNumCpuCores, hostCpuNumCores,
+                         GUESTLIB_HOST_CPU_NUM_CORES);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostCpuUsedMs --
+ *
+ *      Total CPU time used by host.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostCpuUsedMs(VMGuestLibHandle handle,  // IN
+                            uint64 *hostCpuUsedMs)    // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostCpuUsedMs, hostCpuUsedMs,
+                         GUESTLIB_HOST_CPU_USED_MS);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemSwappedMB --
+ *
+ *      Total swapped out memory on the host.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemSwappedMB(VMGuestLibHandle handle,  // IN
+                               uint64 *hostMemSwappedMB) // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemSwappedMB, hostMemSwappedMB,
+                         GUESTLIB_HOST_MEM_SWAPPED_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemSharedMB --
+ *
+ *      Total COW (Copy-On-Write) memory on host.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemSharedMB(VMGuestLibHandle handle, // IN
+                              uint64 *hostMemSharedMB) // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemSharedMB, hostMemSharedMB,
+                         GUESTLIB_HOST_MEM_SHARED_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemUsedMB --
+ *
+ *      Total consumed memory on host.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemUsedMB(VMGuestLibHandle handle,  // IN
+                            uint64 *hostMemUsedMB)    // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemUsedMB, hostMemUsedMB,
+                         GUESTLIB_HOST_MEM_USED_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemPhysMB --
+ *
+ *      Total memory available to host OS kernel.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemPhysMB(VMGuestLibHandle handle,  // IN
+                            uint64 *hostMemPhysMB)    // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemPhysMB, hostMemPhysMB,
+                         GUESTLIB_HOST_MEM_PHYS_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemPhysFreeMB --
+ *
+ *      Total phsyical memory free on host.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemPhysFreeMB(VMGuestLibHandle handle,    // IN
+                                uint64 *hostMemPhysFreeMB)  // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemPhysFreeMB, hostMemPhysFreeMB,
+                         GUESTLIB_HOST_MEM_PHYS_FREE_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemUsedMB --
+ *
+ *      Total host kernel memory overhead.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemKernOvhdMB(VMGuestLibHandle handle,     // IN
+                                uint64 *hostMemKernOvhdMB)   // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemKernOvhdMB, hostMemKernOvhdMB,
+                         GUESTLIB_HOST_MEM_KERN_OVHD_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemMappedMB --
+ *
+ *      Total mapped memory on host.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemMappedMB(VMGuestLibHandle handle,  // IN
+                              uint64 *hostMemMappedMB)  // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemMappedMB, hostMemMappedMB,
+                         GUESTLIB_HOST_MEM_MAPPED_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetHostMemUnmappedMB --
+ *
+ *      Total unmapped memory on host.
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetHostMemUnmappedMB(VMGuestLibHandle handle,    // IN
+                                uint64 *hostMemUnmappedMB)  // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         hostMemUnmappedMB, hostMemUnmappedMB,
+                         GUESTLIB_HOST_MEM_UNMAPPED_MB);
+   return error;
+}
+

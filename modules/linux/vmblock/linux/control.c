@@ -27,8 +27,9 @@
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
-#include "compat_uaccess.h"
-#include "compat_fs.h"
+#include <linux/fs.h>
+
+#include <asm/uaccess.h>
 
 #include "vmblockInt.h"
 #include "block.h"
@@ -126,6 +127,7 @@ VMBlockCleanupControlOps(void)
 
 /* Private initialization/cleanup routines */
 
+
 /*
  *----------------------------------------------------------------------------
  *
@@ -159,6 +161,7 @@ VMBlockSetProcEntryOwner(struct proc_dir_entry *entry) // IN/OUT: directory entr
    entry->owner = THIS_MODULE;
 #endif
 }
+
 
 /*
  *----------------------------------------------------------------------------
@@ -293,14 +296,14 @@ ControlFileOpWrite(struct file *file,       // IN: Opened file, used for ID
     * side-stepping the syscall auditing and doing the copy from user space
     * ourself.  Change this back once we GPL the module.
     */
-   filename = compat___getname();
+   filename = __getname();
    if (!filename) {
       Warning("ControlFileOpWrite: Could not obtain memory for filename.\n");
       return -ENOMEM;
    }
 
    /*
-    * XXX: compat___getname() returns a pointer to a PATH_MAX-sized buffer.
+    * XXX: __getname() returns a pointer to a PATH_MAX-sized buffer.
     * Hard-coding this size is also gross, but it's our only option here and
     * InodeOpLookup() already set a bad example by doing this.
     */
@@ -336,7 +339,7 @@ ControlFileOpWrite(struct file *file,       // IN: Opened file, used for ID
    }
 
 exit:
-   compat___putname(filename);
+   __putname(filename);
    return ret;
 }
 
