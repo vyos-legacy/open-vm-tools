@@ -509,7 +509,6 @@ $(MODULES):
 @LINUX_TRUE@export vmxnetdir := $(MODULES_DIR)/drivers/net
 @LINUX_TRUE@export vmxnet3dir := $(MODULES_DIR)/drivers/net
 @LINUX_TRUE@export vsockdir := $(MODULES_DIR)/net/vsock
-@LINUX_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@export DEPMOD := depmod -a
 
 @SOLARIS_TRUE@export vmhgfsdir := $(MODULES_DIR)
 
