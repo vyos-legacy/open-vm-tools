@@ -1148,12 +1148,11 @@ static int
 vmxnet3_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
 {
    struct vmxnet3_adapter *adapter = compat_netdev_priv(netdev);
+   struct vmxnet3_tx_queue *tq = &adapter->tx_queue;
 
    if (adapter->is_shm) {
       return vmxnet3_shm_start_tx(skb, netdev);
    }
-
-   struct vmxnet3_tx_queue *tq = &adapter->tx_queue;
 
    return vmxnet3_tq_xmit(skb, tq, adapter, netdev);
 }
