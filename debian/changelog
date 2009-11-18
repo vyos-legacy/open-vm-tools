@@ -1,3 +1,10 @@
+open-vm-tools (2009.10.15+vyatta-2) unstable; urgency=low
+
+  * Change to vyatta naming on package
+  * Fix where modules are installed on target build
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Tue, 17 Nov 2009 16:01:15 -0800
+
 open-vm-tools (2009.10.15+vyatta-1) unstable; urgency=low
 
   * Merging upstream version 2009.10.15-201664 from Debian testing.
