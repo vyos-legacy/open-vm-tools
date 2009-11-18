@@ -51,5 +51,5 @@ SUBDIRS += tests
 if WITH_KERNEL_MODULES
    SUBDIRS += modules
 endif
-SUBDIRS += docs
+#SUBDIRS += docs
 
