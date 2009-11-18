@@ -66,7 +66,7 @@ export KVER=$(kmajor)$(klocal)
 endif
 
 export KINCLUDE_DIR=$(KDIR)/include/
-PACKAGE=open-vm-tools-$(KVER)
+PACKAGE=open-vm-tools-vyatta
 PKGDIR=$(CURDIR)/debian/$(PACKAGE)
 # the following is needed so debuild will only build the arch-specific package
 # (control contains packages for multiple architectures)
@@ -77,6 +77,11 @@ CFLAGS = -Wall -g
 configure	 = ./configure
 configure	+= --host=$(DEB_HOST_GNU_TYPE)
 configure	+= --build=$(DEB_BUILD_GNU_TYPE)
+configure	+= --prefix=/usr
+configure	+= --exec-prefix=/usr
+configure	+= --sbindir=/usr/sbin
+configure	+= --mandir=/usr/share/man
+configure	+= --sysconfdir=/etc
 configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
 configure	+= --without-x
@@ -124,17 +129,20 @@ clean-patched:
 install: build
 	dh_testdir
 	dh_testroot
-	dh_clean -k 
+	dh_prep
 	dh_installdirs
 
 	$(MAKE) DESTDIR=$(PKGDIR) install
 
-	install -D --mode=0755 open-vm-tools.init $(PKGDIR)/etc/init.d/open-vm-tools
-	mkdir -p $(PKGDIR)/etc/rc2.d/ $(PKGDIR)/etc/rc3.d/
-	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc2.d/S05open-vm-tools
-	ln -s ../init.d/open-vm-tools $(PKGDIR)/etc/rc3.d/S05open-vm-tools
-	install -D --mode=0644 debian/lintian $(PKGDIR)/usr/share/lintian/overrides/$(PACKAGE)
-	install -D --mode=0644 debian/linda $(PKGDIR)/usr/share/linda/overrides/$(PACKAGE)
+	install -D -m 0755 debian/local/vmxnet.hook \
+		$(PKGDIR)/usr/share/initramfs-tools/hooks/vmxnet
+
+	# Moving open-vm-tools files
+	mkdir -p $(PKGDIR)/sbin
+	mv $(PKGDIR)$(sbindir)/mount.vmhgfs $(PKGDIR)/sbin/mount.vmhgfs
+
+	dh_install
+
 
 # Build architecture-independent files here.
 binary-indep: build install
@@ -142,9 +150,12 @@ binary-indep: build install
 	dh_testdir
 	dh_testroot
 	dh_installchangelogs ChangeLog
-	dh_installdocs
+#	dh_installdocs
 	dh_install
+	dh_installman
+	dh_installinit --update-rcd-params='start 38 S . stop 38 0 6 .'
 	dh_installdebconf	
+	dh_lintian
 	dh_link
 	dh_strip
 	dh_compress
