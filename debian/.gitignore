@@ -2,3 +2,5 @@
 open-vm-tools-*
 stamp-patched
 files
+open-vm-tools
+open-vm-modules-*
