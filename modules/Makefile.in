@@ -138,7 +138,7 @@ LTLIBOBJS = @LTLIBOBJS@
 MAKEINFO = @MAKEINFO@
 MKDIR_P = @MKDIR_P@
 MODULES = @MODULES@
-MODULES_DIR = @MODULES_DIR@
+MODULES_DIR = /lib/modules/$(KERNEL_RELEASE)
 MODULES_OS = @MODULES_OS@
 MSCGEN = @MSCGEN@
 MSCGEN_DIR = @MSCGEN_DIR@
@@ -509,6 +509,10 @@ $(MODULES):
 @LINUX_TRUE@export vmxnetdir := $(MODULES_DIR)/drivers/net
 @LINUX_TRUE@export vmxnet3dir := $(MODULES_DIR)/drivers/net
 @LINUX_TRUE@export vsockdir := $(MODULES_DIR)/net/vsock
+#if WITH_ROOT_PRIVILEGES
+#export DEPMOD := depmod -a
+#endif WITH_ROOT_PRIVILEGES
+@LINUX_TRUE@export DEPMOD := true
 
 @SOLARIS_TRUE@export vmhgfsdir := $(MODULES_DIR)
 
