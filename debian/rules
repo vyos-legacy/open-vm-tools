@@ -66,11 +66,8 @@ export KVER=$(kmajor)$(klocal)
 endif
 
 export KINCLUDE_DIR=$(KDIR)/include/
-PACKAGE=open-vm-tools-$(KVER)
-PKGDIR=$(CURDIR)/debian/$(PACKAGE)
-# the following is needed so debuild will only build the arch-specific package
-# (control contains packages for multiple architectures)
-export DH_OPTIONS=-p$(PACKAGE)
+PKGDIR=$(CURDIR)/debian/open-vm-tools
+MODPKG=open-vm-modules-$(KVER)
 
 CFLAGS = -Wall -g
 
@@ -104,7 +101,6 @@ configure: configure.ac Makefile.am
 	#debian/autogen.sh
 
 config.status: configure
-	dh_testdir
 	rm -f config.cache
 	$(configure)
 
@@ -112,21 +108,24 @@ build: build-stamp
 
 build-stamp:  config.status
 	dh_testdir
+
+	# Building package
 	$(MAKE)
-	touch $@
 
-clean: clean-patched
+	touch build-stamp
 
-
-# Clean everything up, including everything auto-generated
-# at build time that needs not to be kept around in the Debian diff
-clean-patched:
+clean: 
 	dh_testdir
 	dh_testroot
-	#make clean
+	rm -f build-stamp
+
+	# Cleaning package
+	[ ! -f Makefile ] || $(MAKE) distclean
+
 	dh_clean 
 
 install: build
+	echo install
 	dh_testdir
 	dh_testroot
 	dh_prep
@@ -134,12 +133,17 @@ install: build
 
 	$(MAKE) DESTDIR=$(PKGDIR) install
 
+	# Move modules to other package
+	mkdir -p $(CURDIR)/debian/$(MODPKG)/lib
+	mv $(PKGDIR)/lib/modules $(CURDIR)/debian/$(MODPKG)/lib
+	-rmdir $(PKGDIR)/lib
+
+	# Fix up hooks
 	install -D -m 0755 debian/local/vmxnet.hook \
 		$(PKGDIR)/usr/share/initramfs-tools/hooks/vmxnet
-
-	# Moving open-vm-tools files
 	mkdir -p $(PKGDIR)/sbin
 	mv $(PKGDIR)/usr/sbin/mount.vmhgfs $(PKGDIR)/sbin/mount.vmhgfs
+	-rmdir $(PKGDIR)/usr/sbin
 
 	dh_install
 
@@ -160,14 +164,18 @@ binary-indep: build install
 	dh_strip
 	dh_compress
 	dh_fixperms
+	dh_makeshlibs -V
 	dh_installdeb
 	if [ -f "../.VYATTA_DEV_BUILD" ]; then \
-		dh_gencontrol -- -v999.dev; \
+		dh_gencontrol -p open-vm-tools -- -v999.dev; \
+		dh_gencontrol -p $(MODPKG) -- -VKFLAVOR=$(DEB_KFLAVOR) -v999.dev; \
 	else \
-		dh_gencontrol; \
+		dh_gencontrol -p open-vm-tools ;\
+		dh_gencontrol -p $(MODPKG) -- -VKFLAVOR=$(DEB_KFLAVOR) ;\
 	fi
 	dh_md5sums
-	dh_builddeb
+	dh_builddeb -i 
+	dh_builddeb -p $(MODPKG)
 
 # Build architecture-dependent files here.
 binary-arch: build install
