@@ -1,3 +1,28 @@
+open-vm-tools (2009.10.15+vyatta-5) unstable; urgency=low
+
+  * Fix module location
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Wed, 18 Nov 2009 21:57:34 -0800
+
+open-vm-tools (2009.10.15+vyatta-4) unstable; urgency=low
+
+  * Don't build tests or docs
+  * Split into two packages utils and modules
+  * Split into two separate packages
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 18 Nov 2009 21:44:30 -0800
+
+open-vm-tools (2009.10.15+vyatta-3) unstable; urgency=low
+
+  * Change package configuration
+  * Don't build open-vm-tools docs
+  * Don't install tests
+  * Don't creaet incorrect symlink for mount.vmhgfs
+  * Ignore build directories
+  * Fix packaging
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 18 Nov 2009 15:10:13 -0800
+
 open-vm-tools (2009.10.15+vyatta-2) unstable; urgency=low
 
   * Change to vyatta naming on package
