@@ -147,9 +147,9 @@ install: build
 
 	dh_install
 
-
-# Build architecture-independent files here.
-binary-indep: build install
+# Build architecture-dependent files here.
+# Special case since we build open-vm-modules-..kernel-flavor...
+binary-arch: build install
 	rm -f debian/files
 	dh_testdir
 	dh_testroot
@@ -174,13 +174,8 @@ binary-indep: build install
 		dh_gencontrol -p $(MODPKG) -- -VKFLAVOR=$(DEB_KFLAVOR) ;\
 	fi
 	dh_md5sums
-	dh_builddeb -i 
+	dh_builddeb -p open-vm-tools 
 	dh_builddeb -p $(MODPKG)
 
-# Build architecture-dependent files here.
-binary-arch: build install
-# This is an architecture independent package
-# so; we have nothing to do by default.
-
-binary: binary-indep binary-arch
+binary: binary-arch
 .PHONY: build clean binary-indep binary-arch binary install 
