@@ -66,8 +66,9 @@ export KVER=$(kmajor)$(klocal)
 endif
 
 export KINCLUDE_DIR=$(KDIR)/include/
-PACKAGE=open-vm-tools-$(KVER)
-PKGDIR=$(CURDIR)/debian/$(PACKAGE)
+PKGDIR=$(CURDIR)/debian/open-vm-tools
+MODPKGDIR=$(CURDIR)/debian/open-vm-modules-$(KVER)
+
 # the following is needed so debuild will only build the arch-specific package
 # (control contains packages for multiple architectures)
 export DH_OPTIONS=-p$(PACKAGE)
@@ -104,7 +105,6 @@ configure: configure.ac Makefile.am
 	#debian/autogen.sh
 
 config.status: configure
-	dh_testdir
 	rm -f config.cache
 	$(configure)
 
@@ -123,21 +123,24 @@ clean: clean-patched
 clean-patched:
 	dh_testdir
 	dh_testroot
-	#make clean
+	rm -f build-stamp configure-stamp
+
+	# Add here commands to clean up after the build process.
+	-$(MAKE) clean $(KVARS)
+
 	dh_clean 
 
 install: build
+	echo install
 	dh_testdir
 	dh_testroot
 	dh_prep
 	dh_installdirs
 
-	$(MAKE) DESTDIR=$(PKGDIR) install
+	$(MAKE) DESTDIR=$(PKGDIR) MODDESTDIR=$(MODPKGDIR) install
 
 	install -D -m 0755 debian/local/vmxnet.hook \
 		$(PKGDIR)/usr/share/initramfs-tools/hooks/vmxnet
-
-	# Moving open-vm-tools files
 	mkdir -p $(PKGDIR)/sbin
 	mv $(PKGDIR)/usr/sbin/mount.vmhgfs $(PKGDIR)/sbin/mount.vmhgfs
 
@@ -160,6 +163,7 @@ binary-indep: build install
 	dh_strip
 	dh_compress
 	dh_fixperms
+	dh_makeshlibs -V
 	dh_installdeb
 	if [ -f "../.VYATTA_DEV_BUILD" ]; then \
 		dh_gencontrol -- -v999.dev; \

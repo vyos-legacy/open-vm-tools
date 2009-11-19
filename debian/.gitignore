@@ -1,6 +1,7 @@
 *.log
+*.debhelper
+open-vm-tools
 open-vm-tools-*
+open-vm-modules-*
 stamp-patched
 files
-open-vm-tools
-open-vm-modules-*
