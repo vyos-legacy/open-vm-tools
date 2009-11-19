@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-6) unstable; urgency=low
+
+  * Change rules to binary-arch
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Thu, 19 Nov 2009 10:55:58 -0800
+
 open-vm-tools (2009.10.15+vyatta-5) unstable; urgency=low
 
   * Fix module location
