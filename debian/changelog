@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-5) unstable; urgency=low
+
+  * Fix module location
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Wed, 18 Nov 2009 21:57:34 -0800
+
 open-vm-tools (2009.10.15+vyatta-4) unstable; urgency=low
 
   * Don't build tests or docs
