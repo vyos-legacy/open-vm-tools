@@ -77,7 +77,7 @@ if LINUX
 	for MOD in $(MODULES); do                                              \
 	   $(INSTALL) -d $(DESTDIR)`eval echo '$$'$${MOD}dir`;                 \
 	   $(INSTALL) -m644 $(modulesrc)/$(MODULES_OS)/$$MOD/$$MOD.ko          \
-	      $(MODDESTDIR)`eval echo '$$'$${MOD}dir`;                         \
+	      $(DESTDIR)`eval echo '$$'$${MOD}dir`;                         \
 	done
 	eval "$$DEPMOD"
 endif
