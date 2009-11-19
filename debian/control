@@ -13,8 +13,7 @@ Architecture: i386
 Provides: open-vm-modules
 Recommends: open-vm-tools
 Replaces: open-vm-tools-2.6.31-1-586-vyatta
-Pre-depends: linux-image-2.6.31-1-586-vyatta
-Depends: ${shlibs:Depends}
+Depends: linux-image-2.6.31-1-586-vyatta
 Description: Vyatta version of the open-vm modules for i386
  This package provides the accelerated drivers vyatta on VMWare for kernel
  linux-image-2.6.31-1-586-vyatta.
@@ -24,15 +23,14 @@ Architecture: amd64
 Provides: open-vm-modules
 Recommends: open-vm-tools
 Replaces: open-vm-tools-2.6.31-1-amd64-vyatta
-Pre-depends: linux-image-2.6.31-1-amd64-vyatta
-Depends: ${shlibs:Depends}
+Depends: linux-image-2.6.31-1-amd64-vyatta
 Description: Vyatta version of the open-vm modules for amd64
  This package provides the accelerated drivers vyatta on VMWare for kernel
  linux-image-2.6.31-1-amd64-vyatta.
 
 Package: open-vm-tools
-Architecture: amd64 i386
-Depends: ${misc:Depends}, ${shlibs:Depends}, libc6
+Architecture: any
+Depends: libc6,  libglib2.0-0
 Description: tools and components for VMware guest systems (CLI tools)
  The Open Virtual Machine Tools (open-vm-tools) are the open source
  implementation of VMware Tools. They are a set of guest operating system

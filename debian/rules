@@ -67,11 +67,7 @@ endif
 
 export KINCLUDE_DIR=$(KDIR)/include/
 PKGDIR=$(CURDIR)/debian/open-vm-tools
-MODPKGDIR=$(CURDIR)/debian/open-vm-modules-$(KVER)
-
-# the following is needed so debuild will only build the arch-specific package
-# (control contains packages for multiple architectures)
-export DH_OPTIONS=-p$(PACKAGE)
+MODPKG=open-vm-modules-$(KVER)
 
 CFLAGS = -Wall -g
 
@@ -112,21 +108,19 @@ build: build-stamp
 
 build-stamp:  config.status
 	dh_testdir
+
+	# Building package
 	$(MAKE)
-	touch $@
 
-clean: clean-patched
+	touch build-stamp
 
-
-# Clean everything up, including everything auto-generated
-# at build time that needs not to be kept around in the Debian diff
-clean-patched:
+clean: 
 	dh_testdir
 	dh_testroot
-	rm -f build-stamp configure-stamp
+	rm -f build-stamp
 
-	# Add here commands to clean up after the build process.
-	-$(MAKE) clean $(KVARS)
+	# Cleaning package
+	[ ! -f Makefile ] || $(MAKE) distclean
 
 	dh_clean 
 
@@ -137,12 +131,19 @@ install: build
 	dh_prep
 	dh_installdirs
 
-	$(MAKE) DESTDIR=$(PKGDIR) MODDESTDIR=$(MODPKGDIR) install
+	$(MAKE) DESTDIR=$(PKGDIR) install
 
+	# Move modules to other package
+	mkdir -p $(CURDIR)/debian/$(MODPKG)/lib
+	mv $(PKGDIR)/lib/modules $(CURDIR)/debian/$(MODPKG)/lib
+	-rmdir $(PKGDIR)/lib
+
+	# Fix up hooks
 	install -D -m 0755 debian/local/vmxnet.hook \
 		$(PKGDIR)/usr/share/initramfs-tools/hooks/vmxnet
 	mkdir -p $(PKGDIR)/sbin
 	mv $(PKGDIR)/usr/sbin/mount.vmhgfs $(PKGDIR)/sbin/mount.vmhgfs
+	-rmdir $(PKGDIR)/usr/sbin
 
 	dh_install
 
@@ -166,12 +167,15 @@ binary-indep: build install
 	dh_makeshlibs -V
 	dh_installdeb
 	if [ -f "../.VYATTA_DEV_BUILD" ]; then \
-		dh_gencontrol -- -v999.dev; \
+		dh_gencontrol -p open-vm-tools -- -v999.dev; \
+		dh_gencontrol -p $(MODPKG) -- -VKFLAVOR=$(DEB_KFLAVOR) -v999.dev; \
 	else \
-		dh_gencontrol; \
+		dh_gencontrol -p open-vm-tools ;\
+		dh_gencontrol -p $(MODPKG) -- -VKFLAVOR=$(DEB_KFLAVOR) ;\
 	fi
 	dh_md5sums
-	dh_builddeb
+	dh_builddeb -i 
+	dh_builddeb -p $(MODPKG)
 
 # Build architecture-dependent files here.
 binary-arch: build install
