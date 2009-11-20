@@ -17,7 +17,7 @@
 exit_if_not_in_vm () {
 	if [ ! -x /usr/bin/vmware-checkvm ] || ! /usr/bin/vmware-checkvm > /dev/null 2>&1
 	then
-		echo "Not starting as we're not running in a vm."
+#		echo "Not starting as we're not running in a vm."
 		exit 0
 	fi
 }
