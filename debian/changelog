@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-7) unstable; urgency=low
+
+  * Remove unneeded boot message
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Tue, 24 Nov 2009 14:59:27 -0800
+
 open-vm-tools (2009.10.15+vyatta-6) unstable; urgency=low
 
   * Change rules to binary-arch
