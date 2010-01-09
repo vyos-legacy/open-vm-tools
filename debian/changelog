@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-8) unstable; urgency=low
+
+  * UNRELEASED
+
+ -- Stig Thormodsrud <stig@vyatta.com>  Sat, 09 Jan 2010 11:33:49 -0800
+
 open-vm-tools (2009.10.15+vyatta-7) unstable; urgency=low
 
   * Remove unneeded boot message
