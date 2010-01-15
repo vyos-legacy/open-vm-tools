@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-9) unstable; urgency=low
+
+  * UNRELEASED
+
+ -- Stig Thormodsrud <stig@vyatta.com>  Fri, 15 Jan 2010 10:40:29 -0800
+
 open-vm-tools (2009.10.15+vyatta-8) unstable; urgency=low
 
   * UNRELEASED
