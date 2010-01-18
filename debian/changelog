@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-10) unstable; urgency=low
+
+  * UNRELEASED
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Mon, 18 Jan 2010 12:35:59 -0800
+
 open-vm-tools (2009.10.15+vyatta-9) unstable; urgency=low
 
   * UNRELEASED
