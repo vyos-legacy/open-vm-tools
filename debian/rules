@@ -46,9 +46,10 @@ dev_build=$(shell test -d $(dev_kdir) && echo -n true)
 # of these packages.
 host_kdir=/usr/src/linux-image/$(kbdir)
 host_build=$(shell test -d $(host_kdir) && echo -n true)
+vers_kdir=$(PWD)/../linux-image/debian/linux-vyatta-kbuild/$(host_kdir)
 
 ifeq ($(dev_build),true)
-export KDIR=$(shell sh -c "cd $(dev_kdir) 2>/dev/null && pwd")
+export KDIR=$(shell sh -c "cd $(vers_kdir) 2>/dev/null && pwd")
 else
 ifeq ($(host_build),true)
 export KDIR=$(host_kdir)
