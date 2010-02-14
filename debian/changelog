@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-15) unstable; urgency=low
+
+  * fix open-vm-tools build for dev_build
+
+ -- Robert Bays <rbays@vyatta.com>  Sat, 13 Feb 2010 20:06:19 -0800
+
 open-vm-tools (2009.10.15+vyatta-14) unstable; urgency=low
 
   * update to use the virt kernel
