@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-16) unstable; urgency=low
+
+  * UNRELEASED
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Wed, 17 Feb 2010 16:11:49 -0800
+
 open-vm-tools (2009.10.15+vyatta-15) unstable; urgency=low
 
   * fix open-vm-tools build for dev_build
