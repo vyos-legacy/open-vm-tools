@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-17) unstable; urgency=low
+
+  * Update for 2.6.32
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 24 Feb 2010 09:26:11 -0800
+
 open-vm-tools (2009.10.15+vyatta-16) unstable; urgency=low
 
   * UNRELEASED
