@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-19) unstable; urgency=low
+
+  * UNRELEASED
+
+ -- Stig Thormodsrud <stig@vyatta.com>  Tue, 06 Apr 2010 11:55:56 -0700
+
 open-vm-tools (2009.10.15+vyatta-18) unstable; urgency=low
 
   * update flavor name
