@@ -1,3 +1,10 @@
+open-vm-tools (2009.10.15+vyatta-15+kenwood3) unstable; urgency=low
+
+  * move plugin libs so vmtoolsd will actually speak to hypervisor in
+    4.0
+
+ -- Robert Bays <rbays@roatan>  Fri, 16 Apr 2010 15:57:18 -0700
+
 open-vm-tools (2009.10.15+vyatta-15+kenwood2) unstable; urgency=low
 
   * remove .la files from plugins dir so that vmtoolsd will actually
