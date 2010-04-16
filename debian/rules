@@ -174,6 +174,7 @@ binary-arch: build install
 		dh_gencontrol -p open-vm-tools ;\
 		dh_gencontrol -p $(MODPKG) -- -VKFLAVOR=$(DEB_KFLAVOR) ;\
 	fi
+	rm -f $(PKGDIR)/usr/lib/open-vm-tools/plugins/common/*.la
 	dh_md5sums
 	dh_builddeb -p open-vm-tools 
 	dh_builddeb -p $(MODPKG)
