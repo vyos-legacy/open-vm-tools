@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-20) unstable; urgency=low
+
+  * open-vm-tools depends on open-vm-modules
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Mon, 19 Apr 2010 13:13:15 -0700
+
 open-vm-tools (2009.10.15+vyatta-19) unstable; urgency=low
 
   * UNRELEASED
