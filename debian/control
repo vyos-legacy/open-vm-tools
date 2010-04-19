@@ -28,7 +28,7 @@ Description: Vyatta version of the open-vm modules for amd64
 
 Package: open-vm-tools
 Architecture: any
-Depends: libc6,  libglib2.0-0
+Depends: libc6, libglib2.0-0, open-vm-modules
 Description: tools and components for VMware guest systems (CLI tools)
  The Open Virtual Machine Tools (open-vm-tools) are the open source
  implementation of VMware Tools. They are a set of guest operating system
