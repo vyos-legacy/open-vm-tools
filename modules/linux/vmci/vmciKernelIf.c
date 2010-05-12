@@ -48,6 +48,7 @@
 #include "compat_page.h"
 #include "compat_mm.h"
 #include "compat_highmem.h"
+#include "compat_sched.h"
 #include "vm_basic_types.h"
 #include "pgtbl.h"
 #include <linux/vmalloc.h>
