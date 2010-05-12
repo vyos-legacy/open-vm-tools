@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-22) unstable; urgency=low
+
+  * fix amd64 build
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Wed, 12 May 2010 12:59:34 -0700
+
 open-vm-tools (2009.10.15+vyatta-21) unstable; urgency=low
 
   * UNRELEASED
