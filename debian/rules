@@ -148,6 +148,9 @@ install: build
 
 	dh_install
 
+	# Remove the .la files from the plugins directory or vmtoolsd won't load
+	rm -f $(PKGDIR)/usr/lib/open-vm-tools/plugins/common/*.la
+
 # Build architecture-dependent files here.
 # Special case since we build open-vm-modules-..kernel-flavor...
 binary-arch: build install
