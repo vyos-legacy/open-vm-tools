@@ -3440,7 +3440,7 @@ VSockVmciStreamConnect(struct socket *sock,   // IN
     * a notification of an error.
     */
    timeout = sock_sndtimeo(sk, flags & O_NONBLOCK);
-   compat_init_prepare_to_wait(sk->compat_sk_sleep, &wait, TASK_INTERRUPTIBLE);
+   compat_init_prepare_to_wait(compat_sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
 
    while (sk->compat_sk_state != SS_CONNECTED && sk->compat_sk_err == 0) {
       if (timeout == 0) {
@@ -3463,7 +3463,7 @@ VSockVmciStreamConnect(struct socket *sock,   // IN
          goto outWaitError;
       }
 
-      compat_cont_prepare_to_wait(sk->compat_sk_sleep, &wait, TASK_INTERRUPTIBLE);
+      compat_cont_prepare_to_wait(compat_sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
    }
 
    if (sk->compat_sk_err) {
@@ -3475,7 +3475,7 @@ VSockVmciStreamConnect(struct socket *sock,   // IN
    }
 
 outWait:
-   compat_finish_wait(sk->compat_sk_sleep, &wait, TASK_RUNNING);
+   compat_finish_wait(compat_sk_sleep(sk), &wait, TASK_RUNNING);
 out:
    release_sock(sk);
    return err;
@@ -3535,7 +3535,7 @@ VSockVmciAccept(struct socket *sock,     // IN
     * upon connection establishment.
     */
    timeout = sock_sndtimeo(listener, flags & O_NONBLOCK);
-   compat_init_prepare_to_wait(listener->compat_sk_sleep, &wait, TASK_INTERRUPTIBLE);
+   compat_init_prepare_to_wait(compat_sk_sleep(listener), &wait, TASK_INTERRUPTIBLE);
 
    while ((connected = VSockVmciDequeueAccept(listener)) == NULL &&
           listener->compat_sk_err == 0) {
@@ -3551,7 +3551,7 @@ VSockVmciAccept(struct socket *sock,     // IN
          goto outWait;
       }
 
-      compat_cont_prepare_to_wait(listener->compat_sk_sleep, &wait, TASK_INTERRUPTIBLE);
+      compat_cont_prepare_to_wait(compat_sk_sleep(listener), &wait, TASK_INTERRUPTIBLE);
    }
 
    if (listener->compat_sk_err) {
@@ -3585,7 +3585,7 @@ VSockVmciAccept(struct socket *sock,     // IN
    }
 
 outWait:
-   compat_finish_wait(listener->compat_sk_sleep, &wait, TASK_RUNNING);
+   compat_finish_wait(compat_sk_sleep(listener), &wait, TASK_RUNNING);
 out:
    release_sock(listener);
    return err;
@@ -3683,7 +3683,7 @@ VSockVmciPoll(struct file *file,    // IN
    sk = sock->sk;
    vsk = vsock_sk(sk);
 
-   poll_wait(file, sk->compat_sk_sleep, wait);
+   poll_wait(file, compat_sk_sleep(sk), wait);
    mask = 0;
 
    if (sk->compat_sk_err) {
@@ -4281,7 +4281,7 @@ VSockVmciStreamSendmsg(struct kiocb *kiocb,          // UNUSED
       goto out;
    }
 
-   compat_init_prepare_to_wait(sk->compat_sk_sleep, &wait, TASK_INTERRUPTIBLE);
+   compat_init_prepare_to_wait(compat_sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
 
    while (totalWritten < len) {
       Bool sentWrote;
@@ -4319,7 +4319,7 @@ VSockVmciStreamSendmsg(struct kiocb *kiocb,          // UNUSED
             goto outWait;
          }
 
-         compat_cont_prepare_to_wait(sk->compat_sk_sleep,
+         compat_cont_prepare_to_wait(compat_sk_sleep(sk),
                                      &wait, TASK_INTERRUPTIBLE);
       }
 
@@ -4372,7 +4372,7 @@ outWait:
    if (totalWritten > 0) {
       err = totalWritten;
    }
-   compat_finish_wait(sk->compat_sk_sleep, &wait, TASK_RUNNING);
+   compat_finish_wait(compat_sk_sleep(sk), &wait, TASK_RUNNING);
 out:
    release_sock(sk);
    return err;
@@ -4558,7 +4558,7 @@ VSockVmciStreamRecvmsg(struct kiocb *kiocb,          // UNUSED
       goto out;
    }
 
-   compat_init_prepare_to_wait(sk->compat_sk_sleep, &wait, TASK_INTERRUPTIBLE);
+   compat_init_prepare_to_wait(compat_sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
 
    while ((ready = VSockVmciStreamHasData(vsk)) < target &&
           sk->compat_sk_err == 0 &&
@@ -4598,7 +4598,7 @@ VSockVmciStreamRecvmsg(struct kiocb *kiocb,          // UNUSED
          goto outWait;
       }
 
-      compat_cont_prepare_to_wait(sk->compat_sk_sleep, &wait, TASK_INTERRUPTIBLE);
+      compat_cont_prepare_to_wait(compat_sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
    }
 
    if (sk->compat_sk_err) {
@@ -4664,7 +4664,7 @@ VSockVmciStreamRecvmsg(struct kiocb *kiocb,          // UNUSED
    err = copied;
 
 outWait:
-   compat_finish_wait(sk->compat_sk_sleep, &wait, TASK_RUNNING);
+   compat_finish_wait(compat_sk_sleep(sk), &wait, TASK_RUNNING);
 out:
    release_sock(sk);
    return err;
