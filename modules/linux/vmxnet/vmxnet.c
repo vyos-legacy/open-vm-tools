@@ -78,7 +78,7 @@ static int vmxnet_close(struct net_device *dev);
 static void vmxnet_set_multicast_list(struct net_device *dev);
 static int vmxnet_set_mac_address(struct net_device *dev, void *addr);
 static struct net_device_stats *vmxnet_get_stats(struct net_device *dev);
-#ifdef HAVE_CHANGE_MTU
+#if defined(HAVE_CHANGE_MTU) || defined(HAVE_NET_DEVICE_OPS)
 static int vmxnet_change_mtu(struct net_device *dev, int new_mtu);
 #endif
 
@@ -271,7 +271,7 @@ static struct pci_driver vmxnet_driver = {
 #endif
                                          };
 
-#ifdef HAVE_CHANGE_MTU
+#if defined(HAVE_CHANGE_MTU) || defined(HAVE_NET_DEVICE_OPS)
 static int
 vmxnet_change_mtu(struct net_device *dev, int new_mtu)
 {
@@ -2790,11 +2790,10 @@ vmxnet_close(struct net_device *dev)
 static int
 vmxnet_load_multicast (struct net_device *dev)
 {
-   struct Vmxnet_Private *lp = netdev_priv(dev);
+    struct Vmxnet_Private *lp = netdev_priv(dev);
     volatile u16 *mcast_table = (u16 *)lp->dd->LADRF;
-    struct dev_mc_list *dmi = dev->mc_list;
-    char *addrs;
-    int i, j, bit, byte;
+    struct netdev_hw_addr *ha;
+    int j, bit, byte;
     u32 crc, poly = CRC_POLYNOMIAL_LE;
 
     /* clear the multicast filter */
@@ -2802,9 +2801,8 @@ vmxnet_load_multicast (struct net_device *dev)
     lp->dd->LADRF[1] = 0;
 
     /* Add addresses */
-    for (i = 0; i < dev->mc_count; i++){
-	addrs = dmi->dmi_addr;
-	dmi   = dmi->next;
+    netdev_for_each_mc_addr(ha, dev){
+	const char *addrs = ha->addr;
 
 	/* multicast address? */
 	if (!(*addrs & 1))
@@ -2827,7 +2825,8 @@ vmxnet_load_multicast (struct net_device *dev)
 	 crc = crc >> 26;
 	 mcast_table [crc >> 4] |= 1 << (crc & 0xf);
     }
-    return i;
+    
+    return netdev_mc_count(dev);
 }
 
 /*
