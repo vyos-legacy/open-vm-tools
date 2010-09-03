@@ -1,3 +1,10 @@
+open-vm-tools (2009.10.15+vyatta-30) unstable; urgency=low
+
+  * Run aclocal on Debian Squeeze
+  * Reconfigure kernel modules
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Fri, 03 Sep 2010 14:02:52 -0700
+
 open-vm-tools (2009.10.15+vyatta-29) unstable; urgency=low
 
   * UNRELEASED
