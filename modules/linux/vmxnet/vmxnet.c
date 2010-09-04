@@ -78,9 +78,7 @@ static int vmxnet_close(struct net_device *dev);
 static void vmxnet_set_multicast_list(struct net_device *dev);
 static int vmxnet_set_mac_address(struct net_device *dev, void *addr);
 static struct net_device_stats *vmxnet_get_stats(struct net_device *dev);
-#ifdef HAVE_CHANGE_MTU
 static int vmxnet_change_mtu(struct net_device *dev, int new_mtu);
-#endif
 
 static Bool vmxnet_check_version(unsigned int ioaddr);
 static Bool vmxnet_probe_features(struct net_device *dev, Bool morphed,
@@ -271,7 +269,7 @@ static struct pci_driver vmxnet_driver = {
 #endif
                                          };
 
-#ifdef HAVE_CHANGE_MTU
+#if defined(HAVE_CHANGE_MTU) || defined(HAVE_NET_DEVICE_OPS)
 static int
 vmxnet_change_mtu(struct net_device *dev, int new_mtu)
 {
@@ -885,6 +883,7 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
       .ndo_stop = &vmxnet_close,
       .ndo_get_stats = &vmxnet_get_stats,
       .ndo_set_multicast_list = &vmxnet_set_multicast_list,
+      .ndo_validate_addr = &eth_validate_addr,
       .ndo_change_mtu = &vmxnet_change_mtu,
 #   ifdef VMW_HAVE_POLL_CONTROLLER
       .ndo_poll_controller = vmxnet_netpoll,
