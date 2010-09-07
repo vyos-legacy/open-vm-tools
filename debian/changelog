@@ -1,3 +1,10 @@
+open-vm-tools (2009.10.15+vyatta-24+larkspur4) unstable; urgency=low
+
+  * Fix configuration of vmxnet* drivers
+  * vmxnet: fix netdevice_ops
+
+ -- Stephen Hemminger <shemminger@lenny.localdomain>  Tue, 07 Sep 2010 10:42:54 -0700
+
 open-vm-tools (2009.10.15+vyatta-24+larkspur3) unstable; urgency=low
 
   * fix bug 5831.  again. and again. and again.
