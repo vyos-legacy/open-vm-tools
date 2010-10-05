@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-24+larkspur6) unstable; urgency=low
+
+  * Add symlink for vmtools plugins
+
+ -- Stephen Hemminger <shemminger@lenny.localdomain>  Mon, 04 Oct 2010 20:48:54 -0700
+
 open-vm-tools (2009.10.15+vyatta-24+larkspur5) unstable; urgency=low
 
   * vmci: set atomic flag
