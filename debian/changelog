@@ -1,3 +1,9 @@
+open-vm-tools (2009.10.15+vyatta-24+larkspur5) unstable; urgency=low
+
+  * vmci: set atomic flag
+
+ -- Stephen Hemminger <shemminger@lenny.localdomain>  Mon, 04 Oct 2010 17:40:19 -0700
+
 open-vm-tools (2009.10.15+vyatta-24+larkspur4) unstable; urgency=low
 
   * Fix configuration of vmxnet* drivers
