@@ -75,9 +75,9 @@ endif
 # defined for that OS.
 if HAVE_PAM
 if THIRTY_TWO_BIT_USERSPACE
-pam_SCRIPTS = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd
+pam_DATA = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd
 else
-pam_SCRIPTS = $(top_srcdir)/scripts/linux/pam.d/64/vmtoolsd
+pam_DATA = $(top_srcdir)/scripts/linux/pam.d/64/vmtoolsd
 endif !THIRTY_TWO_BIT_USERSPACE
 endif HAVE_PAM
 
