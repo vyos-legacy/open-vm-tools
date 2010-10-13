@@ -138,7 +138,7 @@ vm_check_build = $(shell if $(CC) $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS) \
 	> /dev/null 2>&1; then echo "$(2)"; else echo "$(3)"; fi)
 
 CC_WARNINGS := -Wall -Wstrict-prototypes
-CC_OPTS := $(GLOBAL_DEFS) $(CC_WARNINGS) -DVMW_USING_KBUILD
+CC_OPTS := $(GLOBAL_DEFS) $(CC_WARNINGS) -DVMW_USING_KBUILD -DVMW_HAVE_EPOLL
 ifdef VMX86_DEVEL
 CC_OPTS += -DVMX86_DEVEL
 endif

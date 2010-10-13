@@ -67,9 +67,9 @@
  */
 
 static IP_ADAPTER_INFO *
-FindWindowsAdapter(IP_ADAPTER_INFO *head,  // IN:
-                   char *pattern,          // IN:
-                   Bool findPattern)       // IN:
+FindWindowsAdapter(IP_ADAPTER_INFO *head, // IN:
+                   char *pattern,         // IN:
+                   Bool findPattern)      // IN:
 {
    IP_ADAPTER_INFO *adapterInfo;
    IP_ADAPTER_INFO *adapterChoice = NULL;
@@ -129,14 +129,14 @@ FindWindowsAdapter(IP_ADAPTER_INFO *head,  // IN:
 static int
 ObtainHardwareID(uint64 *hardwareID) // OUT:
 {
-   void *buf;
-   DWORD status;
-   HMODULE dllHandle;
+   void            *buf;
+   DWORD           status;
+   HMODULE         dllHandle;
    IP_ADAPTER_INFO *adapterList;
    IP_ADAPTER_INFO *adapterChoice;
-   DWORD (WINAPI *getAdaptersFn)(IP_ADAPTER_INFO *, ULONG *);
+   DWORD           (WINAPI *getAdaptersFn)(IP_ADAPTER_INFO *, ULONG *);
 
-   ULONG bufLen = 0;
+   ULONG           bufLen = 0;
 
    // Deal with BUG 21643
    dllHandle = LoadLibrary(TEXT("icmp.dll"));
@@ -144,7 +144,6 @@ ObtainHardwareID(uint64 *hardwareID) // OUT:
 
    if (!dllHandle) {
       Warning("%s Failed to load icmp.dll.\n", __FUNCTION__);
-
       return EINVAL;
    }
 
@@ -152,7 +151,6 @@ ObtainHardwareID(uint64 *hardwareID) // OUT:
 
    if (!dllHandle) {
       Warning("%s Failed to load iphlpapi.dll.\n", __FUNCTION__);
-
       return EINVAL;
    }
 
@@ -161,7 +159,6 @@ ObtainHardwareID(uint64 *hardwareID) // OUT:
    if (!getAdaptersFn) {
       FreeLibrary(dllHandle);
       Warning("%s Failed to find GetAdaptersInfo.\n", __FUNCTION__);
-
       return EINVAL;
    }
 
@@ -185,17 +182,16 @@ ObtainHardwareID(uint64 *hardwareID) // OUT:
 
    default:
       FreeLibrary(dllHandle);
-      Warning("%s GetAdaptersInfo failure %d: %d.\n", __FUNCTION__,
-              __LINE__, status);
-
+      Warning("%s GetAdaptersInfo failure %d: %d.\n",
+              __FUNCTION__, __LINE__, status);
       return EINVAL;
+      break;
    }
 
    buf = malloc(bufLen);
 
    if (buf == NULL) {
       FreeLibrary(dllHandle);
-
       return ENOMEM;
    }
 
@@ -207,8 +203,8 @@ ObtainHardwareID(uint64 *hardwareID) // OUT:
 
    if (status != NO_ERROR) {
       // something is seriously wrong; worked before...
-      Warning("%s GetAdaptersInfo failure %d: %d.\n", __FUNCTION__,
-              __LINE__, status);
+      Warning("%s GetAdaptersInfo failure %d: %d.\n",
+              __FUNCTION__, __LINE__, status);
 
       free(buf);
 
@@ -266,11 +262,11 @@ ObtainHardwareID(uint64 *hardwareID) // OUT:
  */
 
 static struct ifaddrs *
-CheckEthernet(struct ifaddrs *ifp,  // IN:
-              uint32 n)             // IN:
+CheckEthernet(struct ifaddrs *ifp, // IN:
+              uint32 n)            // IN:
 {
    struct ifaddrs *p;
-   char name[8];
+   char           name[8];
 
    // Construct the interface name
    Str_Sprintf(name, sizeof name, "en%u", n);
@@ -314,9 +310,9 @@ CheckEthernet(struct ifaddrs *ifp,  // IN:
  */
 
 static int
-ObtainHardwareID(uint64 *hardwareID)  // OUT:
+ObtainHardwareID(uint64 *hardwareID) // OUT:
 {
-   uint32 i;
+   uint32         i;
    struct ifaddrs *p;
    struct ifaddrs *ifp;
 
@@ -450,7 +446,7 @@ CheckEthernet(uint32 n,        // IN:
  */
 
 static int
-ObtainHardwareID(uint64 *hardwareID)  // OUT:
+ObtainHardwareID(uint64 *hardwareID) // OUT:
 {
    uint32 i;
 
@@ -498,7 +494,7 @@ ObtainHardwareID(uint64 *hardwareID)  // OUT:
  */
 
 static int
-ObtainHardwareID(uint64 *hardwareID)  // OUT:
+ObtainHardwareID(uint64 *hardwareID) // OUT:
 {
    *hardwareID = gethostid();
 
@@ -572,8 +568,8 @@ HostNameHash(unsigned char *str) // IN:
  */
 
 void
-Hostinfo_MachineID(uint32 *hostNameHash,    // OUT:
-                   uint64 *hostHardwareID)  // OUT:
+Hostinfo_MachineID(uint32 *hostNameHash,   // OUT:
+                   uint64 *hostHardwareID) // OUT:
 {
    static Bool fetchValues = TRUE;
    static uint64 cachedHardwareID;

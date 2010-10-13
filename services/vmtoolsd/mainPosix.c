@@ -29,9 +29,7 @@
 #include <unistd.h>
 #include <glib/gstdio.h>
 #include "file.h"
-#include "guestApp.h"
 #include "hostinfo.h"
-#include "system.h"
 #include "unicode.h"
 #include "util.h"
 #include "vmtools.h"
@@ -43,27 +41,6 @@ VM_EMBED_VERSION(VMTOOLSD_VERSION_STRING);
 #endif
 
 static ToolsServiceState gState = { NULL, };
-
-
-/**
- * Reloads the service configuration - including forcing rotation of log
- * files by reinitializing the logging subsystem.
- *
- * @param[in]  info     Unused.
- * @param[in]  data     Service state.
- *
- * @return TRUE
- */
-
-static gboolean
-ToolsCoreSigHUPCb(const siginfo_t *info,
-                  gpointer data)
-{
-   VMTools_ResetLogging(TRUE);
-   ToolsCore_ReloadConfig(data, TRUE);
-   return TRUE;
-}
-
 
 /**
  * Handles a signal that would terminate the process. Asks the main loop
@@ -107,15 +84,13 @@ ToolsCoreSigUsrHandler(const siginfo_t *info,
  *
  * @param[in] argc   Argument count.
  * @param[in] argv   Argument array.
- * @param[in] envp   User environment.
  *
  * @return 0 on successful execution, error code otherwise.
  */
 
 int
 main(int argc,
-     char *argv[],
-     const char *envp[])
+     char *argv[])
 {
    int i;
    int ret = EXIT_FAILURE;
@@ -148,13 +123,9 @@ main(int argc,
        * was used, or things may not work as expected.
        */
       if (!g_path_is_absolute(argv[0])) {
-         gchar *abs = g_find_program_in_path(argv[0]);
-         if (abs == NULL || strcmp(abs, argv[0]) == 0) {
-            char *cwd = File_Cwd(NULL);
-            g_free(abs);
-            abs = g_strdup_printf("%s%c%s", cwd, DIRSEPC, argv[0]);
-            vm_free(cwd);
-         }
+         char *cwd = File_Cwd(NULL);
+         char *abs = g_strdup_printf("%s%c%s", cwd, DIRSEPC, argv[0]);
+         vm_free(cwd);
          argv[0] = abs;
       }
 
@@ -165,16 +136,10 @@ main(int argc,
        * data is there.
        */
       for (i = 1; i < argc; i++) {
-         size_t count = 0;
          if (strcmp(argv[i], "--background") == 0 ||
              strcmp(argv[i], "-b") == 0) {
-            count = 2;
-         } else if (g_str_has_prefix(argv[i], "--background=")) {
-            count = 1;
-         }
-         if (count) {
-            memmove(argv + i, argv + i + count, (argc - i - count) * sizeof *argv);
-            argv[argc - count] = NULL;
+            memmove(argv + i, argv + i + 2, (argc - i - 2) * sizeof *argv);
+            argv[argc - 2] = NULL;
             break;
          }
       }
@@ -194,7 +159,7 @@ main(int argc,
 
    src = VMTools_NewSignalSource(SIGHUP);
    VMTOOLSAPP_ATTACH_SOURCE(&gState.ctx, src,
-                            ToolsCoreSigHUPCb, &gState, NULL);
+                            ToolsCoreSigHandler, gState.ctx.mainLoop, NULL);
    g_source_unref(src);
 
    src = VMTools_NewSignalSource(SIGINT);
@@ -215,13 +180,6 @@ main(int argc,
    src = VMTools_NewSignalSource(SIGUSR1);
    VMTOOLSAPP_ATTACH_SOURCE(&gState.ctx, src, ToolsCoreSigUsrHandler, NULL, NULL);
    g_source_unref(src);
-
-   /*
-    * Save the original environment so that we can safely spawn other
-    * applications (since we may have to modify the original environment
-    * to launch vmtoolsd successfully).
-    */
-   gState.ctx.envp = System_GetNativeEnviron(envp);
 
    ret = ToolsCore_Run(&gState);
 

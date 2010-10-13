@@ -16,20 +16,6 @@
  *
  *********************************************************/
 
-/*********************************************************
- * The contents of this file are subject to the terms of the Common
- * Development and Distribution License (the "License") version 1.0
- * and no later version.  You may not use this file except in
- * compliance with the License.
- *
- * You can obtain a copy of the License at
- *         http://www.opensource.org/licenses/cddl1.php
- *
- * See the License for the specific language governing permissions
- * and limitations under the License.
- *
- *********************************************************/
-
 /*
  * backdoor_def.h --
  *
@@ -93,7 +79,7 @@
 #define BDOOR_CMD_GETUUID               19
 #define BDOOR_CMD_GETMEMSIZE            20
 #define BDOOR_CMD_HOSTCOPY              21 /* Devel only */
-#define BDOOR_CMD_SERVICE_VM            22 /* Unused, never shipped, prototype only */         
+#define BDOOR_CMD_SERVICE_VM            22 /* prototype only */         
 #define BDOOR_CMD_GETTIME               23 /* Deprecated. Use GETTIMEFULL. */
 #define BDOOR_CMD_STOPCATCHUP           24
 #define BDOOR_CMD_PUTCHR	        25 /* Devel only */
@@ -113,7 +99,7 @@
 #define BDOOR_CMD_ABSPOINTER_DATA	39
 #define BDOOR_CMD_ABSPOINTER_STATUS	40
 #define BDOOR_CMD_ABSPOINTER_COMMAND	41
-#define BDOOR_CMD_TIMER_SPONGE          42 /* Not supported anymore */
+#define BDOOR_CMD_TIMER_SPONGE          42
 #define BDOOR_CMD_PATCH_ACPI_TABLES	43
 /* Catch-all to allow synchronous tests */
 #define BDOOR_CMD_DEVEL_FAKEHARDWARE	44 /* Debug only - needed in beta */
@@ -147,13 +133,6 @@
  * the registers. Otherwise backwards compatibility will suffer.
  */
 
-/* Nesting control operations */
-
-#define NESTING_CONTROL_ENTER_VMM        0
-#define NESTING_CONTROL_EXIT_VMM         1
-#define NESTING_CONTROL_QUERY            2
-#define NESTING_CONTROL_MAX              2
-
 /* High-bandwidth backdoor port. --hpreg */
 
 #define BDOORHB_PORT 0x5659
@@ -171,7 +150,6 @@
 #define BDOOR_PMC_HW_TSC      0x10000
 #define BDOOR_PMC_REAL_NS     0x10001
 #define BDOOR_PMC_APPARENT_NS 0x10002
-#define BDOOR_PMC_PSEUDO_TSC  0x10003
 
 #define IS_BDOOR_PMC(index)  (((index) | 3) == 0x10003)
 #define BDOOR_CMD(ecx)       ((ecx) & 0xffff)

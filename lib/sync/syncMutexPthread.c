@@ -46,19 +46,16 @@
  */
 
 Bool
-SyncMutex_Init(SyncMutex *that,   // OUT:
-	       char const *path)  // IN:
+SyncMutex_Init(SyncMutex *that,      // OUT
+	       char const *path) // IN
 {
    int error;
-
    error = pthread_mutex_init(&that->_mutex, NULL);
    if (error != 0) {
       return FALSE;
    }
-
    return TRUE;
 }
-
 
 /*
  *----------------------------------------------------------------------
@@ -72,7 +69,7 @@ SyncMutex_Init(SyncMutex *that,   // OUT:
  */
 
 void
-SyncMutex_Destroy(SyncMutex *that)  // IN:
+SyncMutex_Destroy(SyncMutex *that) // IN
 {
 #ifdef VMX86_DEBUG
    int error = 
@@ -82,7 +79,6 @@ SyncMutex_Destroy(SyncMutex *that)  // IN:
    ASSERT(error != EBUSY);
 #endif
 }
-
 
 /*
  *----------------------------------------------------------------------
@@ -101,15 +97,12 @@ Bool
 SyncMutex_Lock(SyncMutex *that) // IN
 {
    int error = pthread_mutex_lock(&that->_mutex);
-
    ASSERT(error != EINVAL);
    if (error != 0) {
       return FALSE;
    }
-
    return TRUE;
 }
-
 
 /*
  *----------------------------------------------------------------------
@@ -128,12 +121,10 @@ Bool
 SyncMutex_Unlock(SyncMutex *that) // IN
 {
    int error = pthread_mutex_unlock(&that->_mutex);
-
    ASSERT(error != EINVAL);
    if (error != 0) {
       return FALSE;
    }
-
    return TRUE;
 }
 
@@ -205,7 +196,7 @@ SyncMutex_CreateSingleton(Atomic_Ptr *lckStorage) // IN
  */
 
 Bool
-SyncMutex_Trylock(SyncMutex *that)  // IN:
+SyncMutex_Trylock(SyncMutex *that)
 {
    ASSERT(that);
 #ifdef VMX86_SERVER

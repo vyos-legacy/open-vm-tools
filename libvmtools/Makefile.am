@@ -50,10 +50,6 @@ libvmtools_la_LIBADD += @LIBVMTOOLS_LIBADD@
 libvmtools_la_LIBADD += @GLIB2_LIBS@
 libvmtools_la_LIBADD += @ICU_LIBS@
 
-if USE_SLASH_PROC
-libvmtools_la_LIBADD += ../lib/slashProc/libSlashProc.la
-endif
-
 libvmtools_la_SOURCES =
 libvmtools_la_SOURCES += signalSource.c
 libvmtools_la_SOURCES += vmtools.c

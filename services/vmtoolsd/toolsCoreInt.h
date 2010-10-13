@@ -25,8 +25,7 @@
  *    Internal functions for the tools daemon.
  */
 
-#define G_LOG_DOMAIN       "vmtoolsd"
-#define TOOLSCORE_COMMON   "common"
+#define G_LOG_DOMAIN    "vmtoolsd"
 
 #include <glib-object.h>
 #include <gmodule.h>
@@ -46,22 +45,6 @@ typedef struct ToolsPlugin {
    ToolsPluginData  *data;
 } ToolsPlugin;
 
-/** State of app providers. */
-typedef enum {
-   TOOLS_PROVIDER_IDLE,
-   TOOLS_PROVIDER_ACTIVE,
-   TOOLS_PROVIDER_ERROR,
-
-   /* Keep this as the last one, always. */
-   TOOLS_PROVIDER_MAX
-} ToolsAppProviderState;
-
-/** Defines the internal app provider data. */
-typedef struct ToolsAppProviderReg {
-   ToolsAppProvider       *prov;
-   ToolsAppProviderState   state;
-} ToolsAppProviderReg;
-
 /** Defines internal service state. */
 typedef struct ToolsServiceState {
    gchar         *name;
@@ -69,7 +52,6 @@ typedef struct ToolsServiceState {
    time_t         configMtime;
    gboolean       log;
    gboolean       mainService;
-   gchar         *commonPath;
    gchar         *pluginPath;
    GPtrArray     *plugins;
 #if defined(_WIN32)
@@ -81,7 +63,6 @@ typedef struct ToolsServiceState {
    gchar         *debugPlugin;
    RpcDebugLibData  *debugData;
    ToolsAppCtx    ctx;
-   GArray        *providers;
 } ToolsServiceState;
 
 
@@ -92,9 +73,6 @@ ToolsCore_ParseCommandLine(ToolsServiceState *state,
 
 void
 ToolsCore_Cleanup(ToolsServiceState *state);
-
-void
-ToolsCore_DumpPluginInfo(ToolsServiceState *state);
 
 void
 ToolsCore_DumpState(ToolsServiceState *state);
@@ -113,10 +91,6 @@ ToolsCore_InitRpc(ToolsServiceState *state);
 
 gboolean
 ToolsCore_LoadPlugins(ToolsServiceState *state);
-
-void
-ToolsCore_ReloadConfig(ToolsServiceState *state,
-                       gboolean force);
 
 void
 ToolsCore_RegisterPlugins(ToolsServiceState *state);

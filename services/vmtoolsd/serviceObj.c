@@ -116,16 +116,6 @@ ToolsCore_Service_class_init(gpointer _klass,
                 2,
                 G_TYPE_POINTER,
                 G_TYPE_BOOLEAN);
-   g_signal_new(TOOLS_CORE_SIG_CONF_RELOAD,
-                G_OBJECT_CLASS_TYPE(klass),
-                G_SIGNAL_RUN_LAST,
-                0,
-                NULL,
-                NULL,
-                g_cclosure_marshal_VOID__POINTER,
-                G_TYPE_NONE,
-                1,
-                G_TYPE_POINTER);
    g_signal_new(TOOLS_CORE_SIG_DUMP_STATE,
                 G_OBJECT_CLASS_TYPE(klass),
                 G_SIGNAL_RUN_LAST,
@@ -181,6 +171,18 @@ ToolsCore_Service_class_init(gpointer _klass,
                 G_TYPE_POINTER,
                 G_TYPE_UINT,
                 G_TYPE_UINT);
+
+   g_signal_new(TOOLS_CORE_SIG_PRESHUTDOWN,
+                G_OBJECT_CLASS_TYPE(klass),
+                G_SIGNAL_RUN_LAST,
+                0,
+                NULL,
+                NULL,
+                g_cclosure_user_marshal_VOID__POINTER_POINTER,
+                G_TYPE_NONE,
+                2,
+                G_TYPE_POINTER,
+                G_TYPE_POINTER);
 #endif
 }
 

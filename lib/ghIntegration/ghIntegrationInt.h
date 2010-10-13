@@ -29,6 +29,11 @@
 #include "unityCommon.h"
 #include "guestrpc/ghiGetExecInfoHash.h"
 #include "guestrpc/ghiProtocolHandler.h"
+#include "ghIntegration.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct _GHIPlatform GHIPlatform;
 
@@ -127,4 +132,14 @@ Bool GHIPlatformGetExecInfoHash(GHIPlatform *ghip,
                                 const GHIGetExecInfoHashRequest *request,
                                 GHIGetExecInfoHashReply *reply);
 
+#ifndef _WIN32
+const gchar *
+GHIX11FindDesktopUriByExec(GHIPlatform *ghip,
+                           const char *exec);
 #endif
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
+#endif // _GH_INTEGRATION_INT_H_

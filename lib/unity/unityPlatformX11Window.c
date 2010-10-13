@@ -36,6 +36,7 @@
 
 #include "Uri.h"
 #include "appUtil.h"
+#include "ghIntegration.h"
 
 /*
  * Utility routines
@@ -79,6 +80,9 @@ static void UPWindowSetWindows(UnityPlatform *up,
                                Window clientWindow);
 static Window UPWindowLookupClientLeader(UnityPlatform *up,
                                          UnityPlatformWindow *upw);
+static void UPWindowUpdateFrameExtents(UnityPlatform *up,
+                                       UnityPlatformWindow *upw);
+
 
 #ifdef VMX86_DEVEL
 /*
@@ -444,6 +448,8 @@ UPWindowSetWindows(UnityPlatform *up,        // IN
 
    wasRelevant = upw->isRelevant;
 
+   Debug("%s: %#lx::%#lx -> %#lx::%#lx\n", __func__, upw->toplevelWindow,
+         upw->clientWindow, toplevelWindow, clientWindow);
    UPWindowSetRelevance(up, upw, FALSE);
    if (upw->toplevelWindow) {
       XSelectInput(up->display, upw->toplevelWindow, 0);
@@ -983,18 +989,19 @@ UPWindowSetRelevance(UnityPlatform *up,        // IN
    if (isRelevant) {
       DynBuf windowPath;
       DynBuf execPath;
-      Bool retval;
 
       DynBuf_Init(&windowPath);
       DynBuf_Init(&execPath);
 
-      retval = UnityPlatformGetWindowPath(up,
-                                          upw->toplevelWindow,
-                                          &windowPath,
-                                          &execPath);
-
-      if (!retval) {
-         Debug("GetWindowPath didn't know how to identify the window...\n");
+      if (upw->windowType == UNITY_WINDOW_TYPE_NORMAL) {
+         Bool retval;
+         retval = UnityPlatformGetWindowPath(up,
+                                             upw->toplevelWindow,
+                                             &windowPath,
+                                             &execPath);
+         if (!retval) {
+            Debug("GetWindowPath didn't know how to identify the window...\n");
+         }
       }
 
       Debug("Adding window %#lx to tracker\n", upw->toplevelWindow);
@@ -1010,6 +1017,7 @@ UPWindowSetRelevance(UnityPlatform *up,        // IN
    } else {
       Debug("Removing window %#lx from tracker\n", upw->toplevelWindow);
       UnityWindowTracker_RemoveWindow(up->tracker, upw->toplevelWindow);
+      UnityPlatformDoUpdate(up, TRUE);
    }
 
    up->stackingChanged = TRUE;
@@ -1075,6 +1083,13 @@ UPWindow_CheckRelevance(UnityPlatform *up,        // IN
                   Debug("%s: PropertyNotify: FindWindows failed again!\n", __func__);
                   return;
                }
+            } else if (event->atom == up->atoms.WM_WINDOW_ROLE &&
+                       event->state == PropertyNewValue &&
+                       UnityX11Util_IsWindowDecorationWidget(up, upw->toplevelWindow)) {
+               Debug("%s: Window %#lx is a decoration widget.  Ignore it.\n",
+                     __func__, upw->toplevelWindow);
+               upw->deleteWhenSafe = TRUE;
+               return;
             } else if (event->atom == up->atoms._NET_WM_DESKTOP) {
                if (upw->wantSetDesktopNumberOnUnmap) {
                   /*
@@ -1232,17 +1247,37 @@ UPWindow_CheckRelevance(UnityPlatform *up,        // IN
       }
       upw->isOverrideRedirect = winAttr.override_redirect ? TRUE : FALSE;
 
+      /*
+       * More crazy tests to determine whether a window should be added to the window
+       * tracker.
+       */
+
       if (winAttr.class == InputOnly) {
+         /* This is intrinsically true. */
          isInvisible = TRUE;
-      } else if (!upw->isViewable
-                 && (!upw->wasViewable
-                     || upw->isOverrideRedirect)
-                 && onCurrentDesktop) {
+      } else if (!upw->isViewable && onCurrentDesktop && !upw->clientWindow) {
+         /*
+          * Evaluate the map state.  There are reasons why we'd like to keep unmapped
+          * windows in the tracker.
+          *
+          *    1.  The window may be on another desktop.
+          *    2.  The window may be minimized.
+          *
+          * upw->clientWindow == None implies that there is no window in the hierarchy
+          * with a WM_STATE property.  No WM_STATE property means that the window can't
+          * be "minimized".
+          *
+          * I'm using these implications because it saves me from having to explicitly
+          * query for/examine WM_STATE here.
+          */
          isInvisible = TRUE;
       } else if (winAttr.width <= 1 && winAttr.height <= 1) {
          isInvisible = TRUE;
       } else if ((winAttr.x + winAttr.width) < 0
                  || (winAttr.y + winAttr.height) < 0) {
+         /*
+          * XXX This isn't clear to me.  What if winAttr.x > parent's width?
+          */
          isInvisible = TRUE;
       }
 
@@ -1324,8 +1359,7 @@ UPWindow_CheckRelevance(UnityPlatform *up,        // IN
             upw->windowType = UNITY_WINDOW_TYPE_SPLASH;
          } else if (netWmWindowType == up->atoms._NET_WM_WINDOW_TYPE_TOOLBAR) {
             upw->windowType = UNITY_WINDOW_TYPE_TOOLBAR;
-         } else if (netWmWindowType == up->atoms._NET_WM_WINDOW_TYPE_TOOLTIP
-                    || upw->isOverrideRedirect) {
+         } else if (netWmWindowType == up->atoms._NET_WM_WINDOW_TYPE_TOOLTIP) {
             upw->windowType = UNITY_WINDOW_TYPE_TOOLTIP;
          } else {
             upw->windowType = UNITY_WINDOW_TYPE_NORMAL;
@@ -1333,14 +1367,12 @@ UPWindow_CheckRelevance(UnityPlatform *up,        // IN
       }
    }
 
-  out:
+out:
    ASSERT(shouldBeRelevant >= 0);
 
-   if (shouldBeRelevant) {
-      Debug("Relevance for (%p) %#lx/%#lx/%#lx is %d (window type %d)\n",
-            upw, upw->toplevelWindow, upw->clientWindow, upw->rootWindow,
-            shouldBeRelevant, upw->windowType);
-   }
+   Debug("Relevance for (%p) %#lx/%#lx/%#lx is %d (window type %d)\n",
+         upw, upw->toplevelWindow, upw->clientWindow, upw->rootWindow,
+         shouldBeRelevant, upw->windowType);
 
    UPWindowSetRelevance(up, upw, shouldBeRelevant ? TRUE : FALSE);
 }
@@ -1534,6 +1566,7 @@ UnityPlatformMoveResizeWindow(UnityPlatform *up,         // IN
    UnityPlatformWindow *upw;
    Bool retval = FALSE;
    XWindowAttributes winAttr;
+   XWindowAttributes newAttr;
    UnityRect desiredRect;
 
    ASSERT(moveResizeRect);
@@ -1544,11 +1577,6 @@ UnityPlatformMoveResizeWindow(UnityPlatform *up,         // IN
    }
 
    desiredRect = *moveResizeRect;
-
-   if (upw->lastConfigureEvent) {
-      free(upw->lastConfigureEvent);
-      upw->lastConfigureEvent = NULL;
-   }
 
    UnityPlatformResetErrorCount(up);
    XGetWindowAttributes(up->display, upw->toplevelWindow, &winAttr);
@@ -1613,45 +1641,14 @@ UnityPlatformMoveResizeWindow(UnityPlatform *up,         // IN
       }
    }
 
-   /*
-    * Protect against the window being destroyed while we're waiting for results of the
-    * resize.
-    */
-   UPWindow_Ref(up, upw);
+   XSync(up->display, False);
+   XGetWindowAttributes(up->display, upw->toplevelWindow, &newAttr);
+   moveResizeRect->x = newAttr.x;
+   moveResizeRect->y = newAttr.y;
+   moveResizeRect->width = newAttr.width;
+   moveResizeRect->height = newAttr.height;
 
-   /*
-    * Because the window manager may take a non-trivial amount of time to process the
-    * move/resize request, we have to spin here until a ConfigureNotify event is
-    * generated on the window.
-    */
-   while (!upw->lastConfigureEvent) {
-      Debug("Running main loop iteration\n");
-      UnityPlatformProcessMainLoop(); // Process events, do other Unity stuff, etc.
-   }
-
-   if (upw->lastConfigureEvent && upw->lastConfigureEvent->window == upw->toplevelWindow) {
-      moveResizeRect->x = upw->lastConfigureEvent->x;
-      moveResizeRect->y = upw->lastConfigureEvent->y;
-      moveResizeRect->width = upw->lastConfigureEvent->width;
-      moveResizeRect->height = upw->lastConfigureEvent->height;
-
-      retval = TRUE;
-   } else {
-      /*
-       * There are cases where we only get a ConfigureNotify on the clientWindow because
-       * no actual change happened, in which case we just verify that we have the right
-       * toplevelWindow position and size.
-       */
-      Debug("Didn't get lastConfigureEvent on the toplevel window - requerying\n");
-
-      XGetWindowAttributes(up->display, upw->toplevelWindow, &winAttr);
-      moveResizeRect->x = winAttr.x;
-      moveResizeRect->y = winAttr.y;
-      moveResizeRect->width = winAttr.width;
-      moveResizeRect->height = winAttr.height;
-
-      retval = TRUE;
-   }
+   retval = TRUE;
 
    Debug("MoveResizeWindow(%#lx/%#lx): original (%d,%d)+(%d,%d), desired (%d,%d)+(%d,%d), actual (%d,%d)+(%d,%d) = %d\n",
          upw->toplevelWindow, upw->clientWindow,
@@ -1660,8 +1657,6 @@ UnityPlatformMoveResizeWindow(UnityPlatform *up,         // IN
          moveResizeRect->x, moveResizeRect->y,
          moveResizeRect->width, moveResizeRect->height,
          retval);
-
-   UPWindow_Unref(up, upw);
 
    return retval;
 }
@@ -1764,7 +1759,8 @@ UnityPlatformArgvToWindowPaths(UnityPlatform *up,        // IN
    char **argv;
    char *windowQueryString = NULL;
    char *execQueryString = NULL;
-   char *uriString = NULL;
+   const char *uriString = NULL;
+   const char *desktopUriString = NULL;
    Bool retval = FALSE;
 
    ASSERT(argc);
@@ -1783,51 +1779,55 @@ UnityPlatformArgvToWindowPaths(UnityPlatform *up,        // IN
       return FALSE;
    }
 
-   if (argv[0][0] != '/') {
-      char *ctmp = NULL;
-      if ((ctmp = AppUtil_CanonicalizeAppName(argv[0], cwd))) {
-         char **newArgv;
-         newArgv = alloca(argc * sizeof argv[0]);
-         memcpy(newArgv, argv, argc * sizeof argv[0]);
-         argv = newArgv;
-         i = strlen(ctmp) + 1;
-         argv[0] = alloca(i);
-         memcpy(argv[0], ctmp, i);
-         g_free(ctmp);
-      } else {
-         Debug("%s: Program %s not found\n", __FUNCTION__, argv[0]);
-         return FALSE;
-      }
-   }
+   desktopUriString = GHIX11_FindDesktopUriByExec(argv[0]);
 
-   /*
-    * If the program in question takes any arguments, they will be appended as URI
-    * query parameters.  (I.e., we're adding only arguments from argv[1] and beyond.)
-    */
-   numQueryArgs = argc - 1;
-
-   if (numQueryArgs > 0) {
-      UriQueryListA *queryList;
-      int j;
-
-      /*
-       * First build query string containing only program arguments.
-       */
-      queryList = alloca(numQueryArgs * sizeof *queryList);
-      for (i = 1, j = 0; i < argc; i++, j++) {
-         queryList[j].key = "argv[]";
-         queryList[j].value = argv[i];
-         queryList[j].next = &queryList[j + 1];
+   if (!desktopUriString) {
+      if (argv[0][0] != '/') {
+         char *ctmp = NULL;
+         if ((ctmp = AppUtil_CanonicalizeAppName(argv[0], cwd))) {
+            char **newArgv;
+            newArgv = alloca(argc * sizeof argv[0]);
+            memcpy(newArgv, argv, argc * sizeof argv[0]);
+            argv = newArgv;
+            i = strlen(ctmp) + 1;
+            argv[0] = alloca(i);
+            memcpy(argv[0], ctmp, i);
+            g_free(ctmp);
+         } else {
+            Debug("%s: Program %s not found\n", __FUNCTION__, argv[0]);
+            return FALSE;
+         }
       }
 
       /*
-       * Terminate queryList.
+       * If the program in question takes any arguments, they will be appended as URI
+       * query parameters.  (I.e., we're adding only arguments from argv[1] and beyond.)
        */
-      queryList[numQueryArgs - 1].next = NULL;
+      numQueryArgs = argc - 1;
 
-      if (uriComposeQueryMallocA(&execQueryString, queryList)) {
-         Debug("uriComposeQueryMallocA failed\n");
-         return FALSE;
+      if (numQueryArgs > 0) {
+         UriQueryListA *queryList;
+         int j;
+
+         /*
+          * First build query string containing only program arguments.
+          */
+         queryList = alloca(numQueryArgs * sizeof *queryList);
+         for (i = 1, j = 0; i < argc; i++, j++) {
+            queryList[j].key = "argv[]";
+            queryList[j].value = argv[i];
+            queryList[j].next = &queryList[j + 1];
+         }
+
+         /*
+          * Terminate queryList.
+          */
+         queryList[numQueryArgs - 1].next = NULL;
+
+         if (uriComposeQueryMallocA(&execQueryString, queryList)) {
+            Debug("uriComposeQueryMallocA failed\n");
+            return FALSE;
+         }
       }
    }
 
@@ -1846,11 +1846,16 @@ UnityPlatformArgvToWindowPaths(UnityPlatform *up,        // IN
          g_strdup_printf("WindowXID=%lu", xid);
    }
 
-   uriString = alloca(10 + 3 * strlen(argv[0])); // This formula comes from URI.h
-   err = uriUnixFilenameToUriStringA(argv[0], uriString);
-   if (err) {
-      Debug("uriUnixFilenameToUriStringA failed\n");
-      goto out;
+   if (desktopUriString) {
+      uriString = desktopUriString;
+   } else {
+      char *mutableUriString = alloca(10 + 3 * strlen(argv[0])); // This formula comes from URI.h
+      err = uriUnixFilenameToUriStringA(argv[0], mutableUriString);
+      if (err) {
+         Debug("uriUnixFilenameToUriStringA failed\n");
+         goto out;
+      }
+      uriString = mutableUriString;
    }
 
    /*
@@ -2159,7 +2164,9 @@ UnityPlatformGetWindowPath(UnityPlatform *up,        // IN: Platform data
 Bool
 UnityPlatformGetWindowContents(UnityPlatform *up,     // IN
                                UnityWindowId window,  // IN
-                               DynBuf *imageData)     // IN
+                               DynBuf *imageData,     // IN
+                               uint32 *width,         // OUT
+                               uint32 *height)        // OUT
 {
    UnityPlatformWindow *upw;
    Pixmap pixmap = 0;
@@ -2172,6 +2179,8 @@ UnityPlatformGetWindowContents(UnityPlatform *up,     // IN
 
    ASSERT(up);
    ASSERT(imageData);
+   ASSERT(width);
+   ASSERT(height);
 
    upw = UPWindow_Lookup(up, window);
 
@@ -2229,6 +2238,11 @@ UnityPlatformGetWindowContents(UnityPlatform *up,     // IN
 
    if (ImageUtil_ConstructPNGBuffer(&vmimage, NULL, imageData)) {
       result = TRUE;
+   }
+
+   if (result) {
+      *width = vmimage.width;
+      *height = vmimage.height;
    }
 
   out:
@@ -2472,6 +2486,8 @@ UPWindowProcessPropertyEvent(UnityPlatform *up,        // IN
       UPWindowUpdateIcon(up, upw);
    } else if (eventAtom == up->atoms._NET_WM_DESKTOP) {
       UPWindowUpdateDesktop(up, upw);
+   } else if (eventAtom == up->atoms._NET_FRAME_EXTENTS) {
+      UPWindowUpdateFrameExtents(up, upw);
    }
 }
 
@@ -2499,29 +2515,36 @@ UPWindowProcessConfigureEvent(UnityPlatform *up,        // IN
 {
    if (xevent->xconfigure.window == upw->toplevelWindow) {
       const int border_width = xevent->xconfigure.border_width;
-      const int x = xevent->xconfigure.x;
-      const int y = xevent->xconfigure.y;
+      int x = xevent->xconfigure.x;
+      int y = xevent->xconfigure.y;
+      int xprime;
+      int yprime;
 
-      /*
-       * Used for implementing the move_resize operation.
-       */
-      if (!upw->lastConfigureEvent) {
-         upw->lastConfigureEvent = Util_SafeMalloc(sizeof *upw->lastConfigureEvent);
-      }
-      *upw->lastConfigureEvent = xevent->xconfigure;
+      xprime = x + xevent->xconfigure.width + border_width;
+      yprime = y + xevent->xconfigure.height + border_width;
+      x -= border_width;
+      y -= border_width;
 
+#ifdef VMX86_DEVEL
       Debug("Moving window %#lx/%#lx to (%d, %d) +(%d, %d)\n",
             upw->toplevelWindow, upw->clientWindow,
-            x - border_width,
-            y - border_width,
-            xevent->xconfigure.width + border_width,
-            xevent->xconfigure.height + border_width);
+            x, y, xprime - x, yprime - y);
+#endif
+
+      /*
+       * If these are the same, then the window hasn't been reparented by
+       * the window manager, and its window decorations are accounted for
+       * by the values of the _NET_FRAME_EXTENTS property.
+       */
+      if (upw->toplevelWindow == upw->clientWindow) {
+         x -= upw->frameExtents[0];             // left
+         y -= upw->frameExtents[2];             // top
+         xprime += upw->frameExtents[1];        // right
+         yprime += upw->frameExtents[3];        // bottom
+      }
 
       UnityWindowTracker_MoveWindow(up->tracker, upw->toplevelWindow,
-                                    x - border_width,
-                                    y - border_width,
-                                    x + xevent->xconfigure.width + border_width,
-                                    y + xevent->xconfigure.height + border_width);
+                                    x, y, xprime, yprime);
 
       if ((xevent->xconfigure.above != None && !upw->lowerWindow)
 	  || (xevent->xconfigure.above == None && upw->lowerWindow)
@@ -2532,10 +2555,6 @@ UPWindowProcessConfigureEvent(UnityPlatform *up,        // IN
          UPWindow_Restack(up, upw, xevent->xconfigure.above);
       }
    } else {
-      if (!upw->lastConfigureEvent) {
-         upw->lastConfigureEvent = Util_SafeMalloc(sizeof *upw->lastConfigureEvent);
-         *upw->lastConfigureEvent = xevent->xconfigure;
-      }
       Debug("ProcessConfigureEvent skipped event on window %#lx (upw was %#lx/%#lx)\n",
             xevent->xconfigure.window, upw->toplevelWindow, upw->clientWindow);
    }
@@ -2812,7 +2831,7 @@ UPWindow_ProcessEvent(UnityPlatform *up,        // IN
        * Release the UnityPlatform object's reference to this UnityPlatformWindow,
        */
       upw->windowType = UNITY_WINDOW_TYPE_NONE;
-      UPWindow_Unref(up, upw);
+      upw->deleteWhenSafe = TRUE;
 #ifdef VMX86_DEVEL
    CompareStackingOrder(up, upw->rootWindow, __func__);
 #endif
@@ -3448,26 +3467,7 @@ UPWindowUpdateState(UnityPlatform *up,            // IN
 
       if (valueReturned[i] == up->atoms._NET_WM_STATE_MINIMIZED
           || valueReturned[i] == up->atoms._NET_WM_STATE_HIDDEN) {
-         /*
-          * Unfortunately, the HIDDEN attribute is used by some WM's to mean
-          * "minimized" when they should really be separate.
-          */
-
-         uint32 cDesk = -1;
-         uint32 gDesk;
-
-         /*
-          * Only push minimize state for windows on the same desktop (inc. sticky
-          * windows).
-          */
-         if (UPWindowGetDesktop(up, upw, &gDesk)) {
-            cDesk = UnityX11GetCurrentDesktop(up);
-            if (cDesk == gDesk || gDesk == -1) {
-               isMinimized = TRUE;
-            }
-         } else {
-            Debug("%s: Unable to get window desktop\n", __FUNCTION__);
-         }
+         isMinimized = TRUE;
          continue;
       } else if (valueReturned[i] == up->atoms._NET_WM_STATE_MAXIMIZED_HORZ) {
          haveHorizMax = TRUE;
@@ -3513,22 +3513,37 @@ UPWindowUpdateState(UnityPlatform *up,            // IN
    if (upw->isRelevant) {
       UnityWindowInfo *info;
       uint32 newState;
+      uint32 cDesk = -1;
+      uint32 gDesk;
+
       info = UnityWindowTracker_LookupWindow(up->tracker, upw->toplevelWindow);
       ASSERT(info);
 
       newState = info->state;
-      if (isMinimized) {
-         if (! (newState & UNITY_WINDOW_STATE_MINIMIZED)) {
-            Debug("Enabling minimized attribute for window %#lx/%#lx\n",
-                  upw->toplevelWindow, upw->clientWindow);
-            newState |= UNITY_WINDOW_STATE_MINIMIZED;
+
+      /*
+       * Only push minimize state for windows on the same desktop (inc. sticky
+       * windows).
+       */
+      if (UPWindowGetDesktop(up, upw, &gDesk)) {
+         cDesk = UnityX11GetCurrentDesktop(up);
+         if (cDesk == gDesk || gDesk == -1) {
+            if (isMinimized) {
+               if (! (newState & UNITY_WINDOW_STATE_MINIMIZED)) {
+                  Debug("Enabling minimized attribute for window %#lx/%#lx\n",
+                        upw->toplevelWindow, upw->clientWindow);
+                  newState |= UNITY_WINDOW_STATE_MINIMIZED;
+               }
+            } else {
+               if ((newState & UNITY_WINDOW_STATE_MINIMIZED)) {
+                  Debug("Disabling minimized attribute for window %#lx/%#lx\n",
+                        upw->toplevelWindow, upw->clientWindow);
+                  newState &= ~UNITY_WINDOW_STATE_MINIMIZED;
+               }
+            }
          }
       } else {
-         if ((newState & UNITY_WINDOW_STATE_MINIMIZED)) {
-            Debug("Disabling minimized attribute for window %#lx/%#lx\n",
-                  upw->toplevelWindow, upw->clientWindow);
-            newState &= ~UNITY_WINDOW_STATE_MINIMIZED;
-         }
+         Debug("%s: Unable to get window desktop\n", __FUNCTION__);
       }
 
       if (newState != info->state) {
@@ -3574,18 +3589,40 @@ UPWindowPushFullUpdate(UnityPlatform *up,            // IN
    Atom *props;
    int propCount;
    int i;
+   int x, y, xprime, yprime;
+   int border_width;
 
    XGetWindowAttributes(up->display, upw->toplevelWindow, &winAttr);
+   UPWindowUpdateFrameExtents(up, upw);
 
-   UnityWindowTracker_MoveWindow(up->tracker, (UnityWindowId) upw->toplevelWindow,
-                                 winAttr.x - winAttr.border_width,
-                                 winAttr.y - winAttr.border_width,
-                                 winAttr.x + winAttr.width + winAttr.border_width,
-                                 winAttr.y + winAttr.height + winAttr.border_width);
+   x = winAttr.x;
+   y = winAttr.y;
+   border_width = winAttr.border_width;
+
+   xprime = x + winAttr.width + border_width;
+   yprime = y + winAttr.height + border_width;
+   x -= border_width;
+   y -= border_width;
+
+   /*
+    * If these are the same, then the window hasn't been reparented by
+    * the window manager, and its window decorations are accounted for
+    * by the values of the _NET_FRAME_EXTENTS property.
+    */
+   if (upw->toplevelWindow == upw->clientWindow) {
+      x -= upw->frameExtents[0];             // left
+      y -= upw->frameExtents[2];             // top
+      xprime += upw->frameExtents[1];        // right
+      yprime += upw->frameExtents[3];        // bottom
+   }
+
+   UnityWindowTracker_MoveWindow(up->tracker, upw->toplevelWindow,
+                                 x, y, xprime, yprime);
 
 #if defined(VM_HAVE_X11_SHAPE_EXT)
    UPWindowUpdateShape(up, upw);
 #endif
+   UPWindowUpdateType(up, upw);
 
    propCount = 0;
    UnityPlatformResetErrorCount(up);
@@ -4067,4 +4104,53 @@ UPWindowLookupClientLeader(UnityPlatform *up,           // IN
    XFree(valueReturned);
 
    return leaderWindow;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UPWindowUpdateFrameExtents --
+ *
+ *      Lookup and record (cache) the _NET_FRAME_EXTENTS property.
+ *
+ * Results:
+ *      If _NET_FRAME_EXTENTS is set, upw->frameExtents may be updated.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+UPWindowUpdateFrameExtents(UnityPlatform *up,
+                           UnityPlatformWindow *upw)
+{
+   Atom propertyType;
+   int propertyFormat = 0;
+   unsigned long itemsReturned = 0;
+   unsigned long bytesRemaining;
+   unsigned char *valueReturned = NULL;
+   Window w = upw->clientWindow ? upw->clientWindow : upw->toplevelWindow;
+
+   ASSERT(up);
+   ASSERT(upw);
+
+   if (UnityPlatformWMProtocolSupported(up, UNITY_X11_WM__NET_FRAME_EXTENTS)
+       && XGetWindowProperty(up->display, w, up->atoms._NET_FRAME_EXTENTS, 0,
+                             1024, False, XA_CARDINAL,
+                             &propertyType, &propertyFormat, &itemsReturned,
+                             &bytesRemaining, &valueReturned) == Success
+       && propertyFormat == 32
+       && itemsReturned >= 4) {
+      Atom *atomValue = (Atom *)valueReturned;
+
+      upw->frameExtents[0] = atomValue[0];
+      upw->frameExtents[1] = atomValue[1];
+      upw->frameExtents[2] = atomValue[2];
+      upw->frameExtents[3] = atomValue[3];
+
+      XFree(valueReturned);
+   }
 }

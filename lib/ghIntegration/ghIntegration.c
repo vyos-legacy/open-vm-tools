@@ -28,6 +28,7 @@
 #include "dynxdr.h"
 #include "ghIntegration.h"
 #include "ghIntegrationInt.h"
+#include "guestCaps.h"
 #include "guestrpc/ghiGetBinaryHandlers.h"
 #include "guestrpc/ghiProtocolHandler.h"
 #include "guestrpc/ghiStartMenu.h"
@@ -39,7 +40,6 @@
 #include "unityCommon.h"
 #include "util.h"
 #include "xdrutil.h"
-#include "vmware/guestrpc/capabilities.h"
 
 
 /*
@@ -131,9 +131,9 @@ static Bool GHITcloSetFocusedWindow(RpcInData *data);
 static Bool GHITcloGetExecInfoHash(RpcInData *data);
 
 DynBuf gTcloUpdate;
-static GHIPlatform *ghiPlatformData;
 
-DblLnkLst_Links launchMenu;
+// The pointer to the platform-specific global state.
+static GHIPlatform *ghiPlatformData = NULL;
 
 /*
  *----------------------------------------------------------------------------
@@ -229,11 +229,16 @@ void
 GHI_Init(VMU_ControllerCB *vmuControllerCB, // IN
          void *ctx)                         // IN
 {
-   Debug("%s\n", __FUNCTION__);
+   Debug("%s: Enter.\n", __FUNCTION__);
 
-   DblLnkLst_Init(&launchMenu);
-
+   // Call the platform-specific initialization function.
    ghiPlatformData = GHIPlatformInit(vmuControllerCB, ctx);
+   if (!ghiPlatformData) {
+      // TODO: We should report this failure to the caller.
+      Debug("%s: GHIPlatformInit returned NULL pointer!\n", __FUNCTION__);
+   }
+
+   Debug("%s: Exit.\n", __FUNCTION__);
 }
 
 
@@ -374,6 +379,33 @@ GHI_Gather(void)
 
    Debug("Exited Guest/Host Integration Gather.\n");
 }
+
+
+#ifndef _WIN32
+/*
+ ******************************************************************************
+ * GHIX11_FindDesktopUriByExec --                                        */ /**
+ *
+ * Given an executable path, attempt to generate an "execUri" associated with a
+ * corresponding .desktop file.
+ *
+ * @note Returned pointer belongs to the GHI module.  Caller must not free it.
+ *
+ * @param[in]  execPath Input binary path.  May be absolute or relative.
+ *
+ * @return Pointer to a URI string on success, NULL on failure.
+ *
+ ******************************************************************************
+ */
+
+const char *
+GHIX11_FindDesktopUriByExec(const char *exec)
+{
+   ASSERT(ghiPlatformData);
+
+   return GHIX11FindDesktopUriByExec(ghiPlatformData, exec);
+}
+#endif // ifndef _WIN32
 
 
 /*

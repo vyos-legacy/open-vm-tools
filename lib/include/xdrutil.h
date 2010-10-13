@@ -58,20 +58,11 @@
  * Wrapper for XdrUtil_ArrayAppend that automatically populates the arguments
  * from a given XDR array.
  */
-#ifdef __GNUC__
-#   define XDRUTIL_ARRAYAPPEND(ptr, field, cnt)                 \
-       (typeof ((ptr)->field.field##_val))                      \
-       XdrUtil_ArrayAppend((void **) &(ptr)->field.field##_val, \
-                           &(ptr)->field.field##_len,           \
-                           sizeof *(ptr)->field.field##_val,    \
-                           (cnt))
-#else
-#   define XDRUTIL_ARRAYAPPEND(ptr, field, cnt)                 \
-       XdrUtil_ArrayAppend((void **) &(ptr)->field.field##_val, \
-                           &(ptr)->field.field##_len,           \
-                           sizeof *(ptr)->field.field##_val,    \
-                           (cnt))
-#endif
+#define XDRUTIL_ARRAYAPPEND(ptr, field, cnt)                \
+   XdrUtil_ArrayAppend((void **) &(ptr)->field.field##_val, \
+                       &(ptr)->field.field##_len,           \
+                       sizeof *(ptr)->field.field##_val,    \
+                       (cnt))
 
 void *
 XdrUtil_ArrayAppend(void **array, u_int *arrayLen, size_t elemSz, u_int elemCnt);

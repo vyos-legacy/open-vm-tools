@@ -204,7 +204,7 @@ ToolboxCmdHelp(const char *progName)
 {
    printf("Usage: %s <command> [options] [subcommand]\n"
           "Type \'%s help <command>\' for help on a specific command.\n"
-          "Type \'%s -v' to see the Vmware Tools version.\n"
+          "Type \'%s -v' to see the VMware Tools version.\n"
           "Use '-q' option to suppress stdout output.\n"
           "Most commands take a subcommand.\n\n"
           "Available commands:\n"

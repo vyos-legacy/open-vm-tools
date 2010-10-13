@@ -31,7 +31,7 @@
 # define compat_sk_destruct             destruct
 # define compat_sk_shutdown             shutdown
 # define compat_sk_receive_queue        receive_queue
-# define compat_sk_sleep(sk)            sk->sleep
+# define compat_sk_sleep                sleep
 # define compat_sk_err                  err
 # define compat_sk_state_change         state_change
 # define compat_sk_data_ready           data_ready
@@ -51,11 +51,7 @@
 # define compat_sk_destruct             sk_destruct
 # define compat_sk_shutdown             sk_shutdown
 # define compat_sk_receive_queue        sk_receive_queue
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 34)
-# define compat_sk_sleep(sk)            sk->sk_sleep
-#else
-# define compat_sk_sleep(sk)            sk_sleep(sk)
-#endif
+# define compat_sk_sleep                sk_sleep
 # define compat_sk_err                  sk_err
 # define compat_sk_state_change         sk_state_change
 # define compat_sk_data_ready           sk_data_ready

@@ -70,8 +70,6 @@ export KINCLUDE_DIR=$(KDIR)/include/
 PKGDIR=$(CURDIR)/debian/open-vm-tools
 MODPKG=open-vm-modules-$(KVER)
 
-CFLAGS = -Wall -g
-
 configure	 = ./configure
 configure	+= --host=$(DEB_HOST_GNU_TYPE)
 configure	+= --build=$(DEB_BUILD_GNU_TYPE)
@@ -83,11 +81,12 @@ configure	+= --sysconfdir=/etc
 configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
 configure	+= --without-x
-configure	+= --without-procps
+configure	+= --with-procps
 configure	+= --without-gtkmm
 configure	+= --without-gtk2
 configure	+= --without-dnet
 configure	+= --without-icu
+configure	+= --disable-unity
 configure	+= CFLAGS="$(CFLAGS)"
 configure	+= LDFLAGS="-Wl,-z,defs"
 
@@ -119,6 +118,7 @@ clean:
 	dh_testdir
 	dh_testroot
 	rm -f build-stamp
+	rm -f config/config.guess config/config.sub
 
 	# Cleaning package
 	[ ! -f Makefile ] || $(MAKE) distclean

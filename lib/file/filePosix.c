@@ -32,7 +32,7 @@
 # endif
 # include <limits.h>
 # include <stdio.h>      /* Needed before sys/mnttab.h in Solaris */
-# if defined(sun)
+# ifdef sun
 #  include <sys/mnttab.h>
 # elif __APPLE__
 #  include <sys/mount.h>
@@ -41,7 +41,7 @@
 # endif
 #include <signal.h>
 #endif
-#if defined(GLIBC_VERSION_24)
+#ifdef GLIBC_VERSION_24
 #define _GNU_SOURCE
 #endif
 #include <unistd.h>
@@ -51,7 +51,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <dirent.h>
-#if defined(__linux__)
+#ifdef __linux__
 #   include <pwd.h>
 #endif
 
@@ -75,7 +75,8 @@ static char *FilePosixLookupMountPoint(char const *canPath, Bool *bind);
 #endif
 static char *FilePosixNearestExistingAncestor(char const *path);
 
-#if defined(VMX86_SERVER)
+# ifdef VMX86_SERVER
+#define VMFS2CONST 456
 #define VMFS3CONST 256
 #include "hostType.h"
 /* Needed for VMFS implementation of File_GetFreeSpace() */
@@ -83,7 +84,7 @@ static char *FilePosixNearestExistingAncestor(char const *path);
 # endif
 #endif
 
-#if defined(VMX86_SERVER)
+#ifdef VMX86_SERVER
 #include "fs_user.h"
 #endif
 
@@ -282,7 +283,7 @@ FileAttributes(ConstUnicode pathName,  // IN:
    int err;
    struct stat statbuf;
 
-#if defined(GLIBC_VERSION_24)
+#ifdef GLIBC_VERSION_24
    char *path;
 
    if (fileData == NULL) {
@@ -291,7 +292,6 @@ FileAttributes(ConstUnicode pathName,  // IN:
       }
       ret = euidaccess(path, F_OK);
       free(path);
-
       return ret;
    }
 #endif
@@ -1050,7 +1050,7 @@ File_GetFreeSpace(ConstUnicode pathName,  // IN: File name
                   break;
                }
 
-               if (S_ISDIR(statbuf.st_mode)) {
+               if ((statbuf.st_mode & S_IFMT) == S_IFDIR) {
                   Warning(LGPFX" %s: directory (%s) present but inaccessible\n",
                           __func__, UTF8(fullPath));
                   errno = err;
@@ -2068,6 +2068,9 @@ FilePosixCreateTestFileSize(ConstUnicode dirName, // IN: directory to create lar
  *
  *      Check if the given file is on a VMFS supports such a file size
  *
+ *      In the case of VMFS2, the largest supported file size is
+ *         456 * 1024 * B bytes
+ *
  *      In the case of VMFS3/4, the largest supported file size is
  *         256 * 1024 * B bytes
  *
@@ -2109,12 +2112,14 @@ File_VMFSSupportsFileSize(ConstUnicode pathName,  // IN:
    }
 
    if (strcmp(fsType, "VMFS") == 0) {
-      if (version >= 3) {
+      if (version == 2) {
+         maxFileSize = (VMFS2CONST * (uint64) blockSize * 1024);
+      } else if (version >= 3) {
          /* Get ready for VMFS4 and perform sanity check on version */
          ASSERT(version == 3 || version == 4);
 
          maxFileSize = (VMFS3CONST * (uint64) blockSize * 1024);
-      }
+      } 
 
       if (fileSize <= maxFileSize && maxFileSize != -1) {
          free(fsType);

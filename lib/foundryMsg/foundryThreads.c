@@ -37,10 +37,6 @@
 
 #include "vix.h"
 #include "foundryThreads.h"
-#include "vixOpenSource.h"
-#include "str.h"
-#include "msg.h"
-
 
 #if _WIN32
 #include <objbase.h.> // For CoInitializeEx
@@ -48,97 +44,8 @@ static DWORD WINAPI FoundryThreadWrapperProc(LPVOID lpParameter);
 #else // Linux
 #include <pthread.h>
 static void *FoundryThreadWrapperProc(void *lpParameter);
-#if defined(linux)
-#include <sys/prctl.h>
-#endif
 #endif
 
-typedef void (*VixThreadFuncType)(void *);
-typedef void (*VixScheduleWorkFuncType)(VixThreadFuncType, void *);
-
-typedef struct IVixThread {
-   VixScheduleWorkFuncType ScheduleWorkFunc;
-} IVixThread;
-
-void Vix_SetExternalThreadInterface(IVixThread *threadInt);
-
-static void FoundryThreadWrapperWrapper(void *);
-
-static IVixThread *GlobalVixThreadInterface = NULL;
-
-static Bool GlobalEnableExternalThreadInterface = TRUE;
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * UseExternalThreadInterface --
- *
- *      Check if we should use the external thread interface
- *
- * Results:
- *      None
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-Bool UseExternalThreadInterface(void)
-{
-   return GlobalEnableExternalThreadInterface &&
-      (GlobalVixThreadInterface != NULL);
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * VixThreadConfig --
- *
- *      Set whether to enable the use of external thread interface
- *
- * Results:
- *      None
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-void 
-VixThreadConfig(Bool enableExternalThreadInterface)
-{
-   GlobalEnableExternalThreadInterface = enableExternalThreadInterface;
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * Vix_SetExternalThreadInterface --
- *
- *      Set the thread interface that foundry uses to schedule work item.
- *      If the exnternal thread interface, foundry creates native thread
- *      to run work item that may block.
- *
- * Results:
- *      None
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-Vix_SetExternalThreadInterface(IVixThread *threadInt) // IN
-{
-   ASSERT(threadInt->ScheduleWorkFunc);
-   GlobalVixThreadInterface = threadInt;
-} 
 
 /*
  *-----------------------------------------------------------------------------
@@ -157,8 +64,7 @@ Vix_SetExternalThreadInterface(IVixThread *threadInt) // IN
 
 FoundryWorkerThread *
 FoundryThreads_StartThread(FoundryThreadProc proc,    // IN
-                           void *threadParam,         // IN
-                           const char *threadName)    // IN
+                           void *threadParam)         // IN
 {
    VixError err = VIX_OK;
    FoundryWorkerThread *threadState = NULL;
@@ -173,13 +79,6 @@ FoundryThreads_StartThread(FoundryThreadProc proc,    // IN
    threadState = (FoundryWorkerThread *) Util_SafeCalloc(1, sizeof(*threadState));
    threadState->threadProc = proc;
    threadState->threadParam = threadParam;
-   threadState->threadName = threadName;
-
-   if (UseExternalThreadInterface()) {
-      (*GlobalVixThreadInterface->ScheduleWorkFunc)(
-         FoundryThreadWrapperWrapper, threadState);
-      goto abort;
-   }
 
 #ifdef _WIN32
    threadState->threadHandle = CreateThread(NULL,
@@ -252,19 +151,6 @@ FoundryThreads_StopThread(FoundryWorkerThread *threadState)    // IN
       return;
    }
 
-   if (UseExternalThreadInterface()) {
-      /*
-       * It seems that if we got here the thread must have finished.
-       * Kill a thread in the middle of its running is a bad design
-       * by itself.
-       * Join a thread could block the poll thread, which is also bad.
-       * perhaps add a member in threadState to say "done", and
-       * assert on that.
-       */
-      FoundryThreads_Free(threadState);
-      return;
-   }
-
    /*
     * Stop the thread.
     */
@@ -305,16 +191,13 @@ void
 FoundryThreads_Free(FoundryWorkerThread *threadState)    // IN
 {
    if (NULL != threadState) {
-      if (! UseExternalThreadInterface()) {
-
 #ifdef _WIN32
       CloseHandle(threadState->threadHandle);
       threadState->threadHandle = NULL;
 #else
       threadState->threadInfo = 0;
 #endif
-      }
-      
+
       free(threadState);
    }
 }
@@ -353,31 +236,6 @@ FoundryThreads_IsCurrentThread(struct FoundryWorkerThread *threadState)     // I
 /*
  *-----------------------------------------------------------------------------
  *
- * FoundryThreadWrapperWrapper --
- *
- *      Adaptor function to help schedule work item.
- *      Since we are not using the return result in FoundryThreadWrapperProc.
- *      and hostd thread interface cannot provide a return result.
- *      so we just discard the return result.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-void
-FoundryThreadWrapperWrapper(void *data)
-{
-   FoundryThreadWrapperProc(data);
-}
-
-/*
- *-----------------------------------------------------------------------------
- *
  * FoundryThreadWrapperProc --
  *
  *       This is a Windows-specific wrapper for a foundry thread procedure.
@@ -406,26 +264,6 @@ FoundryThreadWrapperProc(void *threadParameter)      // IN
       ASSERT(0);
       goto abort;
    }
-#if defined(linux) && defined(PR_SET_NAME)
-   {
-      char threadName[64];
-      int retval;
-      Str_Sprintf(threadName, sizeof threadName, "vix-%s", threadState->threadName);
-      retval = prctl(PR_SET_NAME, (unsigned long)threadName, 0,0, 0);
-
-      /*
-       * XXX: VIX_DEBUG() uses symbols which aren't part of the open-sourced
-       * VIX code. The symbols reside in vixDebug.c, which uses our internal
-       * vixSemiPublic.h. This code is never really used in the guest, so,
-       * other than being ugly, it's OK to do this.
-       */
-#if !defined(OPEN_VM_TOOLS)
-      if (retval != 0) {
-         VIX_DEBUG(("%s prctl PR_SET_NAME failed = %s\n", __FUNCTION__, Msg_ErrString()));
-      }
-#endif
-   }
-#endif
 
    if (NULL != threadState->threadProc) {
       (*(threadState->threadProc))(threadState);

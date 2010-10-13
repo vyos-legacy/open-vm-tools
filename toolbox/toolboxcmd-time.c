@@ -23,8 +23,6 @@
  */
 
 #include "toolboxCmdInt.h"
-#include "vmware/guestrpc/tclodefs.h"
-#include "vmware/guestrpc/timesync.h"
 
 
 /*

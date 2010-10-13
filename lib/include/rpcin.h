@@ -27,6 +27,10 @@
 #ifndef __RPCIN_H__
 #   define __RPCIN_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #if defined(VMTOOLS_USE_GLIB)
 #  include <glib.h>
 #else
@@ -113,5 +117,9 @@ Bool RpcIn_stop(RpcIn *in);
 
 unsigned int RpcIn_SetRetVals(char const **result, size_t *resultLen,
                               const char *resultVal, Bool retVal);
-#endif /* __RPCIN_H__ */
 
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
+#endif /* __RPCIN_H__ */

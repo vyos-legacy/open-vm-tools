@@ -92,11 +92,6 @@ Bool
 HashTable_Delete(HashTable  *hashTable,
                  const char *keyStr);
 
-Bool
-HashTable_LookupAndDelete(HashTable  *hashTable,
-                          const char *keyStr,
-			  void **clientData);
-
 void
 HashTable_Clear(HashTable *ht);
 

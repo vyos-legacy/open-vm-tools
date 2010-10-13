@@ -31,8 +31,8 @@
 #include "conf.h"
 #include "procMgr.h"
 #include "system.h"
+#include "vm_app.h"
 #include "vmtools.h"
-#include "vmware/guestrpc/powerops.h"
 
 #if defined(G_PLATFORM_WIN32)
 #  define INVALID_PID NULL
@@ -231,7 +231,7 @@ PowerOpsScriptCallback(gpointer _state)
 {
    PowerOpState *state = _state;
 
-   ASSERT(state->pid != INVALID_PID);
+   g_assert(state->pid != INVALID_PID);
 
    if (!ProcMgr_IsAsyncProcRunning(state->pid)) {
       int exitcode;
@@ -320,7 +320,7 @@ PowerOpsScriptCallback(GPid pid,
 {
    PowerOpState *state = _state;
 
-   ASSERT(state->pid != INVALID_PID);
+   g_assert(state->pid != INVALID_PID);
 
    PowerOpsStateChangeDone(_state, status == 0);
    g_spawn_close_pid(state->pid);
@@ -450,7 +450,7 @@ PowerOpsStateChange(RpcInData *data)
             char *tmp;
 
             dfltPath = GuestApp_GetInstallPath();
-            ASSERT(dfltPath != NULL);
+            g_assert(dfltPath != NULL);
 
             /*
              * Before the switch to vmtoolsd, the config file was saved with

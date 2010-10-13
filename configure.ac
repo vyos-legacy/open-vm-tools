@@ -28,17 +28,21 @@
 #  RPCGENFLAGS: extra flags to pass to rpcgen
 #
 # The following libraries are currently tested: DNET, FUSE, GLIB2, GMODULE,
-# GOBJECT, GTHREAD, GTK, GTKMM, ICU, LIBPNG, PAM, PROCPS, URIPARSER, ZLIB
+# GOBJECT, GTHREAD, GTK, GTKMM, ICU, LIBPNG, PROCPS, URIPARSER, ZLIB
+#
+# For the procps library: you can provide the name of the procps library on
+# your system by defining CUSTOM_PROCPS_NAME. By default the configure script
+# will try both "-lproc" and "-lproc-3.2.7".
 ################################################################################
 
 ###
 ### Initialization
 ###
 
-TOOLS_VERSION="2009.10.15"
+TOOLS_VERSION="8.4.2"
 AC_INIT(
    [open-vm-tools],
-   [2009.10.15],
+   [8.4.2],
    [open-vm-tools-devel@lists.sourceforge.net])
 
 # In order to make this configure script auto-detect situations where
@@ -138,9 +142,6 @@ osVersion="`getOsVersion`"
 if test "$with_kernel_modules" = "yes"; then
    case "$os" in
       linux)
-         if test "$osVersion" -lt 206009; then
-            AC_MSG_ERROR([Kernels prior to 2.6.9 are not supported in this release of open-vm-tools. Configure using --without-kernel-modules to suppress building kernel drivers.])
-         fi
          if test ! -d "$LINUXDIR/kernel/"; then
              AC_MSG_ERROR([$LINUXDIR/kernel does not exist])
          fi
@@ -335,21 +336,6 @@ if test "$have_genmarshal" != "yes"; then
 fi
 
 #
-# Parts of our Linux code require more recent version of glib
-#
-if test "$os" = "linux"; then
-   AC_VMW_CHECK_LIB([glib-2.0],
-                    [GLIB2],
-                    [glib-2.0],
-                    [],
-                    [2.14.0],
-                    [glib.h],
-                    [g_regex_new],
-                    [have_glib_2_14=yes],
-                    [AC_MSG_WARN([glib is not recent enough, some features will be disabled.])])
-fi
-
-#
 # Check for fuse.
 #
 AC_VMW_CHECK_LIB([fuse],
@@ -362,34 +348,6 @@ AC_VMW_CHECK_LIB([fuse],
                  [have_fuse=yes],
                  [have_fuse=no;
                   AC_MSG_WARN([Fuse is missing, vmblock-fuse will be disabled.])])
-
-#
-# Check for PAM.
-#
-if test "$os" = "linux"; then
-   AC_ARG_WITH([pam],
-      [AS_HELP_STRING([--without-pam],
-      [compiles without PAM support.])],
-      [],
-      [with_pam=yes])
-
-   if test "$with_pam" = "yes"; then
-      if test -z "$CUSTOM_PAM_CPPFLAGS"; then
-         # Assume PAM headers are in /usr/include by default.
-         CUSTOM_PAM_CPPFLAGS="-I/usr/include"
-      fi
-      AC_VMW_CHECK_LIB([pam],
-                       [PAM],
-                       [],
-                       [],
-                       [],
-                       [security/pam_appl.h],
-                       [pam_start],
-                       [PAM_CPPFLAGS="$PAM_CPPFLAGS -DUSE_PAM"],
-                       [AC_VMW_LIB_ERROR([PAM], [pam])])
-   fi
-fi
-
 
 # If the user explicitly disables X11, then don't try to detect the X-related libraries
 if test "$have_x" = "disabled"; then
@@ -434,6 +392,14 @@ else
    fi
 
    AC_CHECK_LIB(
+      [Xi],
+      [XOpenDevice],
+      [COMMON_XLIBS="-lXi $COMMON_XLIBS"],
+      [AC_MSG_ERROR(
+         [libXi not found. Please configure without X11 (using --without-x), or install the libXi devel package(s).])],
+      [$COMMON_XLIBS])
+
+   AC_CHECK_LIB(
       [Xrender],
       [XRenderQueryVersion],
       [COMMON_XLIBS="-lXrender $COMMON_XLIBS"],
@@ -461,16 +427,14 @@ else
    # libraries.
    if test "$enable_unity" != "no"; then
 
-           # Unity needs the X11 Screen Saver extension library. It should be
+      # Unity needs the X11 Screen Saver extension library. It should be
 	   # in the same place as the X11 libraries, so no need for any fancy
 	   # path checking.
-           AC_CHECK_LIB(
-              [Xss],
-              [XScreenSaverQueryExtension],
-              [COMMON_XLIBS="-lXss $COMMON_XLIBS"],
-              [AC_MSG_ERROR(
-	         [libXss not found. Please configure without Unity (using --disable-unity) or install the libXss devel package.])],
-              [$COMMON_XLIBS])
+	   AC_VMW_CHECK_X11_LIB(
+	      [Xss],
+	      [X11/extensions/scrnsaver.h],
+	      [XScreenSaverQueryExtension],
+	      [AC_MSG_ERROR([libXss or headers not found. Please configure without Unity (using --disable-unity) or install the libXss devel package.])])
 
            # Check for the uriparser library and headers. The upstream uriparser
            # doesn't appear to ship with either a pkg-config file or a
@@ -588,29 +552,19 @@ AC_CHECK_FUNCS(
    [AC_CHECK_LIB(
       dl,
       dlopen,
-      [VIX_LIBADD="$VIX_LIBADD -ldl"
-       LIBVMTOOLS_LIBADD="$LIBVMTOOLS_LIBADD -ldl"],
+      LIBVMTOOLS_LIBADD="$LIBVMTOOLS_LIBADD -ldl",
       [AC_MSG_ERROR(
          [dlopen was not found, but is required for open-vm-tools to function properly. Please contact your OS vendor.])])])
 
 AC_CHECK_FUNCS([ecvt])
 AC_CHECK_FUNCS([fcvt])
 
-if test "$os" = "freebsd" -a "$osVersion" -ge 600000; then
-   AC_CHECK_LIB(
-      [thr],
-      [pthread_mutex_init],
-      [THREAD_LIB=-lthr],
-      [AC_MSG_ERROR(
-         [Unable to locate required threading library libthr.])])
-else
-   AC_CHECK_LIB(
-      [pthread],
-      [pthread_mutex_init],
-      [THREAD_LIB=-lpthread],
-      [AC_MSG_ERROR(
-         [libpthread not found. Please install the libc/libpthread devel package(s).])])
-fi
+AC_CHECK_LIB(
+   [pthread],
+   [pthread_mutex_init],
+   [HAVE_PTHREAD=yes],
+   [AC_MSG_ERROR(
+      [libpthread not found. Please install the libc/libpthread devel package(s).])])
 
 # PAM prefix
 AC_ARG_WITH([pam-prefix],
@@ -630,20 +584,48 @@ else
 fi
 
 if test "$with_procps" = "yes"; then
-   # XXX: Force CUSTOM_PROCPS_LIBS to have something so that AC_VMW_CHECK_LIB
-   # properly performs the library check.
+   if test -z "$CUSTOM_PROCPS_NAME"; then
+      CUSTOM_PROCPS_NAME=proc
+   fi
+
+   # XXX: no pkg-config and no procps-config means we need to
+   # hard-code a sensible default.
    if test -z "$CUSTOM_PROCPS_LIBS"; then
       CUSTOM_PROCPS_LIBS="-L/lib"
    fi
-   AC_VMW_CHECK_LIB([proc],
+
+   # Some distros provide libproc-${version}.so only, others provide the
+   # libproc.so symlink. Try both to see what sticks (but only try the 3.2.7
+   # version - adding every possible version here would be a mess).
+   #
+   # Users can help by providing CUSTOM_PROCPS_NAME / CUSTOM_PROCPS_LIBS if
+   # necessary.
+   have_procps=no
+
+   AC_VMW_CHECK_LIB([$CUSTOM_PROCPS_NAME],
                     [PROCPS],
                     [],
                     [],
                     [],
                     [],
                     [getstat],
-                    [VMWARE_USER_LDADD="$VMWARE_USER_LDADD $PROCPS_LIBS"],
-                    [AC_MSG_ERROR([libproc not found. Please configure without procps (using --without-procps) or install procps - http://procps.sourceforge.net])])
+                    [
+                     have_procps=yes;
+                     VMWARE_USER_LDADD="$VMWARE_USER_LDADD $PROCPS_LIBS"
+                    ],
+                    [])
+
+   if test "$have_procps" = "no"; then
+      AC_VMW_CHECK_LIB([proc-3.2.7],
+                       [PROCPS],
+                       [],
+                       [],
+                       [],
+                       [],
+                       [getstat],
+                       [VMWARE_USER_LDADD="$VMWARE_USER_LDADD $PROCPS_LIBS"],
+                       [AC_MSG_ERROR([libproc not found. Please configure without procps (using --without-procps) or install procps - http://procps.sourceforge.net])])
+   fi
 fi
 
 if test "$with_procps" != "yes"; then
@@ -914,15 +896,16 @@ if test "$enable_docs" = "yes"; then
    if test "$have_doxygen" = "no"; then
       AC_MSG_WARN([doxygen not found; API documentation will not be generated.])
    else
-      AC_PATH_PROG([DOT], [dot], [])
-      if test "$DOT" = ""; then
-         HAVE_DOT=NO
+      AC_CHECK_PROG([HAVE_DOT],
+                    [dot],
+                    [yes],
+                    [no])
+      if test "$HAVE_DOT" = "yes"; then
+         DOT=dot
       else
-         DOT=`dirname $DOT`
-         HAVE_DOT=YES
+         DOT=
       fi
       AC_SUBST([DOT])
-      AC_SUBST([HAVE_DOT])
 
       AC_PATH_PROG([MSCGEN],
                    [mscgen],
@@ -955,9 +938,16 @@ if test "$os" = "linux"; then
    CPPFLAGS="$CPPFLAGS -D_BSD_SOURCE"
    CPPFLAGS="$CPPFLAGS -D_SVID_SOURCE"
 
-   MODULES="$MODULES vmsync vmci vsock"
-   MODULES="$MODULES vmxnet vmblock vmhgfs"
-   buildHgfsmounter=yes
+   if test "$osVersion" -ge 202000; then
+      MODULES="$MODULES vmxnet"
+   fi
+   if test "$osVersion" -ge 204000; then
+      MODULES="$MODULES vmblock vmci vmhgfs vsock"
+      buildHgfsmounter=yes
+   fi
+   if test "$osVersion" -ge 206006; then
+      MODULES="$MODULES vmsync"
+   fi
 fi
 
 if test "$os" = "freebsd"; then
@@ -1043,14 +1033,13 @@ AM_CONDITIONAL(THIRTY_TWO_BIT_USERSPACE, test "$userSpaceBitness" = "32")
 AM_CONDITIONAL(HAVE_X11, test "$have_x" = "yes")
 AM_CONDITIONAL(HAVE_ICU, test "$with_icu" = "yes")
 AM_CONDITIONAL(WITH_KERNEL_MODULES, test "$with_kernel_modules" = "yes")
+AM_CONDITIONAL(PAMD, test -d /etc/pam.d)
 AM_CONDITIONAL(ENABLE_UNITY, test "$enable_unity" = "yes")
 AM_CONDITIONAL(WITH_ROOT_PRIVILEGES, test "$with_root_privileges" = "yes")
 AM_CONDITIONAL(HAVE_DOXYGEN, test "$have_doxygen" = "yes")
 AM_CONDITIONAL(HAVE_FUSE, test "$have_fuse" = "yes")
 AM_CONDITIONAL(HAVE_GNU_LD, test "$with_gnu_ld" = "yes")
 AM_CONDITIONAL(HAVE_GTKMM, test "$have_x" = "yes" -a "$with_gtkmm" = "yes")
-AM_CONDITIONAL(HAVE_PAM, test "$with_pam" = "yes")
-AM_CONDITIONAL(USE_SLASH_PROC, test "os" = "linux" -a "$have_glib_2_14" = "yes")
 
 ### Feature-specific flags / actions
 # Combine where possible
@@ -1081,7 +1070,6 @@ if test "$HAVE_SETRESUID" = "yes"; then
    LIB_PROC_MGR_CPPFLAGS="$LIB_PROC_MGR_CPPFLAGS -DGLIBC_VERSION_23"
 fi
 
-LIB_AUTH_CPPFLAGS="$LIB_AUTH_CPPFLAGS $PAM_CPPFLAGS"
 if test "$HAVE_CRYPT" = "yes"; then
    LIB_AUTH_CPPFLAGS="$LIB_AUTH_CPPFLAGS -DGLIBC_VERSION_22"
    LIBVMTOOLS_LIBADD="$LIBVMTOOLS_LIBADD -lcrypt"
@@ -1092,9 +1080,11 @@ if test "$HAVE_WCHAR_H" = "yes"; then
    LIB_STRING_CPPFLAGS="$LIB_STRING_CPPFLAGS -DGLIBC_VERSION_22"
 fi
 
-LIBVMTOOLS_LIBADD="$LIBVMTOOLS_LIBADD $THREAD_LIB"
-VIX_LIBADD="$VIX_LIBADD $THREAD_LIB"
-VMWARE_USER_LDADD="$VMWARE_USER_LDADD $THREAD_LIB"
+if test "$HAVE_PTHREAD" = "yes"; then
+   LIBVMTOOLS_LIBADD="$LIBVMTOOLS_LIBADD -lpthread"
+   VIX_LIBADD="$VIX_LIBADD -lpthread"
+   VMWARE_USER_LDADD="$VMWARE_USER_LDADD -lpthread"
+fi
 
 ### Core Services definitions.
 
@@ -1102,7 +1092,17 @@ VMTOOLS_LIBS="$BUILDDIR/libvmtools/libvmtools.la $GLIB2_LIBS"
 VMTOOLS_CPPFLAGS="-DVMTOOLS_USE_GLIB $GLIB2_CPPFLAGS"
 
 PLUGIN_CPPFLAGS="$VMTOOLS_CPPFLAGS $PLUGIN_CPPFLAGS"
-PLUGIN_LDFLAGS="-Wl,-z,defs -Wl,-lc -shared -module -avoid-version"
+
+# For plugins, we'd like to build shared libraries but not install them in the
+# usual shared library destination. Problem is, "noinst_LTLIBRARIES" does not
+# create shared libraries by itself: the "rpath" flag seems to be needed to tell
+# libtool it should create one. All I've found as far as documentation goes is
+# this:
+#
+# http://lists.gnu.org/archive/html/libtool/2007-07/msg00065.html
+#
+# The other options are common options we use when building shared libraries.
+PLUGIN_LDFLAGS="-rpath `pwd` -Wl,-z,defs -Wl,-lc"
 
 # In Solaris, the XDR-related functions are not in libc like in Linux and
 # FreeBSD, so binaries need to be linked to some extra libraries.
@@ -1112,8 +1112,6 @@ if test "$os" = "solaris"; then
 fi
 
 # Installation directories for core services plugins.
-TEST_PLUGIN_INSTALLDIR=$datadir/open-vm-tools/tests
-COMMON_PLUGIN_INSTALLDIR=$libdir/open-vm-tools/plugins/common
 VMSVC_PLUGIN_INSTALLDIR=$libdir/open-vm-tools/plugins/vmsvc
 VMUSR_PLUGIN_INSTALLDIR=$libdir/open-vm-tools/plugins/vmusr
 
@@ -1133,8 +1131,6 @@ AC_SUBST([VMTOOLS_CPPFLAGS])
 AC_SUBST([VMTOOLS_LIBS])
 AC_SUBST([RPCGENFLAGS])
 AC_SUBST([XDR_LIBS])
-AC_SUBST([TEST_PLUGIN_INSTALLDIR])
-AC_SUBST([COMMON_PLUGIN_INSTALLDIR])
 AC_SUBST([VMSVC_PLUGIN_INSTALLDIR])
 AC_SUBST([VMUSR_PLUGIN_INSTALLDIR])
 if test "$os" = "freebsd" -a -n "$SYSDIR"; then
@@ -1191,6 +1187,7 @@ AC_CONFIG_FILES([                      \
    lib/hgfsServer/Makefile             \
    lib/hgfsServerManagerGuest/Makefile \
    lib/hgfsServerPolicyGuest/Makefile  \
+   lib/deployPkg/Makefile              \
    lib/image/Makefile                  \
    lib/impersonate/Makefile            \
    lib/message/Makefile                \
@@ -1208,7 +1205,7 @@ AC_CONFIG_FILES([                      \
    lib/rpcOut/Makefile                 \
    lib/rpcVmx/Makefile                 \
    lib/SLPv2Parser/Makefile            \
-   lib/slashProc/Makefile              \
+   lib/socketMgr/Makefile              \
    lib/string/Makefile                 \
    lib/stubs/Makefile                  \
    lib/sync/Makefile                   \
@@ -1242,7 +1239,6 @@ AC_CONFIG_FILES([                      \
    checkvm/Makefile                    \
    rpctool/Makefile                    \
    libguestlib/Makefile                \
-   libguestlib/vmguestlib.pc           \
    libvmtools/Makefile                 \
    xferlogs/Makefile                   \
    modules/Makefile                    \
@@ -1251,7 +1247,6 @@ AC_CONFIG_FILES([                      \
    tests/vmrpcdbg/Makefile             \
    tests/testDebug/Makefile            \
    tests/testPlugin/Makefile           \
-   tests/testVmblock/Makefile          \
    docs/Makefile                       \
    docs/api/Makefile                   \
    scripts/Makefile		       \

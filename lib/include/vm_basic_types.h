@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 1998-2009 VMware, Inc. All rights reserved.
+ * Copyright (C) 1998-2008 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -13,48 +13,6 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA.
- *
- *********************************************************/
-
-/*********************************************************
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of VMware Inc. nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission of VMware Inc.
- *
- * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- *
- *********************************************************/
-
-/*********************************************************
- * The contents of this file are subject to the terms of the Common
- * Development and Distribution License (the "License") version 1.0
- * and no later version.  You may not use this file except in
- * compliance with the License.
- *
- * You can obtain a copy of the License at
- *         http://www.opensource.org/licenses/cddl1.php
- *
- * See the License for the specific language governing permissions
- * and limitations under the License.
  *
  *********************************************************/
 
@@ -83,7 +41,7 @@
 #include "includeCheck.h"
 
 /* STRICT ANSI means the Xserver build and X defines Bool differently. */
-#if !defined(__STRICT_ANSI__) || defined(__FreeBSD__) || defined(__MINGW32__)
+#if !defined(__STRICT_ANSI__) || defined(__FreeBSD__)
 typedef char           Bool;
 #endif
 
@@ -109,6 +67,10 @@ typedef char           Bool;
 
 #ifdef __i386__
 #define VM_I386
+#endif
+
+#ifdef __arm__
+#define VM_ARM
 #endif
 
 #ifdef __x86_64__
@@ -257,22 +219,18 @@ typedef char      int8;
 #      if !defined(__intptr_t_defined) && !defined(intptr_t)
 #         define __intptr_t_defined
 #         define intptr_t  intptr_t
-#         ifdef VM_I386
-#            ifdef VM_X86_64
-typedef int64     intptr_t;
-#            else
-typedef int32     intptr_t;
-#            endif
+#         ifdef VM_X86_64
+             typedef int64     intptr_t;
+#         elif defined VM_I386 || defined VM_ARM
+             typedef int32     intptr_t;
 #         endif
 #      endif
 
 #      ifndef _STDINT_H
-#         ifdef VM_I386
-#            ifdef VM_X86_64
-typedef uint64    uintptr_t;
-#            else
-typedef uint32    uintptr_t;
-#            endif
+#         ifdef VM_X86_64
+             typedef uint64    uintptr_t;
+#         elif defined VM_I386 || defined VM_ARM
+             typedef uint32    uintptr_t;
 #         endif
 #      endif
 #   endif
@@ -410,12 +368,6 @@ typedef int64 VmTimeVirtualClock;  /* Virtual Clock kept in CPU cycles */
     #define CONST3264U(a) (a)
 #endif
 
-#define MIN_INT8   ((int8)0x80)
-#define MAX_INT8   ((int8)0x7f)
-
-#define MIN_UINT8  ((uint8)0)
-#define MAX_UINT8  ((uint8)0xff)
-
 #define MIN_INT16  ((int16)0x8000)
 #define MAX_INT16  ((int16)0x7fff)
 
@@ -462,14 +414,7 @@ typedef uint32    PageNum;
 typedef unsigned  MemHandle;
 typedef int32     World_ID;
 
-/* !! do not alter the definition of INVALID_WORLD_ID without ensuring
- * that the values defined in both bora/public/vm_basic_types.h and
- * lib/vprobe/vm_basic_types.h are the same.  Additionally, the definition
- * of VMK_INVALID_WORLD_ID in vmkapi_world.h also must be defined with
- * the same value
- */
-
-#define INVALID_WORLD_ID ((World_ID)0)
+#define INVALID_WORLD_ID ((World_ID)-1)
 
 typedef World_ID User_CartelID;
 #define INVALID_CARTEL_ID INVALID_WORLD_ID
@@ -570,18 +515,19 @@ typedef void * UserVA;
 #define MAX_PPN         ((PPN)0x1fffffff)   /* Maximal observable PPN value. */
 #define INVALID_PPN     ((PPN)0xffffffff)
 
-#define INVALID_BPN     ((BPN)0x1fffffff)
+#define INVALID_BPN  ((BPN) 0x1fffffff)
 
-#define INVALID_MPN     ((MPN)-1)
-#define MEMREF_MPN      ((MPN)-2)
-#define RESERVED_MPN    ((MPN) 0)
-#define MAX_MPN         ((MPN)0x7fffffff)  /* 43 bits of address space. */
+#define INVALID_MPN  ((MPN)-1)
+#define MEMREF_MPN   ((MPN)-2)
+#define RESERVED_MPN ((MPN) 0)
+/* Support 43 bits of address space. */
+#define MAX_MPN      ((MPN)0x7fffffff)
 
-#define INVALID_LPN     ((LPN)-1)
-#define INVALID_VPN     ((VPN)-1)
-#define INVALID_LPN64   ((LPN64)-1)
+#define INVALID_LPN ((LPN)-1)
+#define INVALID_VPN ((VPN)-1)
+#define INVALID_LPN64 ((LPN64)-1)
 #define INVALID_PAGENUM ((PageNum)-1)
-#define INVALID_WPN     ((WPN) -1)
+#define INVALID_WPN ((WPN) -1)
 
 
 /*
@@ -589,7 +535,7 @@ typedef void * UserVA;
  * Use them like this: Log("%#"FMTLA"x\n", laddr)
  */
 
-#if defined(VMM) || defined(FROBOS64) || vm_x86_64 || defined __APPLE__
+#if defined(VMM64) || defined(FROBOS64) || vm_x86_64 || defined __APPLE__
 #   define FMTLA "l"
 #   define FMTVA "l"
 #   define FMTVPN "l"
@@ -803,6 +749,52 @@ typedef void * UserVA;
 #endif
 
 /*
+ ***********************************************************************
+ * STRUCT_OFFSET_CHECK --                                    */ /**
+ *
+ * \brief Check if the actual offsef of a member in a structure
+ *        is what is expected
+ *
+ *
+ * \param[in]  STRUCT       Structure the member is a part of.
+ * \param[in]  MEMBER       Member to check the offset of.
+ * \param[in]  OFFSET       Expected offset of MEMBER in STRUCTURE.
+ * \param[in]  DEBUG_EXTRA  Additional bytes to be added to OFFSET to
+ *                          compensate for extra info in debug builds.
+ *
+ ***********************************************************************
+ */
+#ifdef VMX86_DEBUG
+#define STRUCT_OFFSET_CHECK(STRUCT, MEMBER, OFFSET, DEBUG_EXTRA) \
+  ASSERT_ON_COMPILE(vmk_offsetof(STRUCT, MEMBER) == (OFFSET + DEBUG_EXTRA))
+#else
+#define STRUCT_OFFSET_CHECK(STRUCT, MEMBER, OFFSET, DEBUG_EXTRA) \
+  ASSERT_ON_COMPILE(vmk_offsetof(STRUCT, MEMBER) == OFFSET)
+#endif
+
+/*
+ ***********************************************************************
+ * STRUCT_SIZE_CHECK --                                      */ /**
+ *
+ * \brief Check if the actual size of a structure is what is expected
+ *
+ *
+ * \param[in]  STRUCT       Structure whose size is to be checked.
+ * \param[in]  SIZE         Expected size of STRUCT.
+ * \param[in]  DEBUG_EXTRA  Additional bytes to be added to SIZE to
+ *                          compensate for extra info in debug builds.
+ *
+ ***********************************************************************
+ */
+#ifdef VMX86_DEBUG
+#define STRUCT_SIZE_CHECK(STRUCT, SIZE, DEBUG_EXTRA) \
+  ASSERT_ON_COMPILE(sizeof(STRUCT) == (SIZE + DEBUG_EXTRA))
+#else
+#define STRUCT_SIZE_CHECK(STRUCT, SIZE, DEBUG_EXTRA) \
+  ASSERT_ON_COMPILE(sizeof(STRUCT) == SIZE)
+#endif
+
+/*
  * __func__ is a stringified function name that is part of the C99 standard. The block
  * below defines __func__ on older systems where the compiler does not support that
  * macro.
@@ -854,28 +846,23 @@ typedef void * UserVA;
 #else
 #   ifndef _SIZE_T
 #      define _SIZE_T
-#      ifdef VM_I386
-#         ifdef VM_X86_64
-             typedef uint64 size_t;
-#         else
-             typedef uint32 size_t;
-#         endif
-#      endif /* VM_I386 */
+#      ifdef VM_X86_64
+          typedef uint64 size_t;
+#      elif defined VM_I386 || defined VM_ARM
+          typedef uint32 size_t;
+#      endif
 #   endif
 
-#   if !defined(FROBOS) && !defined(_SSIZE_T) && !defined(_SSIZE_T_) && \
-       !defined(ssize_t) && !defined(__ssize_t_defined) && \
-       !defined(_SSIZE_T_DECLARED)
+#   if !defined(FROBOS) && !defined(_SSIZE_T) && !defined(ssize_t) && \
+       !defined(__ssize_t_defined) && !defined(_SSIZE_T_DECLARED)
 #      define _SSIZE_T
 #      define __ssize_t_defined
 #      define _SSIZE_T_DECLARED
-#      ifdef VM_I386
-#         ifdef VM_X86_64
-             typedef int64 ssize_t;
-#         else
-             typedef int32 ssize_t;
-#         endif
-#      endif /* VM_I386 */
+#      ifdef VM_X86_64
+          typedef int64 ssize_t;
+#      elif defined VM_I386 || defined VM_ARM
+          typedef int32 ssize_t;
+#      endif
 #   endif
 
 #endif
@@ -935,22 +922,33 @@ typedef void * UserVA;
 #if defined(__FreeBSD__) && (__FreeBSD__ + 0) && ((__FreeBSD__ + 0) >= 5)
 #   define FMTTIME FMTSZ"d"
 #else
-#   if defined(_MSC_VER)
-#      ifndef _SAFETIME_H_
-#         if (_MSC_VER < 1400) || defined(_USE_32BIT_TIME_T)
-#             define FMTTIME "ld"
-#         else
-#             define FMTTIME FMT64"d"
-#         endif
-#      else
-#         ifndef FMTTIME
-#            error "safetime.h did not define FMTTIME"
-#         endif
-#      endif
+#   define FMTTIME "ld"
+#endif
+
+#ifdef __APPLE__
+/*
+ * Format specifier for all these annoying types such as {S,U}Int32
+ * which are 'long' in 32-bit builds
+ *       and  'int' in 64-bit builds.
+ */
+#   ifdef __LP64__
+#      define FMTLI ""
 #   else
-#      define FMTTIME "ld"
+#      define FMTLI "l"
+#   endif
+
+/*
+ * Format specifier for all these annoying types such as NS[U]Integer
+ * which are  'int' in 32-bit builds
+ *       and 'long' in 64-bit builds.
+ */
+#   ifdef __LP64__
+#      define FMTIL "l"
+#   else
+#      define FMTIL ""
 #   endif
 #endif
+
 
 /*
  * Define MXSemaHandle here so both vmmon and vmx see this definition.

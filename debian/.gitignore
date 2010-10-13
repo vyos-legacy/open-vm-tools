@@ -1,5 +1,6 @@
 *.log
 *.debhelper
+*.substvars
 open-vm-tools
 open-vm-tools-*
 open-vm-modules-*

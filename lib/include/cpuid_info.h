@@ -28,7 +28,7 @@
 #include "includeCheck.h"
 
 #include "vm_basic_asm.h"
-#include "x86cpuid_asm.h"
+#include "x86cpuid.h"
 
 
 typedef struct CPUID0 {
@@ -126,16 +126,8 @@ CPUIDSummary_SafeToUseMC0_CTL(CPUIDSummary* cpuidSummary)
 }
 
 
-/* The following functions return the number of cores per package
+/* The following two functions return the number of cores per package
    and set *numThreadsPerCore to the number of hardware threads per core. */ 
-static INLINE uint32
-CPUIDSummary_VIACoresPerPackage(CPUIDSummary *cpuid,
-                                uint32 *numThreadsPerCore)
-{
-   *numThreadsPerCore = 1;
-   return 1;
-}
-
 static INLINE uint32 
 CPUIDSummary_AMDCoresPerPackage(CPUIDSummary *cpuid,
                                 uint32 *numThreadsPerCore)

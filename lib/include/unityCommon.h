@@ -230,8 +230,11 @@
 #define UNITY_RPC_DESKTOP_CONFIG_SET      "unity.desktop.config.set"
 #define UNITY_RPC_DESKTOP_ACTIVE_SET      "unity.desktop.active.set"
 #define UNITY_RPC_WINDOW_DESKTOP_SET      "unity.window.desktop.set"
+#define UNITY_RPC_SET_OPTIONS             "unity.set.options"
 #define UNITY_RPC_WINDOW_STICK            "unity.window.stick"
 #define UNITY_RPC_WINDOW_UNSTICK          "unity.window.unstick"
+#define UNITY_RPC_CONFIRM_OPERATION       "unity.operation.confirm"
+#define UNITY_RPC_WINDOW_CONTENTS_REQUEST "unity.window.contents.request"
 
 #define GHI_RPC_GUEST_SHELL_ACTION                    "ghi.guest.shell.action"
 #define GHI_RPC_SET_GUEST_HANDLER                     "ghi.guest.handler.set"
@@ -245,6 +248,10 @@
 #define GHI_RPC_TRAY_ICON_SEND_EVENT                  "ghi.guest.trayIcon.sendEvent"
 #define GHI_RPC_SET_FOCUSED_WINDOW                    "ghi.guest.setFocusedWindow"
 #define GHI_RPC_GET_EXEC_INFO_HASH                    "ghi.guest.getExecInfoHash"
+#define GHI_RPC_AUTOLOGON_REQUIREMENTS                "ghi.guest.autologon.requirements"
+#define GHI_RPC_AUTOLOGON_SET                         "ghi.guest.autologon.set"
+#define GHI_RPC_AUTOLOGON_QUERY                       "ghi.guest.autologon.query"
+#define GHI_RPC_AUTOLOGON_CLEAR                       "ghi.guest.autologon.clear"
 /* @} */
 
 
@@ -264,6 +271,12 @@
 #define GHI_RPC_TRASH_FOLDER_STATE        "ghi.guest.trashFolder.state"
 #define GHI_RPC_TRAY_ICON_UPDATE          "ghi.guest.trayIcon.update"
 #define GHI_RPC_HOST_SHELL_ACTION         "ghi.host.shell.action"
+#define UNITY_RPC_REQUEST_OPERATION       "unity.operation.request"
+#define UNITY_RPC_ACK_OPERATION           "unity.operation.ack"
+#define UNITY_RPC_WINDOW_CONTENTS_START   "unity.window.contents.start"
+#define UNITY_RPC_WINDOW_CONTENTS_CHUNK   "unity.window.contents.chunk"
+#define UNITY_RPC_WINDOW_CONTENTS_END     "unity.window.contents.end"
+
 /* @} */
 
 
@@ -483,11 +496,10 @@ execPath ::= ? UTF-8 string uniquely identifying JUST the executable ?
                          @ref UNITY_RPC_GET_WINDOW_PATH.
    @return
    @verbatim
-<retval> := <name><nul><count><nul><icon_data>{<icon_data>}
+<retval> := <name><nul><icon_data>{<icon_data>}
 
 <name> := name of application
-<count> := number of icons returned
-<icon_data> := width<nul>height<nul>bgraSize<nul>bgraData<nul>
+<icon_data> := count<nul>width<nul>height<nul>size<nul>bgraData<nul><nul>
 <nul> := '\0'
 @endverbatim
    @note        Icon data is in BGRA format. An alpha channel value of 255 means
@@ -747,6 +759,14 @@ desktop where the upper right <tt>{1,2}</tt> is the currently active desktop.
    @param[in] offset Offset into desktop configuration, as defined by
                      @ref UNITY_RPC_DESKTOP_CONFIG_SET, 0 or greater.
 
+   @def         UNITY_RPC_SET_OPTIONS
+   @brief       Set optional behaviour for unity mode in the guest.
+   @code
+   UNITY_RPC_SET_OPTIONS
+   @endcode
+   @param[in]   XDR encoded options mask.
+   @note        This must be called before entering Unity mode - setting the options
+                after Unity mode has begun will result in undefined behaviour.
 
    @def         UNITY_RPC_WINDOW_STICK
    @brief       "Stick" a window to the screen.
@@ -761,6 +781,13 @@ desktop where the upper right <tt>{1,2}</tt> is the currently active desktop.
    UNITY_RPC_WINDOW_UNSTICK UnityWindowId
    @endcode
    @param[in] UnityWindowId UnityWindowId of window to unstick.
+
+   @def         UNITY_RPC_CONFIRM_OPERATION
+   @brief       Confirm (or deny) that a previously requested operation should now be performed.
+   @code
+   UNITY_RPC_CONFIRM_OPERATION XDR_REP
+   @endcode
+   @param[in] XDR_REP XDR Encoded (see unity.x) representation of arguments.
 
    @}
 */
@@ -829,6 +856,20 @@ desktop where the upper right <tt>{1,2}</tt> is the currently active desktop.
    UNITY_RPC_UNITY_ACTIVE flag
    @endcode
    @param[in] flag If 1, Unity is active. If 0, Unity is not active
+
+   @def         UNITY_RPC_REQUEST_OPERATION
+   @brief       Request that the host should allow the guest to perform an operation.
+   @code
+   UNITY_RPC_REQUEST_OPERATION XDR_REP
+   @endcode
+   @param[in] XDR_REP XDR Encoded (see unity.x) representation of arguments.
+
+   @def         UNITY_RPC_ACK_OPERATION
+   @brief       Acknowledge that a previously confirmed operations has been performed.
+   @code
+   UNITY_RPC_ACK_OPERATION XDR_REP
+   @endcode
+   @param[in] XDR_REP XDR Encoded (see unity.x) representation of arguments.
 
    @}
 */

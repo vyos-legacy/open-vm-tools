@@ -49,6 +49,11 @@ char *System_GetEnv(Bool global, const char *valueName);
 int System_SetEnv(Bool global, const char *valueName, const char *value);
 
 #ifdef _WIN32
+typedef enum AeroStateCommand {
+   AeroCommand_Enable,
+   AeroCommand_Disable,
+} AeroStateCommand;
+
 /*
  * Representation of monitors gathered by System_GetMonitors.
  */
@@ -81,6 +86,7 @@ Bool System_DisableAndKillScreenSaver(void);
 DWORD System_GetServiceState(LPCWSTR szServiceName);
 DblLnkLst_Links *System_GetMonitors();
 void System_SetFocusedWindow(HWND windowToFocus, Bool force);
+Bool System_SetAeroState(AeroStateCommand command, AeroStateCommand *oldState);
 #endif
 
 
@@ -90,7 +96,7 @@ void System_SetFocusedWindow(HWND windowToFocus, Bool force);
  *        then acted upon and translates to a -DPOSIX_LIKE_ENVIRONMENT
  *        preprocessor option.
  */
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(N_PLAT_NLM)
 Bool System_WritePidFile(const char *fileName, pid_t pid);
 const char **System_GetNativeEnviron(const char **compatEnviron);
 void System_FreeNativeEnviron(const char **nativeEnviron);

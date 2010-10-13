@@ -126,7 +126,7 @@ VMToolsConfigUpgrade(GuestApp_Dict *old,
       { CONFNAME_SUSPENDSCRIPT, "powerops", CONFNAME_SUSPENDSCRIPT, CFG_STRING, NULL },
       /* guestd options. */
       { CONFNAME_MAX_WIPERSIZE, "vmsvc", CONFNAME_MAX_WIPERSIZE, CFG_INTEGER, NULL },
-      { CONFNAME_GUESTINFO_DISABLEQUERYDISKINFO, "guestinfo", CONFNAME_GUESTINFO_DISABLEQUERYDISKINFO, CFG_BOOLEAN, NULL },
+      { CONFNAME_DISABLEQUERYDISKINFO, "guestinfo", CONFNAME_DISABLEQUERYDISKINFO, CFG_BOOLEAN, NULL },
       { CONFNAME_DISABLETOOLSVERSION, "vmsvc", CONFNAME_DISABLETOOLSVERSION, CFG_BOOLEAN, NULL },
 #if defined(_WIN32)
       /* Tray options. */
@@ -172,7 +172,7 @@ VMToolsConfigUpgrade(GuestApp_Dict *old,
          break;
 
       default:
-         NOT_REACHED();
+         g_assert_not_reached();
       }
    }
 }
@@ -200,7 +200,7 @@ VMTools_GetToolsConfFile(void)
     */
    if (confPath == NULL) {
       confPath = GuestApp_GetConfPath();
-      ASSERT(confPath != NULL);
+      g_assert(confPath != NULL);
    }
    confFilePath = g_strdup_printf("%s%c%s", confPath, DIRSEPC, CONF_FILE);
    free(confPath);
@@ -327,11 +327,11 @@ VMTools_ReloadConfig(const gchar *path,
    gboolean ret = FALSE;
    GKeyFile *newConfig = NULL;
 
-   ASSERT(config != NULL);
-   ASSERT(mtime != NULL);
+   g_assert(config != NULL);
+   g_assert(mtime != NULL);
 
    if (g_stat(path, &confStat) == -1) {
-      g_debug("Failed to stat conf file: %s\n", strerror(errno));
+      g_warning("Failed to stat conf file: %s\n", strerror(errno));
       goto exit;
    }
 
@@ -394,8 +394,8 @@ VMTools_WriteConfig(const gchar *path,
    FILE *out = NULL;
    GError *lerr = NULL;
 
-   ASSERT(path != NULL);
-   ASSERT(config != NULL);
+   g_assert(path != NULL);
+   g_assert(config != NULL);
 
    localPath = VMTOOLS_GET_FILENAME_LOCAL(path, &lerr);
    if (lerr != NULL) {

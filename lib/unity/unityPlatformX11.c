@@ -116,6 +116,27 @@ static int unityX11ErrorCount = 0;
 Bool
 UnityPlatformIsSupported(void)
 {
+   Display *dpy;
+   int major;
+   int event_base;
+   int error_base;
+
+   dpy = GDK_DISPLAY();
+   /*
+    * Unity/X11 doesn't yet work with the new vmwgfx driver.  Until that is
+    * fixed, we have to disable the feature.
+    *
+    * As for detecting which driver is in use, the legacy driver provides the
+    * VMWARE_CTRL extension for resolution and topology operations, while the
+    * new driver is instead controlled via XRandR.  If we don't find said
+    * extension, then we'll assume the new driver is in use and disable Unity.
+    */
+   if (XQueryExtension(dpy, "VMWARE_CTRL", &major, &event_base, &error_base) ==
+       False) {
+      Debug("Unity is not yet supported under the vmwgfx driver.\n");
+      return FALSE;
+   }
+
    return TRUE;
 }
 
@@ -266,6 +287,7 @@ UnityPlatformInit(UnityWindowTracker *tracker,                            // IN
    INIT_ATOM(WM_PROTOCOLS);
    INIT_ATOM(WM_STATE);
    INIT_ATOM(WM_TRANSIENT_FOR);
+   INIT_ATOM(WM_WINDOW_ROLE);
 
 #  undef INIT_ATOM
 
@@ -1501,6 +1523,13 @@ UnityPlatformProcessXEvent(UnityPlatform *up,      // IN
 
          return;
       } else if (xevent->type == CreateNotify) {
+         /* Ignore decoration widgets.  They'll be reparented later. */
+         if (UnityX11Util_IsWindowDecorationWidget(up, realEventWindow)) {
+            Debug("%s: Window %#lx is a decoration widget.  Ignore it.\n",
+                  __func__, realEventWindow);
+            return;
+         }
+
          /*
           * It may be a new window that we don't know about yet. Let's create an object
           * to track it.
@@ -1525,6 +1554,11 @@ UnityPlatformProcessXEvent(UnityPlatform *up,      // IN
 
    if (upw) {
       UPWindow_ProcessEvent(up, upw, realEventWindow, xevent);
+      if (upw->deleteWhenSafe) {
+         Debug("%s: refs %u, deleteWhenSafe %u\n", __func__, upw->refs,
+               upw->deleteWhenSafe);
+         UPWindow_Unref(up, upw);
+      }
    }
 }
 
@@ -2339,21 +2373,30 @@ UnityPlatformSetDesktopWorkAreas(UnityPlatform *up,     // IN
           * XSetProperty(..._NET_WM_STRUTS_PARTIAL).  I.e., look up that
           * property's entry in NetWM/wm-spec for more info on the indices.
           *
-          * I went the switch/case route only because it does a better job (for me)
-          * of organizing & showing -all- possible cases.  YMMV.
+          * I went the switch/case route only because it does a better job
+          * (for me) of organizing & showing -all- possible cases.  YMMV.
+          *
+          * The region code treats rectanges as ranges from [x1,x2) and
+          * [y1,y2).  In other words, x2 and y2 are OUTSIDE the region.  I
+          * guess it makes calculating widths/heights easier.  However, the
+          * strut width/height dimensions are INCLUSIVE, so we'll subtract 1
+          * from the "end" (as opposed to "start") value.
+          *
+          * (Ex:  A 1600x1200 display with a 25px top strut would be marked
+          * as top = 25, top_start_x = 0, top_end_x = 1599.)
           */
          switch (bounds) {
          case TOUCHES_LEFT | TOUCHES_RIGHT | TOUCHES_TOP:
             /* Top strut. */
             strutInfos[numStrutInfos][2] = p->y2 - p->y1;
             strutInfos[numStrutInfos][8] = p->x1;
-            strutInfos[numStrutInfos][9] = p->x2;
+            strutInfos[numStrutInfos][9] = p->x2 - 1;
             break;
          case TOUCHES_LEFT | TOUCHES_RIGHT | TOUCHES_BOTTOM:
             /* Bottom strut. */
             strutInfos[numStrutInfos][3] = p->y2 - p->y1;
             strutInfos[numStrutInfos][10] = p->x1;
-            strutInfos[numStrutInfos][11] = p->x2;
+            strutInfos[numStrutInfos][11] = p->x2 - 1;
             break;
          case TOUCHES_LEFT:
          case TOUCHES_LEFT | TOUCHES_TOP:
@@ -2362,7 +2405,7 @@ UnityPlatformSetDesktopWorkAreas(UnityPlatform *up,     // IN
             /* Left strut. */
             strutInfos[numStrutInfos][0] = p->x2 - p->x1;
             strutInfos[numStrutInfos][4] = p->y1;
-            strutInfos[numStrutInfos][5] = p->y2;
+            strutInfos[numStrutInfos][5] = p->y2 - 1;
             break;
          case TOUCHES_RIGHT:
          case TOUCHES_RIGHT | TOUCHES_TOP:
@@ -2371,7 +2414,7 @@ UnityPlatformSetDesktopWorkAreas(UnityPlatform *up,     // IN
             /* Right strut. */
             strutInfos[numStrutInfos][1] = p->x2 - p->x1;
             strutInfos[numStrutInfos][6] = p->y1;
-            strutInfos[numStrutInfos][7] = p->y2;
+            strutInfos[numStrutInfos][7] = p->y2 - 1;
             break;
          case TOUCHES_LEFT | TOUCHES_RIGHT | TOUCHES_TOP | TOUCHES_BOTTOM:
             Warning("%s: Struts occupy entire display.", __func__);
@@ -2890,8 +2933,6 @@ UnityPlatformDoUpdate(UnityPlatform *up,        // IN:
    ASSERT(up);
    ASSERT(up->updateChannel);
 
-   DynBuf_SetSize(&up->updateChannel->updates, up->updateChannel->cmdSize);
-
    if (!incremental) {
       UnityPlatformUpdateWindowState(up, up->tracker);
    }
@@ -2900,11 +2941,32 @@ UnityPlatformDoUpdate(UnityPlatform *up,        // IN:
                                      incremental ? UNITY_UPDATE_INCREMENTAL : 0,
                                      &up->updateChannel->updates);
 
-   DynBuf_AppendString(&up->updateChannel->updates, "");
+   /*
+    * Notify the host iff UnityWindowTracker_RequestUpdates pushed a valid
+    * update into the UpdateChannel buffer.
+    */
+   if (DynBuf_GetSize(&up->updateChannel->updates) > (up->updateChannel->cmdSize + 2)) {
+#ifdef VMX86_DEBUG
+      const char *dataBuf = DynBuf_Get(&up->updateChannel->updates);
+      size_t dataSize = DynBuf_GetSize(&up->updateChannel->updates);
+      ASSERT(dataBuf[up->updateChannel->cmdSize] != '\0');
+      ASSERT(dataBuf[dataSize - 1] == '\0');
+#endif
 
-   if (DynBuf_GetSize(&up->updateChannel->updates) > (up->updateChannel->cmdSize + 1)) {
+      /* The update must be double nul terminated. */
+      DynBuf_AppendString(&up->updateChannel->updates, "");
+
       if (!UnitySendUpdates(up->updateChannel)) {
+         /* XXX We should probably exit Unity. */
          Debug("UPDATE TRANSMISSION FAILED! --------------------\n");
+         /*
+          * At this point, the update buffer contains a stream of updates
+          * terminated by a double nul. Rather than flush the input stream,
+          * let's "unseal" it by removing the second nul, allowing further
+          * updates to be appended and sent later.
+          */
+         DynBuf_SetSize(&up->updateChannel->updates,
+                        DynBuf_GetSize(&up->updateChannel->updates) - 1);
       }
    }
 }
@@ -3007,6 +3069,134 @@ UnityPlatformUnstickWindow(UnityPlatform *up,      // IN
                            UnityWindowId windowId) // IN
 {
    return SetWindowStickiness(up, windowId, FALSE);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UnityPlatformSetConfigDesktopColor --
+ *
+ *      Set the preferred desktop background color for use when in Unity Mode.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+UnityPlatformSetConfigDesktopColor(UnityPlatform *up, int desktopColor)
+{
+   ASSERT(up);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UnityPlatformRequestWindowContents --
+ *
+ *     Validate the list of supplied window IDs and once validated add them to a list
+ *     of windows whose contents should be sent to the host.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+UnityPlatformRequestWindowContents(UnityPlatform *up,
+                                   UnityWindowId windowIds[],
+                                   uint32 numWindowIds)
+{
+   ASSERT(up);
+
+   /* Not implemented */
+   return FALSE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UnityPlatformConfirmMinimizeOperation --
+ *
+ *     Minimize a window (if allowed) by the host.
+ *
+ * Results:
+ *     Returns TRUE if successful, and FALSE otherwise.
+ *
+ * Side effects:
+ *     None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnityPlatformConfirmMinimizeOperation(UnityPlatform *up,        // IN
+                                      UnityWindowId windowId,   // IN
+                                      uint32 sequence,          // IN
+                                      Bool allow)               // IN
+{
+   ASSERT(up);
+   return FALSE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * UnityPlatformSetInterlockMinimizeOperation --
+ *
+ *     Enable (or Disable) the interlocking (relaying) of minimize operations
+ *     through the host.
+ *
+ * Results:
+ *     None.
+ *
+ * Side effects:
+ *     None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+void UnityPlatformSetInterlockMinimizeOperation(UnityPlatform *up,   // IN
+                                                Bool enabled)        // IN
+{
+   ASSERT(up);
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnityPlatformWillRemoveWindow --
+ *
+ *    Called when a window is removed from the UnityWindowTracker.
+ *
+ *    NOTE: This function is called with the platform lock held.
+ *
+ * Results:
+ *    None.
+ *
+ * Side effects:
+ *    None.
+ *------------------------------------------------------------------------------
+ */
+
+void
+UnityPlatformWillRemoveWindow(UnityPlatform *up,      // IN
+                              UnityWindowId windowId) // IN
+{
+   ASSERT(up);
 }
 
 

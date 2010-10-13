@@ -27,11 +27,7 @@
 #include "includeCheck.h"
 
 #ifdef _WIN32
-#ifdef __MINGW32__
-#include "initguid.h"
-#else
 #include "guiddef.h"
-#endif
 #endif
 
 /* LSILogic 53C1030 Parallel SCSI controller
@@ -157,7 +153,7 @@
 #define MAX_ETHERNET_CARDS      10
 
 /************* PCI Passthrough implementation limits ********************/
-#define MAX_PCI_PASSTHRU_DEVICES 6
+#define MAX_PCI_PASSTHRU_DEVICES 2
 
 /************* USB implementation limits ********************************/
 #define MAX_USB_DEVICES_PER_HOST_CONTROLLER 127

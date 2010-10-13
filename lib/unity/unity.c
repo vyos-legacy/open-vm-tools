@@ -50,8 +50,12 @@
 #include "unityPlatform.h"
 #include "unityDebug.h"
 #include "dynxdr.h"
+#include "guestrpc/unity.h"
 #include "guestrpc/unityActive.h"
+#include "guestrpc/unity.h"
+#include "guestCaps.h"
 #include "appUtil.h"
+#include "xdrutil.h"
 #include <stdio.h>
 
 
@@ -62,6 +66,7 @@ typedef struct UnityState {
    UnityWindowTracker tracker;
    Bool forceEnable;
    Bool isEnabled;
+   uint32 currentOptions;                       // Last feature mask received via 'set.options'
    UnityVirtualDesktopArray virtDesktopArray;   // Virtual desktop configuration
    UnityUpdateChannel updateChannel;            // Unity update transmission channel.
    UnityPlatform *up; // Platform-specific state
@@ -149,7 +154,54 @@ static Bool UnityTcloSetWindowDesktop(char const **result,
                                       const char *args,
                                       size_t argsSize,
                                       void *clientData);
+static Bool UnityTcloConfirmOperation(char const **result,
+                                      size_t *resultLen,
+                                      const char *name,
+                                      const char *args,
+                                      size_t argsSize,
+                                      void *clientData);
 
+static void UnitySetAddHiddenWindows(Bool enabled);
+static void UnitySetInterlockMinimizeOperation(Bool enabled);
+static void UnitySetSendWindowContents(Bool enabled);
+
+/*
+ * Wrapper function for the "unity.set.options" RPC.
+ */
+static Bool UnityTcloSetUnityOptions(RpcInData *data);
+
+/*
+ * Wrapper function for the "unity.window.contents.request" RPC.
+ */
+static Bool UnityTcloRequestWindowContents(RpcInData *data);
+
+/* Sends the unity.window.contents.start RPC to the host. */
+Bool UnitySendWindowContentsStart(UnityWindowId window,
+                                  uint32 width,
+                                  uint32 height,
+                                  uint32 length);
+
+/* Sends the unity.window.contents.chunk RPC to the host. */
+Bool UnitySendWindowContentsChunk(UnityWindowId window,
+                                  uint32 seq,
+                                  const char *data,
+                                  uint32 length);
+
+/* Sends the unity.window.contents.end RPC to the host. */
+Bool UnitySendWindowContentsEnd(UnityWindowId window);
+
+/*
+ * Callback function used by UnityXdrSendRpc() to encode XDR-serialized
+ * arguments.
+ */
+typedef Bool(*UnityXdrEncodeFunc)(XDR*,void*);
+
+/*
+ * Helper function used to send an RPC to the host with XDR-serialized
+ * arguments. Calls encodeFn on the XDR* and the provied arg to perform
+ * XDR encoding.
+ */
+Bool UnityXdrSendRpc(const char *rpcName, UnityXdrEncodeFunc encodeFn, void *arg);
 
 /*
  * Dispatch table for Unity window commands. All commands performing actions on
@@ -173,6 +225,23 @@ static UnityCommandElem unityCommandTable[] = {
    { UNITY_RPC_WINDOW_UNSTICK, UnityPlatformUnstickWindow },
    /* Add more commands and handlers above this. */
    { NULL, NULL }
+};
+
+typedef struct {
+   uint32 featureBit;
+   void (*setter)(Bool enabled);
+} UnityFeatureSetter;
+
+/*
+ * Dispatch table for each unity option and a specific function to handle enabling
+ * or disabling the option. The function is called with an enable (TRUE) bool value.
+ */
+static UnityFeatureSetter unityFeatureTable[] = {
+   { UNITY_ADD_HIDDEN_WINDOWS_TO_TRACKER, UnitySetAddHiddenWindows },
+   { UNITY_INTERLOCK_MINIMIZE_OPERATION, UnitySetInterlockMinimizeOperation },
+   { UNITY_SEND_WINDOW_CONTENTS, UnitySetSendWindowContents },
+   /* Add more Unity Feature Setters above this. */
+   {0, NULL}
 };
 
 /*
@@ -263,6 +332,13 @@ Unity_Init(GuestApp_Dict *conf,                                    // IN
            int *blockedWnd,                                        // IN
            DesktopSwitchCallbackManager *desktopSwitchCallbackMgr) // IN
 {
+   /*
+    * If no preferred color is in the config file then use a light gray tone,
+    * the value is stored as xBGR.
+    */
+   int desktopColor =  /* red */ 0xdc |
+                       /* green */ 0xdc << 8 |
+                       /* blue */ 0xdc << 16;
    Debug("Unity_Init\n");
 
    /*
@@ -312,6 +388,8 @@ Unity_Init(GuestApp_Dict *conf,                                    // IN
    unity.forceEnable = GuestApp_GetDictEntryBool(conf, "unity.forceEnable");
    unity.isEnabled = FALSE;
 
+   GuestApp_GetDictEntryInt(conf, "unity.desktop.backgroundColor", &desktopColor);
+   UnityPlatformSetConfigDesktopColor(unity.up, desktopColor);
    unity.virtDesktopArray.desktopCount = 0;
 }
 
@@ -411,6 +489,14 @@ Unity_InitBackdoor(struct RpcIn *rpcIn)   // IN
                              UnityTcloSetDesktopActive, NULL);
       RpcIn_RegisterCallback(rpcIn, UNITY_RPC_WINDOW_DESKTOP_SET,
                              UnityTcloSetWindowDesktop, NULL);
+      RpcIn_RegisterCallback(rpcIn, UNITY_RPC_CONFIRM_OPERATION,
+                             UnityTcloConfirmOperation, NULL);
+
+      RpcIn_RegisterCallbackEx(rpcIn, UNITY_RPC_SET_OPTIONS,
+                               UnityTcloSetUnityOptions, NULL);
+
+      RpcIn_RegisterCallbackEx(rpcIn, UNITY_RPC_WINDOW_CONTENTS_REQUEST,
+                               UnityTcloRequestWindowContents, NULL);
 
       /*
        * Handle all of the UnityTcloWindowCommand RPCs at once.
@@ -484,7 +570,21 @@ Unity_SetActiveDnDDetWnd(UnityDnD *state)
 void
 Unity_Exit(void)
 {
+   int featureIndex = 0;
+
    if (unity.isEnabled) {
+      /*
+       * Reset any Unity Options - they'll be re-enabled as required before the
+       * next UnityTcloEnter.
+       */
+      while (unityFeatureTable[featureIndex].featureBit != 0) {
+         if (unity.currentOptions & unityFeatureTable[featureIndex].featureBit) {
+            unityFeatureTable[featureIndex].setter(FALSE);
+         }
+         featureIndex++;
+      }
+      unity.currentOptions = 0;
+
       /* Hide full-screen detection window for Unity DnD. */
       UnityPlatformUpdateDnDDetWnd(unity.up, FALSE);
 
@@ -901,6 +1001,12 @@ UnityTcloSetDesktopWorkArea(char const **result,  // IN
                           FALSE);
          goto out;
       }
+
+      if (workAreas[i].x < 0 || workAreas[i].y < 0 ||
+          workAreas[i].width <= 0 || workAreas[i].height <= 0) {
+         RpcIn_SetRetVals(result, resultLen, "Invalid argument", FALSE);
+         goto out;
+      }
    }
 
    if (!UnityPlatformSetDesktopWorkAreas(unity.up, workAreas, count)) {
@@ -1047,6 +1153,67 @@ UnityTcloGetUpdate(char const **result,     // OUT
 /*
  *----------------------------------------------------------------------------
  *
+ * UnityTcloConfirmOperation --
+ *
+ *     RPC handler for 'unity.operation.confirm'.
+ *
+ * Results:
+ *     TRUE if the confirmation could be handled sucessfully.
+ *     FALSE otherwise.
+ *
+ * Side effects:
+ *     None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static Bool
+UnityTcloConfirmOperation(char const **result,     // OUT
+                          size_t *resultLen,       // OUT
+                          const char *name,        // IN
+                          const char *args,        // IN
+                          size_t argsSize,         // IN
+                          void *clientData)        // ignored
+{
+   UnityConfirmOperation unityConfirmOpMsg = {0};
+   UnityConfirmOperationV1 *confirmV1 = NULL;
+   Bool retVal = FALSE;
+   unsigned int ret;
+   Debug("%s: Enter.\n", __FUNCTION__);
+
+   /*
+    * Deserialize the XDR data. Note that the data begins with args + 1 since
+    * there is a space between the RPC name and the XDR serialization.
+    */
+   if (!XdrUtil_Deserialize((char *)args + 1, argsSize - 1,
+                            xdr_UnityConfirmOperation, &unityConfirmOpMsg)) {
+      ret = RpcIn_SetRetVals(result, resultLen, "Failed to deserialize data", FALSE);
+      goto exit;
+   }
+
+   confirmV1 = unityConfirmOpMsg.UnityConfirmOperation_u.unityConfirmOpV1;
+   if (MINIMIZE == confirmV1->details.op) {
+      retVal = UnityPlatformConfirmMinimizeOperation(unity.up,
+                                                     confirmV1->windowId,
+                                                     confirmV1->sequence,
+                                                     confirmV1->allow);
+   } else {
+      Debug("%s: Confirmation for unknown operation ID = %d\n", __FUNCTION__,
+            confirmV1->details.op);
+   }
+   /* Free any memory allocated by XDR - we're done with unityConfirmOpMsg */
+   VMX_XDR_FREE(xdr_UnityConfirmOperation, &unityConfirmOpMsg);
+   ret = RpcIn_SetRetVals(result, resultLen, "", retVal);
+
+exit:
+   Debug("%s: Exit.\n", __FUNCTION__);
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
  * UnityGetUpdateCommon --
  *
  *     Get the unity window update and append it to the specified output buffer.
@@ -1167,6 +1334,12 @@ UnityUpdateCallbackFn(void *param,          // IN: dynbuf
       break;
 
    case UNITY_UPDATE_REMOVE_WINDOW:
+      /*
+       * Let the platform know that this window has been removed. This is
+       * useful on platforms that must poll for window changes.
+       */
+      UnityPlatformWillRemoveWindow(unity.up, update->u.removeWindow.id);
+
       Str_Sprintf(data, sizeof data, "remove %u", update->u.removeWindow.id);
       DynBuf_AppendString(buf, data);
       break;
@@ -1298,6 +1471,7 @@ UnityUpdateChannelInit(UnityUpdateChannel *updateChannel) // IN
 
    /* Exclude the null. */
    updateChannel->cmdSize = DynBuf_GetSize(&updateChannel->updates) - 1;
+   DynBuf_SetSize(&updateChannel->updates, updateChannel->cmdSize);
 
    updateChannel->rpcOut = RpcOut_Construct();
    if (updateChannel->rpcOut == NULL) {
@@ -1453,6 +1627,12 @@ retry_send:
       }
    }
 
+   /*
+    * With the update queue sent, purge the DynBuf by trimming it to the length
+    * of the command preamble.
+    */
+   DynBuf_SetSize(&updateChannel->updates, updateChannel->cmdSize);
+
    return TRUE;
 }
 
@@ -1486,6 +1666,8 @@ UnityTcloGetWindowContents(char const **result,     // OUT
    unsigned int window;
    unsigned int index = 0;
    DynBuf *imageData = &gTcloUpdate;
+   uint32 width;
+   uint32 height;
 
    Debug("UnityTcloGetWindowContents: name:%s args:'%s'\n", name, args);
 
@@ -1506,7 +1688,7 @@ UnityTcloGetWindowContents(char const **result,     // OUT
     * send the .png back to the vmx as the RPC result.
     */
    DynBuf_SetSize(imageData, 0);
-   if (!UnityPlatformGetWindowContents(unity.up, window, imageData)) {
+   if (!UnityPlatformGetWindowContents(unity.up, window, imageData, &width, &height)) {
       return RpcIn_SetRetVals(result, resultLen,
                               "failed: Could not read window contents",
                               FALSE);
@@ -1967,6 +2149,163 @@ error:
 /*
  *----------------------------------------------------------------------------
  *
+ * UnityTcloSetUnityOptions --
+ *
+ *     Set the Unity options - must be be called before entering Unity mode.
+ *
+ * Results:
+ *     TRUE if RPC was succesfully handled.
+ *     FALSE otherwise.
+ *
+ * Side effects:
+ *     None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+UnityTcloSetUnityOptions(RpcInData *data)
+{
+   Bool ret = TRUE;
+   UnityOptions optionsMsg;
+   int featureIndex = 0;
+   uint32 featuresChanged;
+
+   memset(&optionsMsg, 0, sizeof optionsMsg);
+
+   /* Check our arguments. */
+   ASSERT(data);
+   ASSERT(data->name);
+   ASSERT(data->args);
+
+   if (!(data && data->name && data->args)) {
+      Debug("%s: Invalid arguments.\n", __FUNCTION__);
+      ret = RPCIN_SETRETVALS(data, "Invalid arguments.", FALSE);
+      goto exit;
+   }
+
+   Debug("%s: Got RPC, name: \"%s\", argument length: %"FMTSZ"u.\n",
+         __FUNCTION__, data->name, data->argsSize);
+
+   /*
+    * Deserialize the XDR data. Note that the data begins with args + 1 since
+    * there is a space between the RPC name and the XDR serialization.
+    */
+   if (!XdrUtil_Deserialize((char *)data->args + 1, data->argsSize - 1,
+                            xdr_UnityOptions, &optionsMsg)) {
+      Debug("%s: Failed to deserialize data\n", __FUNCTION__);
+      ret = RPCIN_SETRETVALS(data, "Failed to deserialize data.", FALSE);
+      goto exit;
+   }
+
+   /*
+    * For each potential feature bit XOR the current mask with the newly
+    * specified set, then if the bit has changed call the specific setter
+    * function with TRUE/FALSE according to the new state of the bit.
+    */
+   featuresChanged = optionsMsg.UnityOptions_u.unityOptionsV1->featureMask ^
+                     unity.currentOptions;
+   while (unityFeatureTable[featureIndex].featureBit != 0) {
+      if (featuresChanged & unityFeatureTable[featureIndex].featureBit) {
+         unityFeatureTable[featureIndex].setter(
+            (optionsMsg.UnityOptions_u.unityOptionsV1->featureMask &
+            unityFeatureTable[featureIndex].featureBit) != 0);
+      }
+      featureIndex++;
+   }
+
+   unity.currentOptions = optionsMsg.UnityOptions_u.unityOptionsV1->featureMask;
+
+   ret = RPCIN_SETRETVALS(data,
+                          "",
+                          TRUE);
+exit:
+   VMX_XDR_FREE(xdr_UnityOptions, &optionsMsg);
+
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * UnityTcloRequestWindowContents --
+ *
+ *     Request the window contents for a set of windows.
+ *
+ * Results:
+ *     TRUE if all the window IDs are valid.
+ *     FALSE otherwise.
+ *
+ * Side effects:
+ *     None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+UnityTcloRequestWindowContents(RpcInData *data)    // IN
+{
+   Bool ret = TRUE;
+   UnityWindowContentsRequest requestMsg;
+   UnityWindowContentsRequestV1 *requestV1 = NULL;
+   memset(&requestMsg, 0, sizeof requestMsg);
+
+   /* Check our arguments. */
+   ASSERT(data);
+   ASSERT(data->name);
+   ASSERT(data->args);
+
+   if (!(data && data->name && data->args)) {
+      Debug("%s: Invalid arguments.\n", __FUNCTION__);
+      ret = RPCIN_SETRETVALS(data, "Invalid arguments.", FALSE);
+      goto exit;
+   }
+
+   Debug("%s: Got RPC, name: \"%s\", argument length: %"FMTSZ"u.\n",
+         __FUNCTION__, data->name, data->argsSize);
+
+   /*
+    * Deserialize the XDR data. Note that the data begins with args + 1 since
+    * there is a space between the RPC name and the XDR serialization.
+    */
+   if (!XdrUtil_Deserialize((char *)data->args + 1, data->argsSize - 1,
+                            xdr_UnityWindowContentsRequest, &requestMsg)) {
+      Debug("%s: Failed to deserialize data\n", __FUNCTION__);
+      ret = RPCIN_SETRETVALS(data, "Failed to deserialize data.", FALSE);
+      goto exit;
+   }
+
+   if (requestMsg.ver != UNITY_WINDOW_CONTENTS_V1) {
+      Debug("%s: Unexpected XDR version = %d\n", __FUNCTION__, requestMsg.ver);
+      goto exit;
+   }
+
+   requestV1 = requestMsg.UnityWindowContentsRequest_u.requestV1;
+
+   /*
+    * Call the platform implementation of the RPC handler.
+    */
+   if (!UnityPlatformRequestWindowContents(unity.up,
+                                           requestV1->windowID.windowID_val,
+                                           requestV1->windowID.windowID_len)) {
+      ret = RPCIN_SETRETVALS(data, "Invalid list of windows.", FALSE);
+      goto exit;
+   }
+
+   ret = RPCIN_SETRETVALS(data,
+                          "",
+                          TRUE);
+exit:
+   VMX_XDR_FREE(xdr_UnityWindowContentsRequest, &requestMsg);
+
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
  * UnityUpdateState --
  *
  *     Communicate unity state changes to vmx.
@@ -2017,5 +2356,535 @@ UnityUpdateState(void)
 out:
    free(val);
    DynXdr_Destroy(&xdrs, TRUE);
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * UnityXdrRequestOperation --
+ *
+ *    XDR encoder function for UnityRequestOperation.
+ *
+ *    See UnityXdrSendRpc().
+ *
+ * Results:
+ *    Returns true if the XDR struct was encoded successfully.
+ *
+ * Side-effects:
+ *    None.
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnityXdrRequestOperation(XDR *xdrs,    // IN
+                         void *arg)    // IN
+{
+   ASSERT(xdrs);
+   ASSERT(arg);
+   return xdr_UnityRequestOperation(xdrs, (UnityRequestOperation *) arg);
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnitySendRequestMinimizeOperation --
+ *
+ *     Send a request for a minimize operation to the host.
+ *
+ * Results:
+ *     TRUE if everything is successful.
+ *     FALSE otherwise.
+ *
+ * Side effects:
+ *     None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+UnitySendRequestMinimizeOperation(UnityWindowId windowId,   // IN
+                                  uint32 sequence)          // IN
+{
+   Bool ret = FALSE;
+   UnityRequestOperation msg = { 0 };
+   UnityRequestOperationV1 v1 = { 0 };
+
+   Debug("%s: Enter.\n", __FUNCTION__);
+
+   v1.windowId = windowId;
+   v1.sequence = sequence;
+   v1.details.op = MINIMIZE;
+
+   msg.ver = UNITY_OP_V1;
+   msg.UnityRequestOperation_u.unityRequestOpV1 = &v1;
+
+   ret = UnityXdrSendRpc(UNITY_RPC_REQUEST_OPERATION,
+                         &UnityXdrRequestOperation,
+                         &msg);
+
+   Debug("%s: Exit.\n", __FUNCTION__);
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * UnitySendWindowContents --
+ *
+ *     Sends the content of a window to the host, as a PNG encoded image. If the
+ *     image is larger than the maximum size of a GuestMsg, this function breaks
+ *     the image down into a number of chunks, then transfers each of the chunks
+ *     independently. See guest_msg_def.h and unity.x.
+ *
+ * Results:
+ *     Returns true if the image was transferred successfully.
+ *
+ * Side effects:
+ *     None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnitySendWindowContents(UnityWindowId windowID, // IN
+                        uint32 imageWidth,      // IN
+                        uint32 imageHeight,     // IN
+                        const char *imageData,  // IN
+                        uint32 imageLength)     // IN
+{
+   Bool ret = FALSE;
+   uint32 count = 0;                /* count of chunks sent */
+   uint32 len = 0;                  /* length of the next chunk */
+   const char *readptr = imageData; /* pointer to start of next chunk in imageData */
+
+   ASSERT(imageWidth > 0);
+   ASSERT(imageHeight > 0);
+   ASSERT(imageLength > 0);
+   ASSERT(imageData);
+
+   Debug("%s: Enter.\n", __FUNCTION__);
+   Debug("%s: Sending contents of window 0x%x.\n", __FUNCTION__, windowID);
+   Debug("%s: Contents are (%u x %u) image, %u bytes.\n", __FUNCTION__,
+         imageWidth, imageHeight, imageLength);
+
+   /* Send the unity.window.contents.start RPC to the host. */
+   if (!UnitySendWindowContentsStart(windowID,
+                                     imageWidth,
+                                     imageHeight,
+                                     imageLength)) {
+      goto exit;
+   }
+
+   /* Send the image data. */
+   while (imageLength > 0) {
+      /*
+       * Get the length of the next chunk to send, up to a maximum of
+       * UNITY_WINDOW_CONTENTS_MAX_CHUNK_SIZE bytes.
+       */
+      len = MIN(UNITY_WINDOW_CONTENTS_MAX_CHUNK_SIZE, imageLength);
+
+      Debug("%s: Sending chunk %u at offset 0x%p, size %u.\n", __FUNCTION__,
+            count, readptr, len);
+
+      /* Send the next chunk to the host. */
+      if (!UnitySendWindowContentsChunk(windowID, count, readptr, len)) {
+         goto exit;
+      }
+
+      count++;
+      readptr += len;
+      imageLength -= len;
+   }
+
+   /* Send the unity.window.contents.end RPC to the host. */
+   if (!UnitySendWindowContentsEnd(windowID)) {
+      goto exit;
+   }
+
+   ret = TRUE;
+
+exit:
+   return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * UnitySetAddHiddenWindows --
+ *
+ *     Set (or unset) whether hidden windows should be added to the tracker.
+ *
+ * Results:
+ *     None.
+ *
+ * Side effects:
+ *     None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+void
+UnitySetAddHiddenWindows(Bool enabled)
+{
+   /*
+    * Should we add hidden windows to the tracker (the host will use the trackers
+    * attribute field to display hidden windows in the appropriate manner.)
+    */
+   if (enabled) {
+      Debug("%s: Adding hidden windows to tracker\n", __FUNCTION__);
+   } else {
+      Debug("%s: Do not add hidden windows to tracker\n", __FUNCTION__);
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * UnitySetInterlockMinimizeOperation --
+ *
+ *     Set (or unset) whether window operations should be denied/delayed and
+ *     relayed to the host for later confirmation.
+ *
+ * Results:
+ *     None.
+ *
+ * Side effects:
+ *     None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+void
+UnitySetInterlockMinimizeOperation(Bool enabled)
+{
+   /*
+    * Should we interlock operations through the host. For example: instead of
+    * allowing minimize to occur immediately in the guest should we prevent the
+    * minimize of a window in the guest, then relay the minimize to the host and wait
+    * for the hosts confirmation before actually minimizing the window in the guest.
+    */
+   if (enabled) {
+      Debug("%s: Interlocking minimize operations through the host\n",
+            __FUNCTION__);
+   } else {
+      Debug("%s: Do not interlock minimize operations through the host\n",
+            __FUNCTION__);
+   }
+   UnityPlatformSetInterlockMinimizeOperation(unity.up, enabled);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * UnitySetSendWindowContents --
+ *
+ *     Set (or unset) whether window contents should be sent to the host.
+ *
+ * Results:
+ *     None.
+ *
+ * Side effects:
+ *     None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+void
+UnitySetSendWindowContents(Bool enabled)
+{
+   /*
+    * Is the host prepared to receive scraped window contents at any time - even though
+    * it may not have previously requested the window contents. Explicit requests from
+    * the host will always be honored - this flag determines whether the guest will send
+    * the window contents directly after a qualifying operation (like changes in the
+    * z-order of a window).
+    */
+   if (enabled) {
+      Debug("%s: Sending window contents to the host on appropriate events\n",
+            __FUNCTION__);
+   } else {
+      Debug("%s: Do not send window contents to the host on appropriate events\n",
+            __FUNCTION__);
+   }
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnityXdrEncodeWindowContentsStart --
+ *
+ *    XDR encoder function for UnityWindowContentsStart.
+ *
+ *    See UnityXdrSendRpc().
+ *
+ * Results:
+ *    Returns true if the XDR struct was encoded successfully.
+ *
+ * Side effects:
+ *    None.
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnityXdrEncodeWindowContentsStart(XDR *xdrs,
+                                  void *arg)
+{
+   ASSERT(xdrs);
+   ASSERT(arg);
+   return xdr_UnityWindowContentsStart(xdrs, (UnityWindowContentsStart *) arg);
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnitySendWindowContentsStart --
+ *
+ *    Sends the unity.window.contents.start RPC to the host.
+ *
+ * Results:
+ *    Returns true if the RPC was sent successfully.
+ *
+ * Side effects:
+ *    None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnitySendWindowContentsStart(UnityWindowId windowID, // IN
+                             uint32 imageWidth,      // IN
+                             uint32 imageHeight,     // IN
+                             uint32 imageLength)     // IN
+{
+   Bool ret = FALSE;
+   UnityWindowContentsStart msg = { 0 };
+   UnityWindowContentsStartV1 v1 = { 0 };
+
+   Debug("%s: Enter.\n", __FUNCTION__);
+
+   v1.windowID = windowID;
+   v1.imageWidth  = imageWidth;
+   v1.imageHeight = imageHeight;
+   v1.imageLength = imageLength;
+
+   msg.ver = UNITY_WINDOW_CONTENTS_V1;
+   msg.UnityWindowContentsStart_u.startV1 = &v1;
+
+   ret = UnityXdrSendRpc(UNITY_RPC_WINDOW_CONTENTS_START,
+                         &UnityXdrEncodeWindowContentsStart,
+                         &msg);
+
+   Debug("%s: Exit.\n", __FUNCTION__);
+   return ret;
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnityXdrEncodeWindowContentsChunk --
+ *
+ *    XDR encoder function for UnityWindowContentsChunk.
+ *
+ *    See UnityXdrSendRpc().
+ *
+ * Results:
+ *    Returns true if the XDR struct was encoded successfully.
+ *
+ * Side-effects:
+ *    None.
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnityXdrEncodeWindowContentsChunk(XDR *xdrs,
+                                  void *arg)
+{
+   ASSERT(xdrs);
+   ASSERT(arg);
+   return xdr_UnityWindowContentsChunk(xdrs, (UnityWindowContentsChunk *) arg);
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnitySendWindowContentsChunk --
+ *
+ *    Sends a unity.window.contents.chunk RPC to the host.
+ *
+ * Results:
+ *    Returns true if the RPC was sent successfully.
+ *
+ * Side effects:
+ *    None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnitySendWindowContentsChunk(UnityWindowId windowID,
+                             uint32 chunkID,
+                             const char *data,
+                             uint32 len)
+{
+   Bool ret = FALSE;
+   UnityWindowContentsChunk msg = { 0 };
+   UnityWindowContentsChunkV1 v1 = { 0 };
+
+   Debug("%s: Enter.\n", __FUNCTION__);
+
+   v1.windowID = windowID;
+   v1.chunkID = chunkID;
+   v1.data.data_val = (char *) data;
+   v1.data.data_len = len;
+
+   msg.ver = UNITY_WINDOW_CONTENTS_V1;
+   msg.UnityWindowContentsChunk_u.chunkV1 = &v1;
+
+   ret = UnityXdrSendRpc(UNITY_RPC_WINDOW_CONTENTS_CHUNK,
+                         &UnityXdrEncodeWindowContentsChunk,
+                         &msg);
+
+   Debug("%s: Exit.\n", __FUNCTION__);
+   return ret;
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnityXdrEncodeWindowContentsEnd --
+ *
+ *    XDR encoder function for UnityWindowContentsEnd.
+ *
+ * Results:
+ *    Returns true if the XDR struct was encoded successfully.
+ *
+ * Side effects:
+ *    None.
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnityXdrEncodeWindowContentsEnd(XDR *xdrs,
+                                void *arg)
+{
+   ASSERT(xdrs);
+   ASSERT(arg);
+   return xdr_UnityWindowContentsEnd(xdrs, (UnityWindowContentsEnd*) arg);
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnitySendWindowContentsEnd --
+ *
+ *    Sends a unity.window.contents.end RPC to the host.
+ *
+ * Results:
+ *    Returns true if the RPC was sent successfully.
+ *
+ * Side effects:
+ *    None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnitySendWindowContentsEnd(UnityWindowId windowID)
+{
+   Bool ret = FALSE;
+   UnityWindowContentsEnd msg = { 0 };
+   UnityWindowContentsEndV1 v1 = { 0 };
+
+   Debug("%s: Enter.\n", __FUNCTION__);
+
+   v1.windowID = windowID;
+
+   msg.ver = UNITY_WINDOW_CONTENTS_V1;
+   msg.UnityWindowContentsEnd_u.endV1 = &v1;
+
+   ret = UnityXdrSendRpc(UNITY_RPC_WINDOW_CONTENTS_END,
+                         &UnityXdrEncodeWindowContentsEnd,
+                         &msg);
+
+   Debug("%s: Exit.\n", __FUNCTION__);
+   return ret;
+}
+
+
+/*
+ *------------------------------------------------------------------------------
+ *
+ * UnityXdrSendRpc --
+ *
+ *    Sends an RPC with XDR-serialized arguments to the host. The provided
+ *    encodeFn will be called to perform XDR encoding of the RPC, with the XDR
+ *    struct and the provided data pointer as its parameters.
+ *
+ * Returns:
+ *    True if the RPC was sent successfully.
+ *
+ * Side effects:
+ *    None.
+ *
+ *------------------------------------------------------------------------------
+ */
+
+Bool
+UnityXdrSendRpc(const char *rpcName,
+                UnityXdrEncodeFunc encodeFn,
+                void *data)
+{
+   Bool ret = FALSE;
+   XDR xdrs = { 0 };
+
+   ASSERT(rpcName);
+
+   Debug("%s: Enter.\n", __FUNCTION__);
+
+   if (!DynXdr_Create(&xdrs)) {
+      Debug("%s: Failed to create DynXdr.\n", __FUNCTION__);
+      goto exit;
+   }
+
+   if (!DynXdr_AppendRaw(&xdrs, rpcName, strlen(rpcName))) {
+      Debug("%s: Failed to append RPC name to DynXdr.\n", __FUNCTION__);
+      goto dynxdr_destroy;
+   }
+
+   if (!DynXdr_AppendRaw(&xdrs, " ", 1)) {
+      Debug("%s: Failed to append space to DynXdr.\n", __FUNCTION__);
+      goto dynxdr_destroy;
+   }
+
+   if (!(*encodeFn)(&xdrs, data)) {
+      Debug("%s: Failed to serialize RPC data.\n", __FUNCTION__);
+      goto dynxdr_destroy;
+   }
+
+   if (!RpcOut_SendOneRaw(DynXdr_Get(&xdrs), xdr_getpos(&xdrs), NULL, NULL)) {
+      Debug("%s: Failed to send RPC.\n", __FUNCTION__);
+      goto dynxdr_destroy;
+   }
+
+   ret = TRUE;
+
+dynxdr_destroy:
+   DynXdr_Destroy(&xdrs, TRUE);
+
+exit:
+   Debug("%s: Exit.\n", __FUNCTION__);
    return ret;
 }

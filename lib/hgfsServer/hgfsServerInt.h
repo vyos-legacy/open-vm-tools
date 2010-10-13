@@ -193,14 +193,6 @@ typedef struct HgfsFileNode {
    /* File flags - see below. */
    uint32 flags;
 
-   /*
-    * Context as required by some file operations. Eg: BackupWrite on
-    * Windows: BackupWrite requires the caller to hold on to a pointer
-    * to a Windows internal data structure between subsequent calls to
-    * BackupWrite while restoring a file.
-    */
-   void *fileCtx;
-
    /* Parameters associated with the share. */
    HgfsShareInfo shareInfo;
 } HgfsFileNode;
@@ -569,11 +561,6 @@ HgfsServerServerLockChange(char const *packetIn,       // IN: incoming packet
                            size_t packetSize,          // IN: size of packet
                            HgfsSessionInfo *session);  // IN: opaque transport data
 
-HgfsInternalStatus
-HgfsServerWriteWin32Stream(char const *packetIn,       // IN: incoming packet
-                           size_t packetSize,          // IN: size of packet
-                           HgfsSessionInfo *session);  // IN: opaque transport data
-
 /* Unpack/pack requests/reply helper functions. */
 
 Bool
@@ -685,21 +672,6 @@ HgfsPackCreateDirReply(char const *packetIn,      // IN: incoming packet
                        char **packetOut,          // OUT: outgoing packet
                        size_t *packetSize);       // OUT: size of packet
 
-Bool
-HgfsUnpackWriteWin32StreamRequest(char const *packetIn, // IN: incoming packet
-				  size_t packetSize,    // IN: size of packet
-				  HgfsHandle *file,     // OUT: file to write to
-				  char **payload,       // OUT: data to write
-				  size_t *requiredSize, // OUT: size of data
-				  Bool *doSecurity);    // OUT: restore sec.str.
-
-Bool
-HgfsPackWriteWin32StreamReply(char const *packetIn,      // IN: incoming packet
-			      HgfsInternalStatus status, // IN: reply status
-			      uint32 actualSize,         // IN: amount written
-			      char **packetOut,          // OUT: outgoing packet
-			      size_t *packetSize);       // OUT: size of packet
-
 /* Node cache functions. */
 
 Bool
@@ -720,8 +692,7 @@ HgfsIsServerLockAllowed(HgfsSessionInfo *session);  // IN: session info
 Bool
 HgfsHandle2FileDesc(HgfsHandle handle,        // IN: Hgfs file handle
                     HgfsSessionInfo *session, // IN: session info
-                    fileDesc *fd,             // OUT: OS handle (file descriptor)
-                    void **fileCtx);          // OUT: OS file context
+                    fileDesc *fd);            // OUT: OS handle (file descriptor)
 
 Bool
 HgfsFileDesc2Handle(fileDesc fd,              // IN: OS handle (file descriptor)
@@ -763,8 +734,7 @@ HgfsHandle2ServerLock(HgfsHandle handle,        // IN: Hgfs file handle
 Bool
 HgfsUpdateNodeFileDesc(HgfsHandle handle,        // IN: Hgfs file handle
                        HgfsSessionInfo *session, // IN: session info
-                       fileDesc fd,              // IN: OS handle (file desc
-                       void *fileCtx);           // IN: OS file context
+                       fileDesc fd);             // OUT: OS handle (file desc
 
 Bool
 HgfsUpdateNodeServerLock(fileDesc fd,                // IN: OS handle
@@ -803,8 +773,7 @@ HgfsGetSearchCopy(HgfsHandle handle,        // IN: Hgfs search handle
                   HgfsSearch *copy);        // IN/OUT: Copy of the search
 
 HgfsInternalStatus
-HgfsCloseFile(fileDesc fileDesc,            // IN: OS handle of the file
-              void *fileCtx);               // IN: file context
+HgfsCloseFile(fileDesc fileDesc);           // IN: OS handle of the file
 
 Bool
 HgfsServerGetOpenMode(HgfsFileOpenInfo *openInfo, // IN:  Open info to examine

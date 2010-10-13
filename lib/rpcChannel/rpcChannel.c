@@ -23,7 +23,6 @@
  */
 
 #include <string.h>
-#include "vm_assert.h"
 #include "dynxdr.h"
 #include "rpcChannelInt.h"
 #include "str.h"
@@ -349,7 +348,7 @@ RpcChannel_Dispatch(RpcInData *data)
       status = rpc->callback(data);
    }
 
-   ASSERT(data->result != NULL);
+   g_assert(data->result != NULL);
 
 exit:
    data->name = NULL;
@@ -482,9 +481,9 @@ void
 RpcChannel_RegisterCallback(RpcChannel *chan,
                             RpcChannelCallback *rpc)
 {
-   ASSERT(rpc->name != NULL && strlen(rpc->name) > 0);
-   ASSERT(rpc->callback);
-   ASSERT(rpc->xdrIn == NULL || rpc->xdrInSize > 0);
+   g_assert(rpc->name != NULL && strlen(rpc->name) > 0);
+   g_assert(rpc->callback);
+   g_assert(rpc->xdrIn == NULL || rpc->xdrInSize > 0);
    if (chan->rpcs == NULL) {
       chan->rpcs = g_hash_table_new(g_str_hash, g_str_equal);
    }

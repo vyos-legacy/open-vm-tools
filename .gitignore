@@ -79,3 +79,4 @@ ncscope.*
 *.rej
 *~
 *#
+autom4te.cache

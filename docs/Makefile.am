@@ -20,3 +20,4 @@ SUBDIRS =
 if HAVE_DOXYGEN
 SUBDIRS += api
 endif
+

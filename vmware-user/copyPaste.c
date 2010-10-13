@@ -67,6 +67,7 @@
 #include "debug.h"
 #include "str.h"
 #include "strutil.h"
+#include "vm_app.h"
 #include "eventManager.h"
 #include "guestApp.h"
 #include "dnd.h"
@@ -80,7 +81,7 @@
 #include "escape.h"
 #include "hostinfo.h"
 #include "wiper.h"
-#include "vmware/guestrpc/tclodefs.h"
+
 
 /*
  * Gtk 1.2 doesn't know about the CLIPBOARD selection, but that doesn't matter, we

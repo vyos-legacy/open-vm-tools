@@ -767,7 +767,7 @@ ProcessCreationTime(pid_t pid)
    if (err == 0) {
       uint32 i;
       char   *p;
-      char   *last;
+      char   *last = NULL;
 
       /*
        * You are in a maze of twisty little fields, (virtually) all alike...

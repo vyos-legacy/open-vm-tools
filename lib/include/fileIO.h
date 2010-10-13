@@ -169,20 +169,27 @@ typedef enum {
  * Flag the file as not to be backed up by Time Machine on Mac OS X.
  */
 #define FILEIO_OPEN_NO_TIME_MACHINE      (1 << 15)
-
 /*
- * Flag passed to open() to not attempt to get the lun attributes as part of
- * the open operation. Applicable only to opening of SCSI devices. This
- * definition must match the definition of USEROBJ_OPEN_NOATTR in
- * user_vsiTypes.h and FS_OPEN_NOATTR in fs_public.h
+ * Valid only for MacOS. It eventually results into O_EXLOCK flag passed to open
+ * system call.
+ *
+ * O_EXLOCK, O_SHLOCK behavior is tested on Mac OS X Server 10.6, kernel 10.0.0.
+ *
+ * |                      | Block devices      | Regular files
+ * |----------------------|--------------------|----------------
+ * | Locking behavior     | mandatory          | advisory
+ * |                      |                    |
+ * | If O_NONBLOCK absent | open doesn't block | open blocks
+ * |                      | on conflicts       | on conflicts
  */
-#define O_NOATTR 0x04000000
-// Flag passed to open() to get multiwriter VMFS lock.  This definition must
-// match USEROBJ_OPEN_MULTIWRITER_LOCK in user_vsiTypes.h.
-#define O_MULTIWRITER_LOCK 0x08000000
+#define FILEIO_OPEN_EXCLUSIVE_LOCK_MACOS (1 << 16)
+
 // Flag passed to open() to get exclusive VMFS lock.  This definition must
 // match USEROBJ_OPEN_EXCLUSIVE_LOCK in user_vsiTypes.h.
 #define O_EXCLUSIVE_LOCK 0x10000000
+// Flag passed to open() to get multiwriter VMFS lock.  This definition must
+// match USEROBJ_OPEN_MULTIWRITER_LOCK in user_vsiTypes.h.
+#define O_MULTIWRITER_LOCK 0x08000000
 
 /* File Access check args */
 #define FILEIO_ACCESS_READ       (1 << 0)
@@ -423,7 +430,5 @@ EXTERN Bool FileIO_ResetExcludedFromTimeMachine(char const *pathName);
 EXTERN Bool FileIO_SetExcludedFromTimeMachine(char const *pathName,
                                               Bool isExcluded);
 #endif
-
-Bool FileIO_SupportsPrealloc(const char *pathName, Bool fsCheck);
 
 #endif // _FILEIO_H_

@@ -72,18 +72,20 @@ typedef enum {
 
 EXTERN FileMacosUnmountStatus FileMacos_UnmountDev(char const *bsdDev,
                                                    Bool wholeDev,
-                                                   Bool eject);
+                                                   Bool eject,
+                                                   Bool su);
 
-EXTERN void FileMacos_MountDevAsyncNoResult(char const *bsdSliceDev,
+EXTERN void FileMacos_MountDevAsyncNoResult(char const *bsdDev,
                                             Bool su);
 
 EXTERN Bool FileMacos_IsOnExternalDevice(int fd);
 EXTERN Bool FileMacos_IsOnSparseDmg(int fd);
+EXTERN Bool FileMacos_IsSliceDevice(char const *bsdDev);
 
-EXTERN char *FileMacos_DiskDevToDiskName(char const *bsdDiskDev);
+EXTERN char *FileMacos_DiskDevToUserFriendlyName(char const *bsdDiskDev);
 
-EXTERN char *FileMacos_SliceDevToSliceUUID(char const *bsdSliceDev);
-EXTERN char *FileMacos_SliceUUIDToSliceDev(char const *uuid);
+EXTERN char *FileMacos_DiskDeviceToUniqueID(char const *bsdPath);
+EXTERN char *FileMacos_UniqueIDToDiskDevice(char const *identifier);
 #elif defined VMX86_SERVER
 EXTERN int File_GetVMFSBlockSize(ConstUnicode pathName, uint32 *blockSize);
 EXTERN int File_GetVMFSfsType(ConstUnicode pathName, char **fsType);
@@ -196,11 +198,6 @@ EXTERN Bool File_SupportsFileSize(ConstUnicode pathName,
                                   uint64 fileSize);
 
 EXTERN Bool File_SupportsLargeFiles(ConstUnicode pathName);
-
-EXTERN char *File_MapPathPrefix(const char *oldPath,
-                                const char **oldPrefixes,
-                                const char **newPrefixes,
-                                size_t numPrefixes);
 
 EXTERN Bool File_CopyFromFdToFd(FileIODescriptor src, 
                                 FileIODescriptor dst);

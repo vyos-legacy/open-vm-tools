@@ -178,7 +178,8 @@ static void
 VmBackupFinalize(void)
 {
    g_debug("*** %s\n", __FUNCTION__);
-   ASSERT(gBackupState != NULL);
+   g_assert(gBackupState != NULL);
+   g_assert(gBackupState->machineState == VMBACKUP_MSTATE_IDLE);
 
    if (gBackupState->currentOp != NULL) {
       VmBackup_Cancel(gBackupState->currentOp);
@@ -195,8 +196,7 @@ VmBackupFinalize(void)
       g_source_destroy(gBackupState->keepAlive);
    }
 
-   g_free(gBackupState->volumes);
-   g_free(gBackupState->snapshots);
+   free(gBackupState->volumes);
    free(gBackupState);
    gBackupState = NULL;
 }
@@ -306,7 +306,7 @@ static gboolean
 VmBackupAsyncCallback(void *clientData)
 {
    g_debug("*** %s\n", __FUNCTION__);
-   ASSERT(gBackupState != NULL);
+   g_assert(gBackupState != NULL);
 
    g_source_unref(gBackupState->timerEvent);
    gBackupState->timerEvent = NULL;
@@ -487,7 +487,7 @@ VmBackupStart(RpcInData *data)
       }
 
       if (data->args[index] != '\0') {
-         gBackupState->volumes = g_strndup(data->args + index, data->argsSize - index);
+         gBackupState->volumes = Util_SafeStrdup(data->args + index);
       }
    }
 
@@ -577,9 +577,6 @@ VmBackupSnapshotDone(RpcInData *data)
                               "Error: unexpected state for snapshot done message.",
                               FALSE);
    } else {
-      if (data->argsSize > 1) {
-         gBackupState->snapshots = g_strndup(data->args + 1, data->argsSize - 1);
-      }
       if (!gSyncProvider->snapshotDone(gBackupState, gSyncProvider->clientData)) {
          VmBackup_SendEvent(VMBACKUP_EVENT_REQUESTOR_ERROR,
                             VMBACKUP_SYNC_ERROR,

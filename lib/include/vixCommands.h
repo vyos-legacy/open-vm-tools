@@ -26,7 +26,7 @@
 #define _VIX_COMMANDS_H_
 
 #include "vm_version.h"
-#include "vixOpenSource.h"
+#include "vix.h"
 
 /*
  * These describe the format of the message objects.
@@ -105,7 +105,6 @@ enum VixResponseFlagsValues {
    VIX_RESPONSE_SOFT_POWER_OP       = 0x0001,
    VIX_RESPONSE_EXTENDED_RESULT_V1  = 0x0002,
    VIX_RESPONSE_TRUNCATED           = 0x0004,
-   VIX_RESPONSE_FSR                 = 0x0008
 };
 
 
@@ -1297,15 +1296,6 @@ struct VixMsgFaultToleranceControlRequest {
 #include "vmware_pack_end.h"
 VixMsgFaultToleranceControlRequest;
 
-typedef
-#include "vmware_pack_begin.h"
-struct VixFaultToleranceControlResponse {
-   VixCommandResponseHeader header;
-   uint32 propertyListBufferSize;
-   // Followed by a serialized property list containing error context.
-}
-#include "vmware_pack_end.h"
-VixFaultToleranceControlResponse;
 
 
 /*
@@ -1916,7 +1906,7 @@ enum VixMsgPostStateValues {
 
 /*
  * This is one string in the message. It corresponds to a
- * single MsgList object.
+ * single Msg_List object.
  */
 typedef
 #include "vmware_pack_begin.h"
@@ -2161,40 +2151,6 @@ struct VixMsgWaitForUserActionResponse {
 VixMsgWaitForUserActionResponse;
 
 
-/*
- * **********************************************************
- * List filesystems
- */
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixCommandListFileSystemsRequest {
-   VixCommandRequestHeader    header;
-
-   uint32                     options;
-   uint32                     propertyListSize;
-}
-#include "vmware_pack_end.h"
-VixCommandListFileSystemsRequest;
-
-
-/*
- * **********************************************************
- * A simple request packet that contains an options field and a
- * property list.
- */
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixCommandGenericRequest {
-   VixCommandRequestHeader    header;
-
-   uint32                     options;
-   uint32                     propertyListSize;
-   // This is followed by the buffer of serialized properties
-}
-#include "vmware_pack_end.h"
-VixCommandGenericRequest;
 
 
 /*
@@ -2429,9 +2385,7 @@ enum {
    VIX_COMMAND_SUSPEND_AND_RESUME               = 171,
 
    VIX_COMMAND_REMOVE_BULK_SNAPSHOT             = 172,
-
    VIX_COMMAND_COPY_FILE_FROM_READER_TO_GUEST   = 173,
-
    VIX_COMMAND_GENERATE_NONCE                   = 174,
 
    VIX_COMMAND_CHANGE_DISPLAY_TOPOLOGY_MODES    = 175,
@@ -2598,18 +2552,6 @@ VixCommandSecurityCategory VixMsg_GetCommandSecurityCategory(int opCode);
 enum {
    VIX_PROPERTY_VM_POWER_OFF_TO_SNAPSHOT_UID       = 5102,
 };
-
-VixError VixMsg_AllocGenericRequestMsg(int opCode,
-                                       uint64 cookie,
-                                       int credentialType,
-                                       const char *userNamePassword,
-                                       int options,
-                                       VixPropertyListImpl *propertyList,
-                                       VixCommandGenericRequest **request);
-
-VixError VixMsg_ParseGenericRequestMsg(const VixCommandGenericRequest *request,
-                                       int *options,
-                                       VixPropertyListImpl *propertyList);
 
 #endif   // VIX_HIDE_FROM_JAVA
 

@@ -78,14 +78,12 @@ Random_Crypto(unsigned int size,  // IN:
    if (CryptGenRandom(csp, size, buffer) == FALSE) {
       CryptReleaseContext(csp, 0);
       Log("%s: CryptGenRandom failed %d\n", __FUNCTION__, GetLastError());
-
       return FALSE;
    }
 
    if (CryptReleaseContext(csp, 0) == FALSE) {
       Log("%s: CryptReleaseContext failed %d\n", __FUNCTION__,
           GetLastError());
-
       return FALSE;
    }
 #else
@@ -128,7 +126,6 @@ Random_Crypto(unsigned int size,  // IN:
 
    if (fd == -1) {
       Log("%s: Failed to open random device: %d\n", __FUNCTION__, errno);
-
       return FALSE;
    }
 
@@ -141,7 +138,6 @@ Random_Crypto(unsigned int size,  // IN:
 
          close(fd);
          Log("%s: Short read: %d\n", __FUNCTION__, error);
-
          return FALSE;
       }
       if (bytesRead > 0) {
@@ -152,7 +148,6 @@ Random_Crypto(unsigned int size,  // IN:
 
    if (close(fd) == -1) {
       Log("%s: Failed to close: %d\n", __FUNCTION__, errno);
-
       return FALSE;
    }
 #endif
@@ -284,3 +279,37 @@ Random_Quick(void *context)  // IN/OUT:
    return y;
 }
 
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FastRand --
+ *
+ *      Lifted from Util_FastRand() in
+ *      /vmkernel-main/bora/vmcore/vmm/main/util_monitor.c The header
+ *      comment of Util_FastRand(): Generates the next random number in the
+ *      pseudo-random sequence defined by the multiplicative linear
+ *      congruential generator S' = 16807 * S mod (2^31 - 1).  This is the
+ *      ACM "minimal standard random number generator".  Based on method
+ *      described by D.G. Carta in CACM, January 1990.  Usage: provide
+ *      previous random number as the seed for next one.
+ *
+ * Results:
+ *      A random integrer number is returned.
+ *
+ * Side Effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+int
+FastRand(int seed)  // IN:
+{
+   uint64 product    = 33614 * (uint64)seed;
+   uint32 product_lo = (uint32)(product & 0xffffffff) >> 1;
+   uint32 product_hi = product >> 32;
+   int32  test       = product_lo + product_hi;
+
+   return test > 0 ? test : (test & 0x7fffffff) + 1;
+}

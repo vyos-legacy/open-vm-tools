@@ -247,8 +247,15 @@ AtomicEpilogue(void)
                  "lfence\n\t"
                  "2:\n\t"
                  ".pushsection .patchtext\n\t"
+#ifdef VMM32
+                 ".long 1b\n\t"
+                 ".long 0\n\t"
+                 ".long 2b\n\t"
+                 ".long 0\n\t"
+#else
                  ".quad 1b\n\t"
                  ".quad 2b\n\t"
+#endif
                  ".popsection\n\t" ::: "memory");
 #else
    if (UNLIKELY(AtomicUseFence)) {
@@ -1621,7 +1628,7 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
    Bool equal;
 
    /* Checked against the Intel manual and GCC --walken */
-#if defined(__x86_64__)
+#ifdef VMM64
    uint64 dummy;
    __asm__ __volatile__(
       "lock; cmpxchgq %3, %0" "\n\t"
@@ -1635,37 +1642,67 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
    );
 #else /* 32-bit version */
    int dummy1, dummy2;
-#   if defined __PIC__ // %ebx is reserved by the compiler.
-#      if defined __GNUC__ && __GNUC__ < 3 // Part of #188541 - for RHL 6.2 etc.
+#   if defined __PIC__ && !vm_x86_64
+   /*
+    * Rules for __asm__ statements in __PIC__ code
+    * --------------------------------------------
+    *
+    * The compiler uses %ebx for __PIC__ code, so an __asm__ statement cannot
+    * clobber %ebx. The __asm__ statement can temporarily modify %ebx, but _for
+    * each parameter that is used while %ebx is temporarily modified_:
+    *
+    * 1) The constraint cannot be "m", because the memory location the compiler
+    *    chooses could then be relative to %ebx.
+    *
+    * 2) The constraint cannot be a register class which contains %ebx (such as
+    *    "r" or "q"), because the register the compiler chooses could then be
+    *    %ebx. (This happens when compiling the Fusion UI with gcc 4.2.1, Apple
+    *    build 5577.)
+    *
+    * For that reason alone, the __asm__ statement should keep the regions
+    * where it temporarily modifies %ebx as small as possible.
+    */
+#      if __GNUC__ < 3 // Part of #188541 - for RHL 6.2 etc.
    __asm__ __volatile__(
-      "xchg %%ebx, %6\n\t"
-      "mov (%%ebx), %%ecx\n\t"
-      "mov (%%ebx), %%ebx\n\t"
-      "lock; cmpxchg8b (%3)\n\t"
-      "xchg %%ebx, %6\n\t"
+      "xchg %%ebx, %6"       "\n\t"
+      "mov 4(%%ebx), %%ecx"  "\n\t"
+      "mov (%%ebx), %%ebx"   "\n\t"
+      "lock; cmpxchg8b (%3)" "\n\t"
+      "xchg %%ebx, %6"       "\n\t"
       "sete %0"
-      : "=a" (equal), "=d" (dummy2), "=D" (dummy1)
-      : "S" (var), "0" (((S_uint64 const *)oldVal)->lowValue),
-        "1" (((S_uint64 const *)oldVal)->highValue), "D" (newVal)
+      : "=a" (equal),
+        "=d" (dummy2),
+        "=D" (dummy1)
+      : /*
+         * See the "Rules for __asm__ statements in __PIC__ code" above: %3
+         * must use a register class which does not contain %ebx.
+         */
+        "S" (var),
+        "0" (((S_uint64 const *)oldVal)->lowValue),
+        "1" (((S_uint64 const *)oldVal)->highValue),
+        "D" (newVal)
       : "ecx", "cc", "memory"
-      );
+   );
 #      else
    __asm__ __volatile__(
       "xchgl %%ebx, %6"      "\n\t"
-      // %3 is a register to make sure it cannot be %ebx-relative.
       "lock; cmpxchg8b (%3)" "\n\t"
       "xchgl %%ebx, %6"      "\n\t"
-      // Must come after restoring %ebx: %0 could be %ebx-relative.
       "sete %0"
-      :	"=qm" (equal),
-	"=a" (dummy1),
-	"=d" (dummy2)
-      : "r" (var),
-        "1" (((S_uint64 const *)oldVal)->lowValue),
-        "2" (((S_uint64 const *)oldVal)->highValue),
-        // Cannot use "m" here: 'newVal' is read-only.
-        "r" (((S_uint64 const *)newVal)->lowValue),
-        "c" (((S_uint64 const *)newVal)->highValue)
+      :	"=qm,qm" (equal),
+	"=a,a" (dummy1),
+	"=d,d" (dummy2)
+      : /*
+         * See the "Rules for __asm__ statements in __PIC__ code" above: %3
+         * must use a register class which does not contain %ebx.
+         * "a"/"c"/"d" are already used, so we are left with either "S" or "D".
+         */
+        "S,D" (var),
+        "1,1" (((S_uint64 const *)oldVal)->lowValue),
+        "2,2" (((S_uint64 const *)oldVal)->highValue),
+        // %6 cannot use "m": 'newVal' is read-only.
+        "r,r" (((S_uint64 const *)newVal)->lowValue),
+        "c,c" (((S_uint64 const *)newVal)->highValue)
       : "cc", "memory"
    );
 #      endif
@@ -2091,8 +2128,31 @@ Atomic_Write64(Atomic_uint64 *var, // IN
                uint64 val)         // IN
 {
 #if defined(__x86_64__)
+#if defined(__GNUC__)
+   /*
+    * There is no move instruction for 64-bit immediate to memory, so unless
+    * the immediate value fits in 32-bit (i.e. can be sign-extended), GCC
+    * breaks the assignment into two movl instructions.  The code below forces
+    * GCC to load the immediate value into a register first.
+    */
+
+   __asm__ __volatile__(
+      "movq %1, %0"
+      : "=m" (var->value)
+      : "r" (val)
+   );
+#elif defined _MSC_VER
+   /*
+    * Microsoft docs guarantee "Simple reads and writes to properly aligned 
+    * 64-bit variables are atomic on 64-bit Windows."
+    * http://msdn.microsoft.com/en-us/library/ms684122%28VS.85%29.aspx
+    */
+
    var->value = val;
 #else
+#error No compiler defined for Atomic_Write64
+#endif
+#else  /* defined(__x86_64__) */
    (void)Atomic_ReadWrite64(var, val);
 #endif
 }

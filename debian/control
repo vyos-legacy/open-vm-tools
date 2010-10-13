@@ -2,7 +2,7 @@ Source: open-vm-tools
 Section: contrib/admin
 Priority: extra
 Maintainer: Vyatta Package Maintainers <maintainers@vyatta.com>
-Build-Depends: debhelper (>= 7), autotools-dev
+Build-Depends: debhelper (>= 7), autotools-dev, libproc-dev
 Standards-Version: 3.8.3
 Homepage: http://open-vm-tools.sourceforge.net/
 Vcs-Browser: http://git.debian-maintainers.org/?p=vmware/open-vm-tools.git

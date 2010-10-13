@@ -26,6 +26,7 @@ libGuestRpc_la_SOURCES += ghiStartMenu_xdr.c
 libGuestRpc_la_SOURCES += guestlibV3_xdr.c
 libGuestRpc_la_SOURCES += nicinfo_xdr.c
 libGuestRpc_la_SOURCES += unityActive_xdr.c
+libGuestRpc_la_SOURCES += unity_xdr.c
 
 # XXX: Autoreconf complains about this and recommends using AM_CFLAGS instead.
 # Problem is, $(CFLAGS) is appended to the compiler command line after AM_CFLAGS
@@ -49,6 +50,8 @@ CLEANFILES += nicinfo.h
 CLEANFILES += nicinfo_xdr.c
 CLEANFILES += unityActive.h
 CLEANFILES += unityActive_xdr.c
+CLEANFILES += unity.h
+CLEANFILES += unity_xdr.c
 
 EXTRA_DIST =
 EXTRA_DIST += cpFileContents.x
@@ -59,13 +62,13 @@ EXTRA_DIST += ghiStartMenu.x
 EXTRA_DIST += guestlibV3.x
 EXTRA_DIST += nicinfo.x
 EXTRA_DIST += unityActive.x
+EXTRA_DIST += unity.x
 
 ## `make clean` should also remove the copied headers.
 clean-local:
 	rm -rf $(top_builddir)/lib/include/guestrpc
 	if [ $(top_builddir) != $(top_srcdir) ]; then	\
-	   rm -f *.x;                                   \
-	   rm -f ghiCommonDefines.h;                    \
+	   rm -f *.x;												\
 	fi
 
 # Rules to invoke rpcgen. rpcgen will generate funny paths in the generated
@@ -76,6 +79,7 @@ cpFileContents.h: cpFileContents.x
 	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
 	   cp -f $(top_srcdir)/lib/guestRpc/cpFileContents.x $(builddir); \
 	fi
+	rm  -f cpFileContents.h
 	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/cpFileContents.x
 	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
 	mv $@.tmp $@
@@ -83,11 +87,11 @@ cpFileContents.h: cpFileContents.x
 	cp $@ $(top_builddir)/lib/include/guestrpc
 
 cpFileContents_xdr.c: cpFileContents.x cpFileContents.h
+	rm -f cpFileContents_xdr.c
 	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/cpFileContents.x
 
 ghiGetBinaryHandlers.h: ghiGetBinaryHandlers.x
 	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiCommonDefines.h $(builddir);     \
 	   cp -f $(top_srcdir)/lib/guestRpc/ghiGetBinaryHandlers.x $(builddir); \
 	fi
 	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiGetBinaryHandlers.x
@@ -101,8 +105,7 @@ ghiGetBinaryHandlers_xdr.c: ghiGetBinaryHandlers.x ghiGetBinaryHandlers.h
 
 ghiGetExecInfoHash.h: ghiGetExecInfoHash.x
 	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiCommonDefines.h $(builddir);     \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiGetExecInfoHash.x $(builddir);   \
+	   cp -f $(top_srcdir)/lib/guestRpc/ghiGetExecInfoHash.x $(builddir); \
 	fi
 	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiGetExecInfoHash.x
 	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
@@ -115,7 +118,6 @@ ghiGetExecInfoHash_xdr.c: ghiGetExecInfoHash.x ghiGetExecInfoHash.h
 
 ghiProtocolHandler.h: ghiProtocolHandler.x
 	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiCommonDefines.h $(builddir);     \
 	   cp -f $(top_srcdir)/lib/guestRpc/ghiProtocolHandler.x $(builddir);   \
 	fi
 	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiProtocolHandler.x
@@ -129,8 +131,7 @@ ghiProtocolHandler_xdr.c: ghiProtocolHandler.x ghiProtocolHandler.h
 
 ghiStartMenu.h: ghiStartMenu.x
 	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiCommonDefines.h $(builddir);     \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiStartMenu.x $(builddir);         \
+	   cp -f $(top_srcdir)/lib/guestRpc/ghiStartMenu.x $(builddir); \
 	fi
 	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiStartMenu.x
 	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
@@ -179,4 +180,17 @@ unityActive.h: unityActive.x
 
 unityActive_xdr.c: unityActive.x unityActive.h
 	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/unityActive.x
+
+unity.h: unity.x
+	if [ $(top_builddir) != $(top_srcdir) ]; then                  \
+	   cp -f $(top_srcdir)/lib/guestRpc/unity.x $(builddir); \
+	fi
+	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/unity.x
+	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
+	mv $@.tmp $@
+	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
+	cp $@ $(top_builddir)/lib/include/guestrpc
+
+unity_xdr.c: unity.x unity.h
+	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/unity.x
 

@@ -15,8 +15,7 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-plugindir = @VMSVC_PLUGIN_INSTALLDIR@
-plugin_LTLIBRARIES = libvmbackup.la
+noinst_LTLIBRARIES = libvmbackup.la
 
 libvmbackup_la_CPPFLAGS =
 libvmbackup_la_CPPFLAGS += @PLUGIN_CPPFLAGS@
@@ -31,4 +30,8 @@ libvmbackup_la_SOURCES =
 libvmbackup_la_SOURCES += scriptOps.c
 libvmbackup_la_SOURCES += stateMachine.c
 libvmbackup_la_SOURCES += syncDriverOps.c
+
+install-exec-local:
+	mkdir -p $(DESTDIR)$(VMSVC_PLUGIN_INSTALLDIR)
+	cp -L $(builddir)/.libs/libvmbackup.so $(DESTDIR)$(VMSVC_PLUGIN_INSTALLDIR)
 

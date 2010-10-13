@@ -103,13 +103,21 @@
 #include <linux/poll.h>
 #include <linux/smp.h>
 #include <linux/smp_lock.h>
-#include <linux/bitops.h>
 #include <asm/io.h>
 #if defined(__x86_64__) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
-#   include <linux/ioctl32.h>
+#   if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 0)
+#      include <asm/ioctl32.h>
+#   else
+#      include <linux/ioctl32.h>
+#   endif
 /* Use weak: not all kernels export sys_ioctl for use by modules */
+#   if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 66)
 asmlinkage __attribute__((weak)) long
 sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg);
+#   else
+asmlinkage __attribute__((weak)) int
+sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg);
+#   endif
 #endif
 
 #include "compat_module.h"
@@ -138,9 +146,6 @@ sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg);
 #include "vsock_version.h"
 #include "driverLog.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 9)
-#  error "Linux kernels before 2.6.9 are not supported."
-#endif
 
 #define VSOCK_INVALID_FAMILY        NPROTO
 #define VSOCK_AF_IS_REGISTERED(val) ((val) >= 0 && (val) < NPROTO)
@@ -157,9 +162,6 @@ sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg);
 int VSockVmci_GetAFValue(void);
 
 /* Internal functions. */
-static Bool VSockVmciProtoToNotifyStruct(struct sock *sk,
-                                         VSockProtoVersion *proto,
-                                         Bool oldPktProto);
 static int VSockVmciGetAFValue(void);
 static int VSockVmciRecvDgramCB(void *data, VMCIDatagram *dg);
 static int VSockVmciRecvStreamCB(void *data, VMCIDatagram *dg);
@@ -174,8 +176,6 @@ static int VSockVmciRecvConnectingServer(struct sock *sk,
 static int VSockVmciRecvConnectingClient(struct sock *sk, VSockPacket *pkt);
 static int VSockVmciRecvConnectingClientNegotiate(struct sock *sk,
                                                   VSockPacket *pkt);
-static int VSockVmciRecvConnectingClientInvalid(struct sock *sk,
-                                                VSockPacket *pkt);
 static int VSockVmciRecvConnected(struct sock *sk, VSockPacket *pkt);
 static int __VSockVmciBind(struct sock *sk, struct sockaddr_vm *addr);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 14)
@@ -216,6 +216,38 @@ static int VSockVmciStreamSetsockopt(struct socket *sock, int level, int optname
 static int VSockVmciStreamGetsockopt(struct socket *sock, int level, int optname,
                                      char __user *optval, int __user * optlen);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 43)
+static int VSockVmciDgramSendmsg(struct socket *sock, struct msghdr *msg,
+                                 int len, struct scm_cookie *scm);
+static int VSockVmciDgramRecvmsg(struct socket *sock, struct msghdr *msg,
+                                 int len, int flags, struct scm_cookie *scm);
+static int VSockVmciStreamSendmsg(struct socket *sock, struct msghdr *msg,
+                                  int len, struct scm_cookie *scm);
+static int VSockVmciStreamRecvmsg(struct socket *sock, struct msghdr *msg,
+                                  int len, int flags, struct scm_cookie *scm);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 65)
+static int VSockVmciDgramSendmsg(struct kiocb *kiocb, struct socket *sock,
+                                 struct msghdr *msg, int len,
+                                 struct scm_cookie *scm);
+static int VSockVmciDgramRecvmsg(struct kiocb *kiocb, struct socket *sock,
+                                 struct msghdr *msg, int len,
+                                 int flags, struct scm_cookie *scm);
+static int VSockVmciStreamSendmsg(struct kiocb *kiocb, struct socket *sock,
+                                  struct msghdr *msg, int len,
+                                  struct scm_cookie *scm);
+static int VSockVmciStreamRecvmsg(struct kiocb *kiocb, struct socket *sock,
+                                  struct msghdr *msg, int len,
+                                  int flags, struct scm_cookie *scm);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 2)
+static int VSockVmciDgramSendmsg(struct kiocb *kiocb,
+                                 struct socket *sock, struct msghdr *msg, int len);
+static int VSockVmciDgramRecvmsg(struct kiocb *kiocb, struct socket *sock,
+                                 struct msghdr *msg, int len, int flags);
+static int VSockVmciStreamSendmsg(struct kiocb *kiocb,
+                                  struct socket *sock, struct msghdr *msg, int len);
+static int VSockVmciStreamRecvmsg(struct kiocb *kiocb, struct socket *sock,
+                                  struct msghdr *msg, int len, int flags);
+#else
 static int VSockVmciDgramSendmsg(struct kiocb *kiocb,
                                  struct socket *sock, struct msghdr *msg, size_t len);
 static int VSockVmciDgramRecvmsg(struct kiocb *kiocb, struct socket *sock,
@@ -224,11 +256,14 @@ static int VSockVmciStreamSendmsg(struct kiocb *kiocb,
                                  struct socket *sock, struct msghdr *msg, size_t len);
 static int VSockVmciStreamRecvmsg(struct kiocb *kiocb, struct socket *sock,
                                  struct msghdr *msg, size_t len, int flags);
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
 static int VSockVmciCreate(struct socket *sock, int protocol);
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 34)
 static int VSockVmciCreate(struct net *net, struct socket *sock, int protocol);
+#else
+static int VSockVmciCreate(struct net *net, struct socket *sock, int protocol, int kern);
 #endif
 
 /*
@@ -247,7 +282,8 @@ static long VSockVmciDevUnlockedIoctl(struct file *filp,
  * Variables.
  */
 
-/* Protocol family. */
+/* Protocol family.  We only use this for builds against 2.6.9 and later. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 9)
 static struct proto vsockVmciProto = {
    .name     = "AF_VMCI",
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 10)
@@ -255,31 +291,38 @@ static struct proto vsockVmciProto = {
    .owner    = THIS_MODULE,
 #endif
    /*
-    * From 2.6.9 until 2.6.11, these address families called sk_alloc_slab()
-    * and the allocated slab was assigned to the slab variable in the proto
-    * struct and was created of size slab_obj_size.
-    * As of 2.6.12 and later, this slab allocation was moved into
-    * proto_register() and only done if you specified a non-zero value for
+    * Before 2.6.9, each address family created their own slab (by calling
+    * kmem_cache_create() directly).  From 2.6.9 until 2.6.11, these address
+    * families instead called sk_alloc_slab() and the allocated slab was
+    * assigned to the slab variable in the proto struct and was created of size
+    * slab_obj_size.  As of 2.6.12 and later, this slab allocation was moved
+    * into proto_register() and only done if you specified a non-zero value for
     * the second argument (alloc_slab); the size of the slab element was
     * changed to obj_size.
     */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 9)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
    .slab_obj_size = sizeof (VSockVmciSock),
 #else
    .obj_size = sizeof (VSockVmciSock),
 #endif
 };
+#endif
 
 static struct net_proto_family vsockVmciFamilyOps = {
    .family = VSOCK_INVALID_FAMILY,
    .create = VSockVmciCreate,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 69)
    .owner  = THIS_MODULE,
+#endif
 };
 
 /* Socket operations, split for DGRAM and STREAM sockets. */
 static struct proto_ops vsockVmciDgramOps = {
    .family     = VSOCK_INVALID_FAMILY,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 69)
    .owner      = THIS_MODULE,
+#endif
    .release    = VSockVmciRelease,
    .bind       = VSockVmciBind,
    .connect    = VSockVmciDgramConnect,
@@ -295,12 +338,16 @@ static struct proto_ops vsockVmciDgramOps = {
    .sendmsg    = VSockVmciDgramSendmsg,
    .recvmsg    = VSockVmciDgramRecvmsg,
    .mmap       = sock_no_mmap,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 4)
    .sendpage   = sock_no_sendpage,
+#endif
 };
 
 static struct proto_ops vsockVmciStreamOps = {
    .family     = VSOCK_INVALID_FAMILY,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 69)
    .owner      = THIS_MODULE,
+#endif
    .release    = VSockVmciRelease,
    .bind       = VSockVmciBind,
    .connect    = VSockVmciStreamConnect,
@@ -316,7 +363,9 @@ static struct proto_ops vsockVmciStreamOps = {
    .sendmsg    = VSockVmciStreamSendmsg,
    .recvmsg    = VSockVmciStreamRecvmsg,
    .mmap       = sock_no_mmap,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 4)
    .sendpage   = sock_no_sendpage,
+#endif
 };
 
 static struct file_operations vsockVmciDeviceOps = {
@@ -354,7 +403,11 @@ static Bool vmciDevicePresent = FALSE;
 static VMCIHandle vmciStreamHandle = { VMCI_INVALID_ID, VMCI_INVALID_ID };
 static VMCIId qpResumedSubId = VMCI_INVALID_ID;
 
-static int protocolOverride = -1;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 9)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 5)
+kmem_cache_t *vsockCachep;
+#endif
+#endif
 
 /*
  * 64k is hopefully a reasonable default, but we should do some real
@@ -369,125 +422,6 @@ static int protocolOverride = -1;
 #else
 # define LOG_PACKET(_pkt)
 #endif
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * VSockVmciOldProtoOverride --
- *
- *      Check to see if the user has asked us to override all sockets to use
- *      the vsock notify protocol.
- *
- * Results:
- *      TRUE if there is a protocol override in effect.
- *       - oldPktProto is TRUE the original protocol should be used.
- *      FALSE if there is no override in effect.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------------
- */
-
-static Bool
-VSockVmciOldProtoOverride(Bool *oldPktProto)        // IN
-{
-   ASSERT(oldPktProto);
-
-   if (protocolOverride != -1) {
-      if (protocolOverride == 0) {
-         *oldPktProto = TRUE;
-      } else {
-         *oldPktProto = FALSE;
-      }
-      Warning("Proto override in use.\n");
-      return TRUE;
-   }
-
-   return FALSE;
-}
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * VSockVmciProtoToNotifyStruct --
- *
- *      Given a particular notify protocol version, setup the socket's notify
- *      struct correctly.
- *
- * Results:
- *      TRUE on success. FALSE otherwise.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------------
- */
-
-static Bool
-VSockVmciProtoToNotifyStruct(struct sock *sk,          // IN
-                             VSockProtoVersion *proto, // IN
-                             Bool oldPktProto)         // IN
-{
-   VSockVmciSock *vsk;
-
-   ASSERT(sk);
-   ASSERT(proto);
-
-   vsk = vsock_sk(sk);
-
-   if (oldPktProto) {
-      if (*proto != VSOCK_PROTO_INVALID) {
-         Warning("Can't set both an old and new protocol\n");
-         return FALSE;
-      }
-      vsk->notifyOps = &vSockVmciNotifyPktOps;
-      goto exit;
-   }
-
-   switch(*proto) {
-   case VSOCK_PROTO_PKT_ON_NOTIFY:
-      vsk->notifyOps= &vSockVmciNotifyPktQStateOps;
-      break;
-   default:
-      Warning("Unknown notify protocol version\n");
-      return FALSE;
-   }
-
-exit:
-   NOTIFYCALL(vsk, socketInit, sk);
-   return TRUE;
-}
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * VSockVmciNewProtoSupportedVersions
- *
- *      Gets the supported REQUEST2/NEGOTIATE2 vsock protocol versions.
- *
- * Results:
- *      Either 1 specific protocol version (override mode) or
- *      VSOCK_PROTO_ALL_SUPPORTED.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------------
- */
-
-static VSockProtoVersion
-VSockVmciNewProtoSupportedVersions(void) // IN
-{
-   if (protocolOverride != -1) {
-      return protocolOverride;
-   }
-
-   return VSOCK_PROTO_ALL_SUPPORTED;
-}
 
 
 /*
@@ -997,9 +931,11 @@ VSockVmciRecvStreamCB(void *data,           // IN
     * when implementing backwards compatibility in the future.
     */
    if (pkt->type >= VSOCK_PACKET_TYPE_MAX) {
-      VSOCK_SEND_INVALID_BH(&dst, &src);
-      err = VMCI_ERROR_INVALID_ARGS;
-      goto out;
+      if (VSOCK_SEND_INVALID_BH(&dst, &src) < 0) {
+         Warning("unable to send reply for invalid packet.\n");
+         err = VMCI_ERROR_INVALID_ARGS;
+         goto out;
+      }
    }
 
    /*
@@ -1376,7 +1312,7 @@ VSockVmciRecvPktWork(compat_work_arg work)  // IN
    VSockVmciSock *vsk;
    struct sock *sk;
 
-   recvPktInfo = COMPAT_WORK_GET_DATA(work, VSockRecvPktInfo, work);
+   recvPktInfo = COMPAT_WORK_GET_DATA(work, VSockRecvPktInfo);
    ASSERT(recvPktInfo);
 
    err = 0;
@@ -1454,8 +1390,6 @@ VSockVmciRecvListen(struct sock *sk,   // IN
    VSockVmciSock *vpending;
    int err;
    uint64 qpSize;
-   Bool oldRequest = FALSE;
-   Bool oldPktProto = FALSE;
 
    ASSERT(sk);
    ASSERT(pkt);
@@ -1497,16 +1431,10 @@ VSockVmciRecvListen(struct sock *sk,   // IN
     * The listen state only accepts connection requests.  Reply with a reset
     * unless we received a reset.
     */
-
-   if (!(pkt->type == VSOCK_PACKET_TYPE_REQUEST ||
-         pkt->type == VSOCK_PACKET_TYPE_REQUEST2)) {
-       VSOCK_REPLY_RESET(pkt);
-       return -EINVAL;
-   }
-
-   if (pkt->u.size == 0) {
-       VSOCK_REPLY_RESET(pkt);
-       return -EINVAL;
+   if (pkt->type != VSOCK_PACKET_TYPE_REQUEST ||
+       pkt->u.size == 0) {
+      VSOCK_REPLY_RESET(pkt);
+      return -EINVAL;
    }
 
    /*
@@ -1546,61 +1474,13 @@ VSockVmciRecvListen(struct sock *sk,   // IN
     * it. Otherwise propose our own size.
     */
    if (pkt->u.size >= vsk->queuePairMinSize &&
-       pkt->u.size <= vsk->queuePairMaxSize) {
+      pkt->u.size <= vsk->queuePairMaxSize) {
       qpSize = pkt->u.size;
    } else {
       qpSize = vsk->queuePairSize;
    }
 
-   /*
-    * Figure out if we are using old or new requests based on the overrides
-    * pkt types sent by our peer.
-    */
-   if (VSockVmciOldProtoOverride(&oldPktProto)) {
-      oldRequest = oldPktProto;
-   } else {
-      if (pkt->type == VSOCK_PACKET_TYPE_REQUEST) {
-         oldRequest = TRUE;
-      } else if (pkt->type == VSOCK_PACKET_TYPE_REQUEST2) {
-         oldRequest = FALSE;
-      }
-   }
-
-   if (oldRequest) {
-      /* Handle a REQUEST (or override) */
-      VSockProtoVersion version = VSOCK_PROTO_INVALID;
-      if (VSockVmciProtoToNotifyStruct(pending, &version, TRUE)) {
-         err = VSOCK_SEND_NEGOTIATE(pending, qpSize);
-      } else {
-         err = -EINVAL;
-      }
-   } else {
-      /* Handle a REQUEST2 (or override) */
-      int protoInt = pkt->proto;
-      int pos;
-      uint16 activeProtoVersion = 0;
-
-      /*
-       * The list of possible protocols is the intersection of all protocols
-       * the client supports ... plus all the protocols we support.
-       */
-      protoInt &= VSockVmciNewProtoSupportedVersions();
-
-      /* We choose the highest possible protocol version and use that one. */
-      pos = fls(protoInt);
-      if (pos) {
-         activeProtoVersion = (1 << (pos - 1));
-         if (VSockVmciProtoToNotifyStruct(pending, &activeProtoVersion, FALSE)) {
-            err = VSOCK_SEND_NEGOTIATE2(pending, qpSize,
-                                        activeProtoVersion);
-         } else {
-            err = -EINVAL;
-         }
-      } else {
-         err = -EINVAL;
-      }
-   }
-
+   err = VSOCK_SEND_NEGOTIATE(pending, qpSize);
    if (err < 0) {
       VSOCK_SEND_RESET(sk, pkt);
       sock_put(pending);
@@ -1614,7 +1494,8 @@ VSockVmciRecvListen(struct sock *sk,   // IN
    pending->compat_sk_state = SS_CONNECTING;
    vpending->produceSize = vpending->consumeSize = qpSize;
 
-   NOTIFYCALL(vpending, processRequest, pending);
+   /* XXX Move this into the notify file. */
+   vpending->notify.writeNotifyWindow = qpSize;
 
    /*
     * We might never receive another message for this socket and it's not
@@ -1857,10 +1738,8 @@ VSockVmciRecvConnectingClient(struct sock *sk,       // IN: socket
       sk->compat_sk_socket->state = SS_CONNECTED;
       VSockVmciInsertConnected(vsockConnectedSocketsVsk(vsk), sk);
       sk->compat_sk_state_change(sk);
-
       break;
    case VSOCK_PACKET_TYPE_NEGOTIATE:
-   case VSOCK_PACKET_TYPE_NEGOTIATE2:
       if (pkt->u.size == 0 ||
           VMCI_HANDLE_TO_CONTEXT_ID(pkt->dg.src) != vsk->remoteAddr.svm_cid ||
           pkt->srcPort != vsk->remoteAddr.svm_port ||
@@ -1883,33 +1762,10 @@ VSockVmciRecvConnectingClient(struct sock *sk,       // IN: socket
       }
 
       break;
-   case VSOCK_PACKET_TYPE_INVALID:
-      err = VSockVmciRecvConnectingClientInvalid(sk, pkt);
-      if (err) {
-         skerr = -err;
-         goto destroy;
-      }
-
-      break;
    case VSOCK_PACKET_TYPE_RST:
-      /*
-       * Older versions of the linux code (WS 6.5 / ESX 4.0) used to continue
-       * processing here after they sent an INVALID packet. This meant that we
-       * got a RST after the INVALID. We ignore a RST after an INVALID. The
-       * common code doesn't send the RST ... so we can hang if an old version
-       * of the common code fails between getting a REQUEST and sending an
-       * OFFER back. Not much we can do about it... except hope that it
-       * doesn't happen.
-       */
-      if (vsk->ignoreConnectingRst) {
-         vsk->ignoreConnectingRst = FALSE;
-      } else {
-         skerr = ECONNRESET;
-         err = 0;
-         goto destroy;
-      }
-
-      break;
+      skerr = ECONNRESET;
+      err = 0;
+      goto destroy;
    default:
       /* Close and cleanup the connection. */
       skerr = EPROTO;
@@ -1918,10 +1774,7 @@ VSockVmciRecvConnectingClient(struct sock *sk,       // IN: socket
    }
 
    ASSERT(pkt->type == VSOCK_PACKET_TYPE_ATTACH ||
-          pkt->type == VSOCK_PACKET_TYPE_NEGOTIATE ||
-          pkt->type == VSOCK_PACKET_TYPE_NEGOTIATE2 ||
-          pkt->type == VSOCK_PACKET_TYPE_INVALID ||
-          pkt->type == VSOCK_PACKET_TYPE_RST);
+          pkt->type == VSOCK_PACKET_TYPE_NEGOTIATE);
 
    return 0;
 
@@ -1966,10 +1819,6 @@ VSockVmciRecvConnectingClientNegotiate(struct sock *sk,   // IN: socket
    VMCIId attachSubId;
    VMCIId detachSubId;
    Bool isLocal;
-   uint32 flags;
-   Bool oldProto = TRUE;
-   Bool oldPktProto;
-   VSockProtoVersion version;
 
    vsk = vsock_sk(sk);
    handle = VMCI_INVALID_HANDLE;
@@ -1989,42 +1838,9 @@ VSockVmciRecvConnectingClientNegotiate(struct sock *sk,   // IN: socket
    ASSERT(vsk->attachSubId == VMCI_INVALID_ID);
    ASSERT(vsk->detachSubId == VMCI_INVALID_ID);
 
-   /*
-    * If we have gotten here then we should be past the point where old linux
-    * vsock could have sent the bogus rst.
-    */
-   vsk->sentRequest = FALSE;
-   vsk->ignoreConnectingRst = FALSE;
-
    /* Verify that we're OK with the proposed queue pair size */
    if (pkt->u.size < vsk->queuePairMinSize ||
        pkt->u.size > vsk->queuePairMaxSize) {
-      err = -EINVAL;
-      goto destroy;
-   }
-
-   /*
-    * Setup the notify ops to be the highest supported version that both the
-    * server and the client support.
-    */
-
-   if (VSockVmciOldProtoOverride(&oldPktProto)) {
-      oldProto = oldPktProto;
-   } else {
-      if (pkt->type == VSOCK_PACKET_TYPE_NEGOTIATE) {
-         oldProto = TRUE;
-      } else if (pkt->type == VSOCK_PACKET_TYPE_NEGOTIATE2) {
-         oldProto = FALSE;
-      }
-   }
-
-   if (oldProto) {
-      version = VSOCK_PROTO_INVALID;
-   } else {
-      version = pkt->proto;
-   }
-
-   if (!VSockVmciProtoToNotifyStruct(sk, &version, oldProto)) {
       err = -EINVAL;
       goto destroy;
    }
@@ -2057,13 +1873,12 @@ VSockVmciRecvConnectingClientNegotiate(struct sock *sk,   // IN: socket
    /* Make VMCI select the handle for us. */
    handle = VMCI_INVALID_HANDLE;
    isLocal = vsk->remoteAddr.svm_cid == vsk->localAddr.svm_cid;
-   flags = isLocal ? VMCI_QPFLAG_LOCAL : 0;
 
    err = VSockVmciQueuePairAlloc(&handle,
                                  &produceQ, pkt->u.size,
                                  &consumeQ, pkt->u.size,
                                  vsk->remoteAddr.svm_cid,
-                                 flags,
+                                 isLocal ? VMCI_QPFLAG_LOCAL : 0,
                                  vsk->trusted);
    if (err < 0) {
       goto destroy;
@@ -2083,10 +1898,11 @@ VSockVmciRecvConnectingClientNegotiate(struct sock *sk,   // IN: socket
 
    vsk->produceSize = vsk->consumeSize = pkt->u.size;
 
+   /* XXX Move this into the notify file. */
+   vsk->notify.writeNotifyWindow = pkt->u.size;
+
    vsk->attachSubId = attachSubId;
    vsk->detachSubId = detachSubId;
-
-   NOTIFYCALL(vsk, processNegotiate, sk);
 
    return 0;
 
@@ -2104,52 +1920,6 @@ destroy:
    if (!VMCI_HANDLE_INVALID(handle)) {
       VMCIQueuePair_Detach(handle);
       ASSERT(VMCI_HANDLE_INVALID(vsk->qpHandle));
-   }
-
-   return err;
-}
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * VSockVmciRecvConnectingClientInvalid --
- *
- *    Handles an invalid packet for a client in the connecting state.
- *
- *    Note that this assumes the socket lock is held for both sk and pending.
- *
- * Results:
- *    Zero on success, negative error code on failure.
- *
- * Side effects:
- *    None.
- *
- *----------------------------------------------------------------------------
- */
-
-static int
-VSockVmciRecvConnectingClientInvalid(struct sock *sk,   // IN: socket
-                                     VSockPacket *pkt)  // IN: current packet
-{
-   int err = 0;
-   VSockVmciSock *vsk;
-
-   ASSERT(sk);
-   ASSERT(pkt);
-
-   vsk = vsock_sk(sk);
-
-   if (vsk->sentRequest) {
-      vsk->sentRequest = FALSE;
-      vsk->ignoreConnectingRst = TRUE;
-
-      err = VSOCK_SEND_CONN_REQUEST(sk, vsk->queuePairSize);
-      if (err < 0) {
-         err = VSockVmci_ErrorToVSockError(err);
-      } else {
-         err = 0;
-      }
    }
 
    return err;
@@ -2207,7 +1977,7 @@ VSockVmciRecvConnected(struct sock *sk,      // IN
    switch (pkt->type) {
    case VSOCK_PACKET_TYPE_SHUTDOWN:
       if (pkt->u.mode) {
-         vsk = vsock_sk(sk);
+         VSockVmciSock *vsk = vsock_sk(sk);
 
          vsk->peerShutdown |= pkt->u.mode;
          sk->compat_sk_state_change(sk);
@@ -2274,7 +2044,6 @@ __VSockVmciSendControlPkt(VSockPacket *pkt,           // IN
                           uint64 size,                // IN
                           uint64 mode,                // IN
                           VSockWaitingInfo *wait,     // IN
-                          VSockProtoVersion proto,    // IN
                           VMCIHandle handle,          // IN
                           Bool convertError)          // IN
 {
@@ -2289,7 +2058,7 @@ __VSockVmciSendControlPkt(VSockPacket *pkt,           // IN
    VSOCK_ADDR_NOFAMILY_ASSERT(src);
    VSOCK_ADDR_NOFAMILY_ASSERT(dst);
 
-   VSockPacket_Init(pkt, src, dst, type, size, mode, wait, proto, handle);
+   VSockPacket_Init(pkt, src, dst, type, size, mode, wait, handle);
    LOG_PACKET(pkt);
    VSOCK_STATS_CTLPKT_LOG(pkt->type);
    err = VMCIDatagram_Send(&pkt->dg);
@@ -2336,8 +2105,7 @@ VSockVmciReplyControlPktFast(VSockPacket *pkt,       // IN
    } else {
       VSockPacket_GetAddresses(pkt, &src, &dst);
       return __VSockVmciSendControlPkt(&reply, &src, &dst, type,
-                                       size, mode, wait,
-                                       VSOCK_PROTO_INVALID, handle, TRUE);
+                                       size, mode, wait, handle, TRUE);
    }
 }
 
@@ -2379,8 +2147,7 @@ VSockVmciSendControlPktBH(struct sockaddr_vm *src,      // IN
    static VSockPacket pkt;
 
    return __VSockVmciSendControlPkt(&pkt, src, dst, type,
-                                    size, mode, wait, VSOCK_PROTO_INVALID,
-                                    handle, FALSE);
+                                    size, mode, wait, handle, FALSE);
 }
 
 
@@ -2401,13 +2168,12 @@ VSockVmciSendControlPktBH(struct sockaddr_vm *src,      // IN
  */
 
 int
-VSockVmciSendControlPkt(struct sock *sk,         // IN
-                        VSockPacketType type,    // IN
-                        uint64 size,             // IN
-                        uint64 mode,             // IN
-                        VSockWaitingInfo *wait,  // IN
-                        VSockProtoVersion proto, // IN
-                        VMCIHandle handle)       // IN
+VSockVmciSendControlPkt(struct sock *sk,        // IN
+                        VSockPacketType type,   // IN
+                        uint64 size,            // IN
+                        uint64 mode,            // IN
+                        VSockWaitingInfo *wait, // IN
+                        VMCIHandle handle)      // IN
 {
    VSockPacket *pkt;
    VSockVmciSock *vsk;
@@ -2438,8 +2204,7 @@ VSockVmciSendControlPkt(struct sock *sk,         // IN
    }
 
    err = __VSockVmciSendControlPkt(pkt, &vsk->localAddr, &vsk->remoteAddr,
-                                   type, size, mode, wait, proto, handle,
-                                   TRUE);
+                                   type, size, mode, wait, handle, TRUE);
    kfree(pkt);
 
    return err;
@@ -2572,11 +2337,7 @@ __VSockVmciBind(struct sock *sk,          // IN/OUT
       goto out;
    }
 
-   /*
-    * VSockVmci_GetAFValue() acquires a mutex and may sleep, so fill the
-    * field after unlocking socket tables.
-    */
-   VSockAddr_InitNoFamily(&vsk->localAddr, newAddr.svm_cid, newAddr.svm_port);
+   VSockAddr_Init(&vsk->localAddr, newAddr.svm_cid, newAddr.svm_port);
 
    /*
     * Remove stream sockets from the unbound list and add them to the hash
@@ -2586,12 +2347,9 @@ __VSockVmciBind(struct sock *sk,          // IN/OUT
    if (sk->compat_sk_socket->type == SOCK_STREAM) {
       __VSockVmciRemoveBound(sk);
       __VSockVmciInsertBound(vsockBoundSockets(&vsk->localAddr), sk);
-      spin_unlock_bh(&vsockTableLock);
    }
-   vsk->localAddr.svm_family = VSockVmci_GetAFValue();
-   VSOCK_ADDR_ASSERT(&vsk->localAddr);
 
-   return 0;
+   err = 0;
 
 out:
    if (sk->compat_sk_socket->type == SOCK_STREAM) {
@@ -2652,14 +2410,25 @@ __VSockVmciCreate(struct net *net,       // IN: Network namespace
    vsk = NULL;
 
    /*
-    * From 2.6.9 to until 2.6.12 sk_alloc() used a cache in
-    * the protocol structure, but you still had to specify the size and cache
-    * yourself.
-    * Most recently (in 2.6.24), sk_alloc() was changed to expect the
+    * Before 2.5.5, sk_alloc() always used its own cache and protocol-specific
+    * data was contained in the protinfo union.  We cannot use those other
+    * structures so we allocate our own structure and attach it to the
+    * user_data pointer that we don't otherwise need.  We must be sure to free
+    * it later in our destruct routine.
+    *
+    * From 2.5.5 until 2.6.8, sk_alloc() offerred to use a cache that the
+    * caller provided.  After this, the cache was moved into the proto
+    * structure, but you still had to specify the size and cache yourself until
+    * 2.6.12. Most recently (in 2.6.24), sk_alloc() was changed to expect the
     * network namespace, and the option to zero the sock was dropped.
     *
     */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 5)
+   sk = sk_alloc(vsockVmciFamilyOps.family, priority, 1);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 9)
+   sk = sk_alloc(vsockVmciFamilyOps.family, priority,
+                 sizeof (VSockVmciSock), vsockCachep);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
    sk = sk_alloc(vsockVmciFamilyOps.family, priority,
                  vsockVmciProto.slab_obj_size, vsockVmciProto.slab);
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
@@ -2670,6 +2439,15 @@ __VSockVmciCreate(struct net *net,       // IN: Network namespace
    if (!sk) {
       return NULL;
    }
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 5)
+   vsock_sk(sk) = kmalloc(sizeof *vsk, priority);
+   if (!vsock_sk(sk)) {
+      sk_free(sk);
+      return NULL;
+   }
+   sk_vsock(vsock_sk(sk)) = sk;
+#endif
 
    /*
     * If we go this far, we know the socket family is registered, so there's no
@@ -2712,8 +2490,6 @@ __VSockVmciCreate(struct net *net,       // IN: Network namespace
    INIT_LIST_HEAD(&vsk->pendingLinks);
    INIT_LIST_HEAD(&vsk->acceptQueue);
    vsk->rejected = FALSE;
-   vsk->sentRequest = FALSE;
-   vsk->ignoreConnectingRst = FALSE;
    vsk->attachSubId = vsk->detachSubId = VMCI_INVALID_ID;
    vsk->peerShutdown = 0;
 
@@ -2724,7 +2500,8 @@ __VSockVmciCreate(struct net *net,       // IN: Network namespace
       vsk->trusted = capable(CAP_NET_ADMIN);
    }
 
-   vsk->notifyOps = NULL;
+   vsk->notifyOps = &vSockVmciNotifyPktOps;
+   NOTIFYCALL(vsk, socketInit, sk);
 
    if (sock) {
       VSockVmciInsertBound(vsockUnboundSockets, sk);
@@ -2858,6 +2635,11 @@ VSockVmciSkDestruct(struct sock *sk) // IN
 
    NOTIFYCALL(vsk, socketDestruct, sk);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 5)
+   ASSERT(vsock_sk(sk) == vsk);
+   kfree(vsock_sk(sk));
+#endif
+
    down(&registrationMutex);
    vsockVmciSocketCount--;
    VSockVmciTestUnregister();
@@ -2866,6 +2648,7 @@ VSockVmciSkDestruct(struct sock *sk) // IN
 
    VSOCK_STATS_CTLPKT_DUMP_ALL();
    VSOCK_STATS_HIST_DUMP_ALL();
+
 }
 
 
@@ -2922,15 +2705,24 @@ VSockVmciRegisterProto(void)
    int err = 0;
 
    /*
-    * From 2.6.9 until 2.6.11, these address families called sk_alloc_slab()
-    * and the allocated slab was assigned to the slab variable in the proto
-    * struct and was created of size slab_obj_size. As of 2.6.12 and later,
-    * this slab allocation was moved
-    * into proto_register() and only done if you specified a non-zero value
-    * for the second argument (alloc_slab); the size of the slab element was
+    * Before 2.6.9, each address family created their own slab (by calling
+    * kmem_cache_create() directly).  From 2.6.9 until 2.6.11, these address
+    * families instead called sk_alloc_slab() and the allocated slab was
+    * assigned to the slab variable in the proto struct and was created of size
+    * slab_obj_size.  As of 2.6.12 and later, this slab allocation was moved
+    * into proto_register() and only done if you specified a non-zero value for
+    * the second argument (alloc_slab); the size of the slab element was
     * changed to obj_size.
     */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 5)
+   /* Simply here for clarity and so else case at end implies > rest. */
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 9)
+   vsockCachep = kmem_cache_create("vsock", sizeof (VSockVmciSock),
+                                   0, SLAB_HWCACHE_ALIGN, NULL, NULL);
+   if (!vsockCachep) {
+      err = -ENOMEM;
+   }
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
    err = sk_alloc_slab(&vsockVmciProto, "vsock");
    if (err != 0) {
       sk_alloc_slab_error(&vsockVmciProto);
@@ -2963,7 +2755,11 @@ VSockVmciRegisterProto(void)
 static void
 VSockVmciUnregisterProto(void)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 5)
+   /* Simply here for clarity and so else case at end implies > rest. */
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 9)
+   kmem_cache_destroy(vsockCachep);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
    sk_free_slab(&vsockVmciProto);
 #else
    proto_unregister(&vsockVmciProto);
@@ -3351,7 +3147,6 @@ VSockVmciStreamConnect(struct socket *sock,   // IN
    VSockVmciSock *vsk;
    struct sockaddr_vm *remoteAddr;
    long timeout;
-   Bool oldPktProto = FALSE;
    COMPAT_DEFINE_WAIT(wait);
 
    err = 0;
@@ -3408,22 +3203,10 @@ VSockVmciStreamConnect(struct socket *sock,   // IN
 
       sk->compat_sk_state = SS_CONNECTING;
 
-      if (VSockVmciOldProtoOverride(&oldPktProto) && oldPktProto) {
-         err = VSOCK_SEND_CONN_REQUEST(sk, vsk->queuePairSize);
-         if (err < 0) {
-            sk->compat_sk_state = SS_UNCONNECTED;
-            goto out;
-         }
-      } else {
-         int supportedProtoVersions = VSockVmciNewProtoSupportedVersions();
-         err = VSOCK_SEND_CONN_REQUEST2(sk, vsk->queuePairSize,
-                                        supportedProtoVersions);
-         if (err < 0) {
-            sk->compat_sk_state = SS_UNCONNECTED;
-            goto out;
-         }
-
-         vsk->sentRequest = TRUE;
+      err = VSOCK_SEND_CONN_REQUEST(sk, vsk->queuePairSize);
+      if (err < 0) {
+         sk->compat_sk_state = SS_UNCONNECTED;
+         goto out;
       }
 
       /*
@@ -3931,11 +3714,32 @@ VSockVmciShutdown(struct socket *sock,  // IN
  *----------------------------------------------------------------------------
  */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 43)
+static int
+VSockVmciDgramSendmsg(struct socket *sock,          // IN: socket to send on
+                      struct msghdr *msg,           // IN: message to send
+                      int len,                      // IN: length of message
+                      struct scm_cookie *scm)       // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 65)
+static int
+VSockVmciDgramSendmsg(struct kiocb *kiocb,          // UNUSED
+                      struct socket *sock,          // IN: socket to send on
+                      struct msghdr *msg,           // IN: message to send
+                      int len,                      // IN: length of message
+                      struct scm_cookie *scm);      // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 2)
+static int
+VSockVmciDgramSendmsg(struct kiocb *kiocb,          // UNUSED
+                      struct socket *sock,          // IN: socket to send on
+                      struct msghdr *msg,           // IN: message to send
+                      int len)                      // IN: length of message
+#else
 static int
 VSockVmciDgramSendmsg(struct kiocb *kiocb,          // UNUSED
                       struct socket *sock,          // IN: socket to send on
                       struct msghdr *msg,           // IN: message to send
                       size_t len)                   // IN: length of message
+#endif
 {
    int err;
    struct sock *sk;
@@ -4221,11 +4025,32 @@ VSockVmciStreamGetsockopt(struct socket *sock,          // IN
  *----------------------------------------------------------------------------
  */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 43)
+static int
+VSockVmciStreamSendmsg(struct socket *sock,          // IN: socket to send on
+                       struct msghdr *msg,           // IN: message to send
+                       int len,                      // IN: length of message
+                       struct scm_cookie *scm)       // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 65)
+static int
+VSockVmciStreamSendmsg(struct kiocb *kiocb,          // UNUSED
+                       struct socket *sock,          // IN: socket to send on
+                       struct msghdr *msg,           // IN: message to send
+                       int len,                      // IN: length of message
+                       struct scm_cookie *scm);      // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 2)
+static int
+VSockVmciStreamSendmsg(struct kiocb *kiocb,          // UNUSED
+                       struct socket *sock,          // IN: socket to send on
+                       struct msghdr *msg,           // IN: message to send
+                       int len)                      // IN: length of message
+#else
 static int
 VSockVmciStreamSendmsg(struct kiocb *kiocb,          // UNUSED
                        struct socket *sock,          // IN: socket to send on
                        struct msghdr *msg,           // IN: message to send
                        size_t len)                   // IN: length of message
+#endif
 {
    struct sock *sk;
    VSockVmciSock *vsk;
@@ -4303,7 +4128,6 @@ VSockVmciStreamSendmsg(struct kiocb *kiocb,          // UNUSED
          }
 
          NOTIFYCALLRET(vsk, err, sendPreBlock, sk, &sendData);
-
          if (err < 0) {
             goto outWait;
          }
@@ -4395,12 +4219,36 @@ out:
  *----------------------------------------------------------------------------
  */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 43)
+static int
+VSockVmciDgramRecvmsg(struct socket *sock,           // IN: socket to receive from
+                      struct msghdr *msg,            // IN/OUT: message to receive into
+                      int len,                       // IN: length of receive buffer
+                      int flags,                     // IN: receive flags
+                      struct scm_cookie *scm)        // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 65)
+static int
+VSockVmciDgramRecvmsg(struct kiocb *kiocb,          // UNUSED
+                      struct socket *sock,          // IN: socket to receive from
+                      struct msghdr *msg,           // IN/OUT: message to receive into
+                      int len,                      // IN: length of receive buffer
+                      int flags,                    // IN: receive flags
+                      struct scm_cookie *scm)       // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 2)
+static int
+VSockVmciDgramRecvmsg(struct kiocb *kiocb,          // UNUSED
+                      struct socket *sock,          // IN: socket to receive from
+                      struct msghdr *msg,           // IN/OUT: message to receive into
+                      int len,                      // IN: length of receive buffer
+                      int flags)                    // IN: receive flags
+#else
 static int
 VSockVmciDgramRecvmsg(struct kiocb *kiocb,          // UNUSED
                       struct socket *sock,          // IN: socket to receive from
                       struct msghdr *msg,           // IN/OUT: message to receive into
                       size_t len,                   // IN: length of receive buffer
                       int flags)                    // IN: receive flags
+#endif
 {
    int err;
    int noblock;
@@ -4486,12 +4334,36 @@ out:
  *----------------------------------------------------------------------------
  */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 43)
+static int
+VSockVmciStreamRecvmsg(struct socket *sock,           // IN: socket to receive from
+                       struct msghdr *msg,            // IN/OUT: message to receive into
+                       int len,                       // IN: length of receive buffer
+                       int flags,                     // IN: receive flags
+                       struct scm_cookie *scm)        // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 65)
+static int
+VSockVmciStreamRecvmsg(struct kiocb *kiocb,          // UNUSED
+                       struct socket *sock,          // IN: socket to receive from
+                       struct msghdr *msg,           // IN/OUT: message to receive into
+                       int len,                      // IN: length of receive buffer
+                       int flags,                    // IN: receive flags
+                       struct scm_cookie *scm)       // UNUSED
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 2)
+static int
+VSockVmciStreamRecvmsg(struct kiocb *kiocb,          // UNUSED
+                       struct socket *sock,          // IN: socket to receive from
+                       struct msghdr *msg,           // IN/OUT: message to receive into
+                       int len,                      // IN: length of receive buffer
+                       int flags)                    // IN: receive flags
+#else
 static int
 VSockVmciStreamRecvmsg(struct kiocb *kiocb,          // UNUSED
                        struct socket *sock,          // IN: socket to receive from
                        struct msghdr *msg,           // IN/OUT: message to receive into
                        size_t len,                   // IN: length of receive buffer
                        int flags)                    // IN: receive flags
+#endif
 {
    struct sock *sk;
    VSockVmciSock *vsk;
@@ -4695,11 +4567,17 @@ out:
 static int
 VSockVmciCreate(struct socket *sock,  // IN
                 int protocol)         // IN
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 34)
 static int
 VSockVmciCreate(struct net *net,      // IN
                 struct socket *sock,  // IN
                 int protocol)         // IN
+#else
+static int
+VSockVmciCreate(struct net *net,      // IN
+                struct socket *sock,  // IN
+                int protocol,         // IN
+                int kern)             // IN
 #endif
 {
    if (!sock) {
@@ -4756,10 +4634,18 @@ VSockVmciIoctl32Handler(unsigned int fd,        // IN
                         struct file * filp)     // IN
 {
    int ret;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 4, 26) || \
+   (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 3))
+   lock_kernel();
+#endif
    ret = -ENOTTY;
    if (filp && filp->f_op && filp->f_op->ioctl == VSockVmciDevIoctl) {
       ret = VSockVmciDevIoctl(filp->f_dentry->d_inode, filp, iocmd, ioarg);
    }
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 4, 26) || \
+   (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 3))
+   unlock_kernel();
+#endif
    return ret;
 }
 #endif /* !HAVE_COMPAT_IOCTL */
@@ -5076,7 +4962,6 @@ MODULE_AUTHOR("VMware, Inc.");
 MODULE_DESCRIPTION("VMware Virtual Socket Family");
 MODULE_VERSION(VSOCK_DRIVER_VERSION_STRING);
 MODULE_LICENSE("GPL v2");
-
 /*
  * Starting with SLE10sp2, Novell requires that IHVs sign a support agreement
  * with them and mark their kernel modules as externally supported via a
@@ -5084,9 +4969,3 @@ MODULE_LICENSE("GPL v2");
  * by default (i.e., neither mkinitrd nor modprobe will accept it).
  */
 MODULE_INFO(supported, "external");
-
-#ifdef VMX86_DEVEL
-/* We only support protocol negotiation overrides on devel builds. */
-module_param(protocolOverride, int, 0);
-MODULE_PARM_DESC(protocolOverride, "Specify a vsock protocol (auto negotiated by default");
-#endif

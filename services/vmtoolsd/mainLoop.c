@@ -35,11 +35,10 @@
 #include "conf.h"
 #include "guestApp.h"
 #include "serviceObj.h"
-#include "system.h"
 #include "util.h"
+#include "vm_app.h"
 #include "vmcheck.h"
 #include "vmtools.h"
-#include "vmware/guestrpc/tclodefs.h"
 
 
 /**
@@ -67,15 +66,18 @@ ToolsCoreInitializeDebug(ToolsServiceState *state)
    }
 
    libdata = initFn(&state->ctx, state->debugPlugin);
-   ASSERT(libdata != NULL);
-   ASSERT(libdata->debugPlugin != NULL);
+   g_assert(libdata != NULL);
+   g_assert(libdata->debugPlugin != NULL);
 
    state->debugData = libdata;
 }
 
 
 /**
- * Timer callback that just calls ToolsCore_ReloadConfig().
+ * Reloads the config file and re-configure the logging subsystem if the
+ * log file was updated. If the config file is being loaded for the first
+ * time, try to upgrade it to the new version if an old version is
+ * detected.
  *
  * @param[in]  clientData  Service state.
  *
@@ -83,9 +85,44 @@ ToolsCoreInitializeDebug(ToolsServiceState *state)
  */
 
 static gboolean
-ToolsCoreConfFileCb(gpointer clientData)
+ToolsCoreReloadConfig(gpointer clientData)
 {
-   ToolsCore_ReloadConfig(clientData, FALSE);
+   ToolsServiceState *state = clientData;
+   char *confFile = state->configFile;
+   gboolean loaded = TRUE;
+
+   if (confFile == NULL) {
+      confFile = VMTools_GetToolsConfFile();
+   }
+
+   if (state->ctx.config == NULL) {
+      state->ctx.config = VMTools_LoadConfig(confFile,
+                                             G_KEY_FILE_NONE,
+                                             state->mainService);
+      state->configMtime = time(NULL);
+      if (state->ctx.config == NULL) {
+         /* Couldn't load the config file. Just create an empty dictionary. */
+         state->ctx.config = g_key_file_new();
+      }
+   } else if (VMTools_ReloadConfig(confFile,
+                                   G_KEY_FILE_NONE,
+                                   &state->ctx.config,
+                                   &state->configMtime)) {
+      g_debug("Config file reloaded.\n");
+   } else {
+      loaded = FALSE;
+   }
+
+   if (loaded) {
+      VMTools_ConfigLogging(state->ctx.config);
+      if (state->log) {
+         VMTools_EnableLogging(state->log);
+      }
+   }
+
+   if (state->configFile == NULL) {
+      g_free(confFile);
+   }
    return TRUE;
 }
 
@@ -122,13 +159,6 @@ ToolsCore_Cleanup(ToolsServiceState *state)
       state->debugLib = NULL;
    }
 
-#if !defined(_WIN32)
-   if (state->ctx.envp) {
-      System_FreeNativeEnviron(state->ctx.envp);
-      state->ctx.envp = NULL;
-   }
-#endif
-
    g_object_unref(state->ctx.serviceObj);
    state->ctx.serviceObj = NULL;
    state->ctx.config = NULL;
@@ -148,30 +178,51 @@ void
 ToolsCore_DumpState(ToolsServiceState *state)
 {
    guint i;
-   const char *providerStates[] = {
-      "idle",
-      "active",
-      "error"
-   };
-
-   ASSERT_ON_COMPILE(ARRAYSIZE(providerStates) == TOOLS_PROVIDER_MAX);
 
    g_message("VM Tools Service '%s':\n", state->name);
    g_message("   Plugin path: %s\n", state->pluginPath);
 
-   for (i = 0; i < state->providers->len; i++) {
-      ToolsAppProviderReg *prov = &g_array_index(state->providers,
-                                                 ToolsAppProviderReg,
-                                                 i);
-      g_message("   App provider: %s (%s)\n",
-                prov->prov->name,
-                providerStates[prov->state]);
-      if (prov->prov->dumpState != NULL) {
-         prov->prov->dumpState(&state->ctx, prov->prov, NULL);
-      }
-   }
+   if (state->plugins != NULL) {
+      for (i = 0; i < state->plugins->len; i++) {
+         ToolsPlugin *plugin = g_ptr_array_index(state->plugins, i);
+         GArray *regs = (plugin->data != NULL) ? plugin->data->regs : NULL;
+         guint j;
 
-   ToolsCore_DumpPluginInfo(state);
+         g_message("   Plugin: %s\n", plugin->data->name);
+
+         if (regs == NULL) {
+            g_message("      No registrations.\n");
+            continue;
+         }
+
+         for (j = 0; j < regs->len; j++) {
+            guint k;
+            ToolsAppReg *reg = &g_array_index(regs, ToolsAppReg, j);
+
+            switch (reg->type) {
+            case TOOLS_APP_GUESTRPC:
+               for (k = 0; k < reg->data->len; k++) {
+                  RpcChannelCallback *cb = &g_array_index(reg->data,
+                                                          RpcChannelCallback,
+                                                          k);
+                  g_message("      RPC callback: %s\n", cb->name);
+               }
+               break;
+
+            case TOOLS_APP_SIGNALS:
+               for (k = 0; k < reg->data->len; k++) {
+                  ToolsPluginSignalCb *sig = &g_array_index(reg->data,
+                                                            ToolsPluginSignalCb,
+                                                            k);
+                  g_message("      Signal callback: %s\n", sig->signame);
+               }
+               break;
+            }
+         }
+      }
+   } else {
+      g_message("   No plugins loaded.");
+   }
 
    g_signal_emit_by_name(state->ctx.serviceObj,
                          TOOLS_CORE_SIG_DUMP_STATE,
@@ -202,65 +253,6 @@ ToolsCore_GetTcloName(ToolsServiceState *state)
 
 
 /**
- * Reloads the config file and re-configure the logging subsystem if the
- * log file was updated. If the config file is being loaded for the first
- * time, try to upgrade it to the new version if an old version is
- * detected.
- *
- * @param[in]  state       Service state.
- * @param[in]  force       Whether to force reconfiguration of the logging
- *                         subsystem.
- */
-
-void
-ToolsCore_ReloadConfig(ToolsServiceState *state,
-                       gboolean force)
-{
-   char *confFile;
-   gboolean loaded = TRUE;
-
-   VMTools_SetDefaultLogDomain(state->name);
-
-   confFile = g_strdup(state->configFile);
-   if (confFile == NULL) {
-      confFile = VMTools_GetToolsConfFile();
-   }
-
-   if (state->ctx.config == NULL) {
-      state->ctx.config = VMTools_LoadConfig(confFile,
-                                             G_KEY_FILE_NONE,
-                                             state->mainService);
-      state->configMtime = time(NULL);
-      if (state->ctx.config == NULL) {
-         /* Couldn't load the config file. Just create an empty dictionary. */
-         state->ctx.config = g_key_file_new();
-      }
-   } else if (VMTools_ReloadConfig(confFile,
-                                   G_KEY_FILE_NONE,
-                                   &state->ctx.config,
-                                   &state->configMtime)) {
-      g_debug("Config file reloaded.\n");
-
-      /* Inform plugins of config file update. */
-      g_signal_emit_by_name(state->ctx.serviceObj,
-                            TOOLS_CORE_SIG_CONF_RELOAD,
-                            &state->ctx);
-   } else {
-      loaded = FALSE;
-   }
-
-   if (force || loaded) {
-      VMTools_ConfigLogging(state->ctx.config);
-      if (state->log) {
-         VMTools_EnableLogging(state->log);
-      }
-   }
-
-   g_free(confFile);
-}
-
-
-/**
  * Performs any initial setup steps for the service's main loop.
  *
  * @param[in]  state       Service state.
@@ -277,11 +269,11 @@ ToolsCore_Setup(ToolsServiceState *state)
       g_thread_init(NULL);
    }
 
-   ToolsCore_ReloadConfig(state, FALSE);
+   VMTools_SetDefaultLogDomain(state->name);
+   ToolsCoreReloadConfig(state);
 
    /* Initializes the app context. */
    gctx = g_main_context_default();
-   state->ctx.version = TOOLS_CORE_API_V1;
    state->ctx.name = state->name;
    state->ctx.errorCode = EXIT_SUCCESS;
    state->ctx.mainLoop = g_main_loop_new(gctx, TRUE);
@@ -305,7 +297,7 @@ ToolsCore_Setup(ToolsServiceState *state)
     * Start the RPC channel if it's been created. The channel may be NULL if this is
     * not running in the context of a VM.
     */
-   if (state->ctx.rpc && !RpcChannel_Start(state->ctx.rpc)) {
+   if (state->ctx.rpc && !state->ctx.rpc->start(state->ctx.rpc)) {
       goto error;
    }
 
@@ -318,7 +310,7 @@ ToolsCore_Setup(ToolsServiceState *state)
 
 error:
    if (state->ctx.rpc != NULL) {
-      RpcChannel_Destroy(state->ctx.rpc);
+      state->ctx.rpc->shutdown(state->ctx.rpc);
       state->ctx.rpc = NULL;
    }
    if (state->ctx.mainLoop != NULL) {
@@ -350,8 +342,7 @@ ToolsCore_Run(ToolsServiceState *state)
       return 0;
    }
 
-   g_timeout_add(CONF_POLL_TIME * 10, ToolsCoreConfFileCb, state);
-
+   g_timeout_add(CONF_POLL_TIME * 10, ToolsCoreReloadConfig, state);
 #if defined(__APPLE__)
    ToolsCore_CFRunLoop(state);
 #else

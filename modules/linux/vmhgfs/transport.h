@@ -25,7 +25,6 @@
 
 #include "request.h"
 #include "compat_mutex.h"
-#include "hgfsProto.h"
 
 /*
  * There are the operations a channel should implement.
@@ -34,15 +33,15 @@ struct HgfsTransportChannel;
 typedef struct HgfsTransportChannelOps {
    Bool (*open)(struct HgfsTransportChannel *);
    void (*close)(struct HgfsTransportChannel *);
-   HgfsReq* (*allocate)(size_t payloadSize);
    int (*send)(struct HgfsTransportChannel *, HgfsReq *);
+   int (*recv)(struct HgfsTransportChannel *, char **, size_t *);
+   void (*exit)(struct HgfsTransportChannel *);
 } HgfsTransportChannelOps;
 
 typedef enum {
    HGFS_CHANNEL_UNINITIALIZED,
    HGFS_CHANNEL_NOTCONNECTED,
    HGFS_CHANNEL_CONNECTED,
-   HGFS_CHANNEL_DEAD,   /* Error has been detected, need to shut it down. */
 } HgfsChannelStatus;
 
 typedef struct HgfsTransportChannel {
@@ -56,11 +55,9 @@ typedef struct HgfsTransportChannel {
 /* Public functions (with respect to the entire module). */
 void HgfsTransportInit(void);
 void HgfsTransportExit(void);
-HgfsReq *HgfsTransportAllocateRequest(size_t payloadSize);
 int HgfsTransportSendRequest(HgfsReq *req);
-HgfsReq *HgfsTransportGetPendingRequest(HgfsHandle id);
-void HgfsTransportFinishRequest(HgfsReq *req, Bool success, Bool do_put);
-void HgfsTransportFlushRequests(void);
-void HgfsTransportMarkDead(void);
+void HgfsTransportProcessPacket(char *receivedPacket,
+                                size_t receivedSize);
+void HgfsTransportBeforeExitingRecvThread(void);
 
 #endif // _HGFS_DRIVER_TRANSPORT_H_

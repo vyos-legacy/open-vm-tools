@@ -28,7 +28,6 @@
 #include "unityWindowTracker.h"
 #include "unity.h"
 
-
 /**
  * Container used to store and send Unity updates.
  */
@@ -54,6 +53,9 @@ typedef struct _UnityPlatform UnityPlatform;
  * Implemented by unityPlatform[Win32|X11|Cocoa (ha!)].c
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
 Bool UnityPlatformIsSupported(void);
 UnityPlatform *UnityPlatformInit(UnityWindowTracker *tracker,
                                  UnityUpdateChannel *updateChannel,
@@ -88,7 +90,9 @@ Bool UnityPlatformMaximizeWindow(UnityPlatform *up, UnityWindowId window);
 Bool UnityPlatformUnmaximizeWindow(UnityPlatform *up, UnityWindowId window);
 Bool UnityPlatformGetWindowContents(UnityPlatform *up,
                                     UnityWindowId window,
-                                    DynBuf *imageData);
+                                    DynBuf *imageData,
+                                    uint32 *width,
+                                    uint32 *height);
 Bool UnityPlatformMoveResizeWindow(UnityPlatform *up,
                                    UnityWindowId window,
                                    UnityRect *moveResizeRect);
@@ -117,6 +121,11 @@ Bool UnityPlatformStickWindow(UnityPlatform *up,
                               UnityWindowId windowId);
 Bool UnityPlatformUnstickWindow(UnityPlatform *up,
                                 UnityWindowId windowId);
+void UnityPlatformSetInterlockMinimizeOperation(UnityPlatform *up,Bool enabled);
+Bool UnityPlatformConfirmMinimizeOperation(UnityPlatform *up,
+                                           UnityWindowId windowId,
+                                           uint32 sequence,
+                                           Bool allow);
 Bool UnityPlatformIsUnityRunning(UnityPlatform *up);
 Bool UnityPlatformStartHelperThreads(UnityPlatform *up);
 void UnityPlatformKillHelperThreads(UnityPlatform *up);
@@ -128,10 +137,36 @@ void UnityPlatformSetActiveDnDDetWnd(UnityPlatform *up, UnityDnD *detWnd);
 
 void UnityPlatformDoUpdate(UnityPlatform *up, Bool incremental);
 
+void UnityPlatformSetConfigDesktopColor(UnityPlatform *up, int desktopColor);
+
+Bool UnityPlatformRequestWindowContents(UnityPlatform *up,
+                                        UnityWindowId windowIds[],
+                                        uint32 numWindowIds);
+
+/*
+ * Function called by UnityUpdateCallbackFn whenever a window is removed from
+ * the tracker.
+ *
+ * NOTE: This function is called with the platform lock held.
+ */
+void UnityPlatformWillRemoveWindow(UnityPlatform *up, UnityWindowId windowId);
+
 /* Functions implemented in unity.c for use by the platform-specific code. */
 void UnityGetUpdateCommon(int flags, DynBuf *buf);
 Bool UnityUpdateChannelInit(UnityUpdateChannel *updateChannel);
 void UnityUpdateChannelCleanup(UnityUpdateChannel *updateChannel);
 Bool UnitySendUpdates(UnityUpdateChannel *updateChannel);
+Bool UnitySendRequestMinimizeOperation(UnityWindowId windowId, uint32 sequence);
+
+/* Sends the provided window contents to the host. */
+Bool UnitySendWindowContents(UnityWindowId windowID,
+                             uint32 imageWidth,
+                             uint32 imageHeight,
+                             const char *imageData,
+                             uint32 imageLength);
+
+#ifdef __cplusplus
+};
+#endif // __cplusplus
 
 #endif

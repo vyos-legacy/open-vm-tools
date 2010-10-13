@@ -18,21 +18,12 @@ EXTRA_ARGS += "SYSDIR=@SYSDIR@"
 endif
 
 if LINUX
-export pvscsidir := $(MODULES_DIR)/drivers/scsi
 export vmblockdir := $(MODULES_DIR)/fs/vmblock
 export vmcidir := $(MODULES_DIR)/drivers/misc
 export vmhgfsdir := $(MODULES_DIR)/fs/vmhgfs
-export vmmemctldir := $(MODULES_DIR)/drivers/misc
 export vmsyncdir := $(MODULES_DIR)/drivers/misc
 export vmxnetdir := $(MODULES_DIR)/drivers/net
-export vmxnet3dir := $(MODULES_DIR)/drivers/net
 export vsockdir := $(MODULES_DIR)/net/vsock
-#if WITH_ROOT_PRIVILEGES
-#export DEPMOD := depmod -a
-#endif WITH_ROOT_PRIVILEGES
-export DEPMOD := true
-
-include_HEADERS = $(top_srcdir)/lib/include/vmci_sockets.h
 endif LINUX
 
 if SOLARIS
@@ -77,13 +68,11 @@ if LINUX
 	for MOD in $(MODULES); do                                              \
 	   $(INSTALL) -d $(DESTDIR)`eval echo '$$'$${MOD}dir`;                 \
 	   $(INSTALL) -m644 $(modulesrc)/$(MODULES_OS)/$$MOD/$$MOD.ko          \
-	      $(DESTDIR)`eval echo '$$'$${MOD}dir`;                         \
+	      $(DESTDIR)`eval echo '$$'$${MOD}dir`;                            \
 	done
-	eval "$$DEPMOD"
 endif
 
 uninstall-hook:
 	for MOD in $(MODULES); do                                              \
 	   rm -f $(DESTDIR)`eval echo '$$'$${MOD}dir`/$$MOD.ko &> /dev/null;\
 	done
-	eval "$$DEPMOD"

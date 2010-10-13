@@ -111,7 +111,7 @@ extern void Hostinfo_LogMemUsage(void);
  */
 
 typedef struct {
-   CpuidVendor vendor;
+   CpuidVendors vendor;
 
    uint32 version;
    uint8 family;
@@ -129,6 +129,7 @@ typedef struct {
 
 
 extern uint32 Hostinfo_NumCPUs(void);
+extern char *Hostinfo_GetCpuidStr(void);
 extern Bool Hostinfo_GetCpuid(HostinfoCpuIdInfo *info);
 
 #if defined(VMX86_SERVER)
@@ -187,8 +188,5 @@ Bool Hostinfo_GetAllCpuid(CPUIDQuery *query);
 void Hostinfo_LogLoadAverage(void);
 Bool Hostinfo_GetLoadAverage(uint32 *l);
 
-#ifdef __APPLE__
-size_t Hostinfo_GetKernelZoneElemSize(char const *name);
-#endif
 
 #endif /* ifndef _HOSTINFO_H_ */

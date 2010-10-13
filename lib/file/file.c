@@ -23,6 +23,10 @@
  *        fileWin32.c, etc.
  */
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -43,6 +47,7 @@
 #include "util.h"
 #include "str.h"
 #include "msg.h"
+#include "random.h"
 #include "uuid.h"
 #include "config.h"
 #include "posix.h"
@@ -183,12 +188,10 @@ File_GetFilePermissions(ConstUnicode pathName,  // IN:
       return FALSE;
    }
    *mode = fileData.fileMode;
-#if defined(_WIN32)
+#ifdef _WIN32
       /*
-       *  On Win32 implementation of FileAttributes does not return execution
-       * bit.
+       *  On Win32 implementation of FileAttributes does not return execution bit.
        */
-
       if (FileIO_Access(pathName, FILEIO_ACCESS_EXEC) == FILEIO_SUCCESS) {
          *mode |= S_IXUSR;
       }
@@ -1053,8 +1056,7 @@ File_StripSlashes(ConstUnicode path) // IN
        * Don't strip first slash on Windows, since we want at least
        * one slash to trail a drive letter/colon or UNC specifier.
        */
-
-#if defined(_WIN32)
+#ifdef _WIN32
       while ((i > 1) && (('/' == dir2[i - 1]) ||
                          ('\\' == dir2[i - 1]))) {
 #else
@@ -1272,7 +1274,6 @@ File_CopyFromFdToFd(FileIODescriptor src,  // IN:
       if (!FileIO_IsSuccess(fretR) && (fretR != FILEIO_READ_ERROR_EOF)) {
          Msg_Append(MSGID(File.CopyFromFdToFd.read.failure)
                                "Read error: %s.\n\n", FileIO_MsgError(fretR));
-
          return FALSE;
       }
 
@@ -1280,7 +1281,6 @@ File_CopyFromFdToFd(FileIODescriptor src,  // IN:
       if (!FileIO_IsSuccess(fretW)) {
          Msg_Append(MSGID(File.CopyFromFdToFd.write.failure)
                               "Write error: %s.\n\n", FileIO_MsgError(fretW));
-
          return FALSE;
       }
    } while (fretR != FILEIO_READ_ERROR_EOF);
@@ -1462,7 +1462,6 @@ File_CopyFromNameToName(ConstUnicode srcName,  // IN:
       Msg_Append(MSGID(File.CopyFromNameToName.open.failure)
                  "Unable to open the '%s' file for read access: %s.\n\n",
                  UTF8(srcName), FileIO_MsgError(fret));
-
       return FALSE;
    }
 
@@ -1519,7 +1518,6 @@ File_CopyFromFd(FileIODescriptor src,     // IN:
       Msg_Append(MSGID(File.CopyFromFdToName.create.failure)
                  "Unable to create a new '%s' file: %s.\n\n", UTF8(dstName),
                  FileIO_MsgError(fret));
-
       return FALSE;
    }
 
@@ -1580,7 +1578,6 @@ File_Copy(ConstUnicode srcName,    // IN:
       Msg_Append(MSGID(File.Copy.open.failure)
                  "Unable to open the '%s' file for read access: %s.\n\n",
                  UTF8(srcName), FileIO_MsgError(fret));
-
       return FALSE;
    }
 
@@ -1729,81 +1726,6 @@ File_SupportsLargeFiles(ConstUnicode pathName)  // IN:
 }
 
 
-/*
- *-----------------------------------------------------------------------------
- *
- * File_MapPathPrefix --
- *
- *      Given a path and a newPrefix -> oldPrefix mapping, transform
- *      oldPath according to the mapping.
- *
- * Results:
- *      The new path, or NULL if there is no mapping.
- *
- * Side effects:
- *      The returned string is allocated, free it.
- *
- *-----------------------------------------------------------------------------
- */
-
-char *
-File_MapPathPrefix(const char *oldPath,               // IN
-                   const char **oldPrefixes,          // IN
-                   const char **newPrefixes,          // IN
-                   size_t numPrefixes)                // IN
-{
-   int i;
-   size_t oldPathLen = strlen(oldPath);
-
-   for (i = 0; i < numPrefixes; i++) {
-      char *newPath;
-      char *oldPrefix;
-      char *newPrefix;
-      size_t oldPrefixLen;
-
-      oldPrefix = File_StripSlashes(oldPrefixes[i]);
-      newPrefix = File_StripSlashes(newPrefixes[i]);
-      oldPrefixLen = strlen(oldPrefix);
-
-      /*
-       * If the prefix matches on a DIRSEPS boundary, or the prefix is the
-       * whole string, replace it.
-       * If we don't insist on matching a whole directory name, we could
-       * mess things of if one directory is a substring of another.
-       */
-
-      if ((oldPathLen >= oldPrefixLen) &&
-          (memcmp(oldPath, oldPrefix, oldPrefixLen) == 0) &&
-          (strchr(VALID_DIRSEPS, oldPath[oldPrefixLen]) ||
-              (oldPath[oldPrefixLen] == '\0'))) {
-         size_t newPrefixLen = strlen(newPrefix);
-         size_t newPathLen = (oldPathLen - oldPrefixLen) + newPrefixLen;
-
-         ASSERT(newPathLen > 0);
-         ASSERT(oldPathLen >= oldPrefixLen);
-
-         newPath = Util_SafeMalloc((newPathLen + 1) * sizeof(char));
-         memcpy(newPath, newPrefix, newPrefixLen);
-         memcpy(newPath + newPrefixLen, oldPath + oldPrefixLen,
-                oldPathLen - oldPrefixLen + 1);
-         /*
-          * It should only match once.  Weird self-referencing mappings
-          * aren't allowed.
-          */
-
-         free(oldPrefix);
-         free(newPrefix);
-
-         return newPath;
-      }
-      free(oldPrefix);
-      free(newPrefix);
-   }
-
-   return NULL;
-}
-
-
 #if !defined(N_PLAT_NLM)
 /*
  *----------------------------------------------------------------------------
@@ -1910,12 +1832,11 @@ File_CreateDirectoryHierarchy(ConstUnicode pathName)
  * File_DeleteDirectoryTree --
  *
  *      Deletes the specified directory tree. If filesystem errors are
- *      encountered along the way, the function will continue to delete what
- *      it can but will return FALSE.
+ *      encountered along the way, the function will continue to delete what it
+ *      can but will return FALSE.
  *
  * Results:
- *      TRUE   the entire tree was deleted or didn't exist
- *      FALSE  otherwise.
+ *      TRUE if the entire tree was deleted or didn't exist, FALSE otherwise.
  *      
  * Side effects:
  *      Deletes the directory tree from disk.
@@ -1956,46 +1877,29 @@ File_DeleteDirectoryTree(ConstUnicode pathName)  // IN: directory to delete
 
    for (i = 0; i < numFiles; i++) {
       Unicode curPath;
-      struct stat statbuf;
 
       curPath = Unicode_Append(base, fileList[i]);
 
-      if (Posix_Lstat(curPath, &statbuf) == 0) {
-         switch (statbuf.st_mode & S_IFMT) {
-         case S_IFDIR:
-            /* Directory, recurse */
-            if (!File_DeleteDirectoryTree(curPath)) {
-               sawFileError = TRUE;
-            }
-            break;
-
-#if !defined(_WIN32)
-         case S_IFLNK:
-            /* Delete symlink, not what it points to */
-            if (FileDeletion(curPath, FALSE) != 0) {
-               sawFileError = TRUE;
-            }
-            break;
-#endif
-
-         default:
-            if (FileDeletion(curPath, FALSE) != 0) {
-#if defined(_WIN32)
-               if (File_SetFilePermissions(curPath, S_IWUSR)) {
-                  if (FileDeletion(curPath, FALSE) != 0) {
-                     sawFileError = TRUE;
-                  }
-               } else {
-                  sawFileError = TRUE;
-               }
-#else
-               sawFileError = TRUE;
-#endif
-            }
-            break;
+      if (File_IsDirectory(curPath)) {
+         /* is dir, recurse */
+         if (!File_DeleteDirectoryTree(curPath)) {
+            sawFileError = TRUE;
          }
       } else {
-         sawFileError = TRUE;
+         /* is file, delete */
+         if (File_Unlink(curPath) == -1) {
+#if defined(_WIN32)
+            if (File_SetFilePermissions(curPath, S_IWUSR)) {
+               if (File_Unlink(curPath) == -1) {
+                  sawFileError = TRUE;
+               }
+            } else {
+               sawFileError = TRUE;
+            }
+#else
+            sawFileError = TRUE;
+#endif
+         }
       }
 
       Unicode_Free(curPath);
@@ -2102,7 +2006,7 @@ File_FindFileInSearchPath(const char *fileIn,       // IN
    char *cur;
    char *tok;
    Bool found;
-   char *saveptr;
+   char *saveptr = NULL;
    char *sp = NULL;
    char *file = NULL;
 
@@ -2328,12 +2232,12 @@ File_ExpandAndCheckDir(const char *dirName)
  *
  * FileSleeper
  *
- *	Sleep for the specified number of milliseconds plus some "slop time".
- *      The "slop time" is added to provide some "jitter" on retries such
+ *	Sleep for a random amount of time between the specified minimum and
+ *      maximum sleep values. This provides "jitter" on retries such
  *      that two or more threads don't easily get into resonance.
  *
  * Results:
- *      Sonambulistic behavior
+ *      Sonambulistic behavior; the amount of time slept is returned.
  *
  * Side effects:
  *	None
@@ -2341,24 +2245,43 @@ File_ExpandAndCheckDir(const char *dirName)
  *----------------------------------------------------------------------
  */
 
-void
-FileSleeper(uint32 msecSleepTime)  // IN:
+uint32
+FileSleeper(uint32 msecMinSleepTime,  // IN:
+            uint32 msecMaxSleepTime)  // IN:
 {
-   static uint32 rng = 0;
+   uint32 variance;
+   uint32 msecActualSleepTime;
 
-   rng = 1103515245*rng + 12345;  // simple, noisy RNG
+   variance = msecMaxSleepTime - msecMinSleepTime;
 
-   /* Add some "slop" to the sleep time */
-   if (msecSleepTime < 50) {
-      msecSleepTime += rng & 1;
+   if (variance == 0) {
+      msecActualSleepTime = msecMinSleepTime;
    } else {
-      msecSleepTime += rng & 3;
+      int sample;
+      float fpRand;
+      static int32 rng;  // implicitly 0
+
+      if (rng == 0) {
+#if defined(_WIN32)
+         rng = GetCurrentProcessId();
+#else
+         rng = getpid();
+#endif
+      }
+
+      sample = FastRand(rng);
+      fpRand = ((float) sample) / ((float) MAX_INT32);
+      rng = sample;
+
+      msecActualSleepTime = msecMinSleepTime + (uint32) (fpRand * variance);
    }
 
 #if defined(_WIN32)
-   Sleep(msecSleepTime);
+   Sleep(msecActualSleepTime);
 #else
-   usleep(1000 * msecSleepTime);
+   usleep(1000 * msecActualSleepTime);
 #endif
+
+   return msecActualSleepTime;
 }
 #endif // N_PLAT_NLM

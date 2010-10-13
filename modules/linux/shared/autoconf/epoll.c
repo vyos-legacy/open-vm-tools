@@ -22,8 +22,8 @@
  * never had it, but some distros backported epoll patch.
  */
 
-#include <linux/autoconf.h>
-#include <linux/version.h>
+#include "compat_version.h"
+#include "compat_autoconf.h"
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 0)
 #include <linux/poll.h>

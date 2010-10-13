@@ -78,6 +78,8 @@ EXTERN void Log_UpdateState(Bool enable, Bool append, unsigned keepOld,
 EXTERN Bool Log_SwitchFile(const char *fileName, const char *config, Bool copy);
 EXTERN Bool Log_CopyFile(const char *fileName);
 
+EXTERN size_t Log_MakeTimeString(Bool millisec, char *buf, size_t max);
+
 /* Logging that uses the custom guest throttling configuration. */
 EXTERN void GuestLog_Init(void);
 EXTERN void GuestLog_Log(const char *fmt, ...) PRINTF_DECL(1, 2);

@@ -33,7 +33,7 @@
 #include "af_vsock.h"
 
 #define PKT_FIELD(vsk, fieldName) \
-   (vsk)->notify.pkt.fieldName
+   (vsk)->notify.fieldName
 
 #define VSOCK_MAX_DGRAM_RESENDS       10
 
@@ -1124,65 +1124,6 @@ VSockVmciNotifyPktHandlePkt(struct sock *sk,         // IN
    }
 }
 
-
-/*
- *----------------------------------------------------------------------------
- *
- * VSockVmciNotifyPktProcessRequest
- *
- *      Called near the end of process request.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------------
- */
-
-static void
-VSockVmciNotifyPktProcessRequest(struct sock *sk) // IN
-{
-   VSockVmciSock *vsk;
-
-   ASSERT(sk);
-
-   vsk = vsock_sk(sk);
-
-   PKT_FIELD(vsk, writeNotifyWindow) = vsk->consumeSize;
-}
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * VSockVmciNotifyPktProcessNegotiate
- *
- *      Called near the end of process negotiate.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------------
- */
-
-static void
-VSockVmciNotifyPktProcessNegotiate(struct sock *sk) // IN
-{
-   VSockVmciSock *vsk;
-
-   ASSERT(sk);
-
-   vsk = vsock_sk(sk);
-
-   PKT_FIELD(vsk, writeNotifyWindow) = vsk->consumeSize;
-}
-
-
 /* Socket control packet based operations. */
 VSockVmciNotifyOps vSockVmciNotifyPktOps = {
    VSockVmciNotifyPktSocketInit,
@@ -1197,7 +1138,5 @@ VSockVmciNotifyOps vSockVmciNotifyPktOps = {
    VSockVmciNotifyPktSendInit,
    VSockVmciNotifyPktSendPreBlock,
    VSockVmciNotifyPktSendPreEnqueue,
-   VSockVmciNotifyPktSendPostEnqueue,
-   VSockVmciNotifyPktProcessRequest,
-   VSockVmciNotifyPktProcessNegotiate,
+   VSockVmciNotifyPktSendPostEnqueue
 };

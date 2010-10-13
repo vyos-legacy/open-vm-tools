@@ -60,9 +60,10 @@ INCLUDE += $(shell $(CC) $(INCLUDE) -E $(SRCROOT)/autoconf/geninclude.c \
 	   | sed -n -e 's!^APATH!-I$(HEADER_DIR)/asm!p')
 
 CC_OPTS += $(call vm_check_build, $(SRCROOT)/autoconf/setnice.c, -DVMW_HAVE_SET_USER_NICE, )
-CC_OPTS += $(call vm_check_build, $(SRCROOT)/autoconf/epoll.c, -DVMW_HAVE_EPOLL, )
+CC_OPTS += -DVMW_HAVE_EPOLL
 CC_OPTS += $(call vm_check_build, $(SRCROOT)/autoconf/maxbytes.c, -DVMW_SB_HAS_MAXBYTES, )
 CC_OPTS += -DVMW_KMEMCR_HAS_DTOR
+
 
 # Core driver components
 OBJS = bdhandler.o

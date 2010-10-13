@@ -42,7 +42,6 @@ AUTOCONF_DIR := $(SRCROOT)/shared/autoconf
 INCLUDE      += -I$(SRCROOT)/shared
 endif
 
-
 VM_UNAME = $(KVERS)
 
 # Header directory for the running kernel
