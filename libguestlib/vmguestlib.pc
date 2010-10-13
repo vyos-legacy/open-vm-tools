@@ -1,0 +1,11 @@
+# VMware GuestLib pkgconfig data.
+
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name:          VMware GuestLib
+Description:   Library for retrieving information from VMware hosts.
+Version:       2009.10.15
+Libs:          -L${libdir} -lguestlib
+Cflags:        -I${includedir}/vmGuestLib
+
