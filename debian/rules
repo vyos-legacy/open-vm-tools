@@ -118,7 +118,6 @@ clean:
 	dh_testdir
 	dh_testroot
 	rm -f build-stamp
-	rm -f config/config.guess config/config.sub
 
 	# Cleaning package
 	[ ! -f Makefile ] || $(MAKE) distclean
