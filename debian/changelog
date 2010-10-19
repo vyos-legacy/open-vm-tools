@@ -1,3 +1,12 @@
+open-vm-tools (1:8.4.2+vyatta-1) unstable; urgency=low
+
+  * PAM config script should not be executable
+  * Update to latest stable version of open-vm-tools
+  * minor cleanups from merge
+  * Don't remove config files
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Tue, 19 Oct 2010 15:04:04 -0700
+
 open-vm-tools (2009.10.15+vyatta-30) unstable; urgency=low
 
   * Run aclocal on Debian Squeeze
