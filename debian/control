@@ -2,7 +2,7 @@ Source: open-vm-tools
 Section: contrib/admin
 Priority: extra
 Maintainer: Vyatta Package Maintainers <maintainers@vyatta.com>
-Build-Depends: debhelper (>= 7), autotools-dev, libproc-dev
+Build-Depends: debhelper (>= 7), autotools-dev, libproc-dev, libdumbnet-dev
 Standards-Version: 3.8.3
 Homepage: http://open-vm-tools.sourceforge.net/
 Vcs-Browser: http://git.debian-maintainers.org/?p=vmware/open-vm-tools.git
@@ -28,7 +28,7 @@ Description: Vyatta version of the open-vm modules for amd64
 
 Package: open-vm-tools
 Architecture: any
-Depends: libc6, libglib2.0-0, open-vm-modules
+Depends: libc6, libglib2.0-0, open-vm-modules, libproc, libdumbnet
 Description: tools and components for VMware guest systems (CLI tools)
  The Open Virtual Machine Tools (open-vm-tools) are the open source
  implementation of VMware Tools. They are a set of guest operating system
