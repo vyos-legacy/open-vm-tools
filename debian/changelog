@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-2) unstable; urgency=low
+
+  * Add support for nicinfo
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 20 Oct 2010 17:00:09 -0700
+
 open-vm-tools (1:8.4.2+vyatta-1) unstable; urgency=low
 
   * PAM config script should not be executable
