@@ -6,8 +6,8 @@
 # Required-Stop:	$local_fs
 # X-Start-Before:	$network
 # X-Stop-After:		$network
-# Default-Start:	S
-# Default-Stop:		0 6
+# Default-Start:	2 3 4 5
+# Default-Stop:		0 1 6
 # Description:		Runs the open-vm-tools services
 # Short-Description:	Runs the open-vm-tools services
 ### END INIT INFO
