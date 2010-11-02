@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-6) unstable; urgency=low
+
+  * Fix typo in vmware driver name
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 01 Nov 2010 18:59:39 -0700
+
 open-vm-tools (1:8.4.2+vyatta-5) unstable; urgency=low
 
   * Fix balloon driver rename
