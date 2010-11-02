@@ -35,7 +35,7 @@ case "${1}" in
 
 		log_daemon_msg "Starting open-vm daemon" "vmtoolsd"
 		/usr/bin/vmtoolsd --plugin-path /etc/vmware-tools/plugins --background /var/run/vmtoolsd.pid
-		log_end_msg 0
+		log_end_msg $?
 		;;
 
 	stop)
@@ -47,15 +47,16 @@ case "${1}" in
 		if [ -f /var/run/vmtoolsd.pid ]
 		then
 			kill $(cat /var/run/vmtoolsd.pid)
+			rm -f /var/run/vmtoolsd.pid
 		fi
 
 		log_end_msg 0
 
 		log_daemon_msg "Removing open-vm-tools modules"
 		log_progress_msg "vmhgfs"; modprobe -r vmhgfs
-		log_progress_msg "vmmemctl"; modprobe -r vmmemctl
+		log_progress_msg "vmmemctl"; modprobe -r vmware_balloon
 		log_progress_msg "vmsync"; modprobe -r vmsync
-		log_end_msg 0
+		log_end_msg $?
 		;;
 
 	force-reload|restart)
