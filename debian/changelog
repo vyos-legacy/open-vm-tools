@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-7) unstable; urgency=low
+
+  * Cleanup shutdown
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Thu, 04 Nov 2010 11:42:41 -0700
+
 open-vm-tools (1:8.4.2+vyatta-6) unstable; urgency=low
 
   * Fix typo in vmware driver name
