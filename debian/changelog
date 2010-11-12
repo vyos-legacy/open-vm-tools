@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-8) unstable; urgency=low
+
+  * Silly empty commit to get around git-dch restriction.
+
+ -- Stig Thormodsrud <stig@vyatta.com>  Fri, 12 Nov 2010 09:48:12 -0800
+
 open-vm-tools (1:8.4.2+vyatta-7) unstable; urgency=low
 
   * Cleanup shutdown
