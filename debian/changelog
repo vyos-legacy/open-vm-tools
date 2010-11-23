@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-9) unstable; urgency=low
+
+  * Fix spelling
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Tue, 23 Nov 2010 08:47:39 -0800
+
 open-vm-tools (1:8.4.2+vyatta-8) unstable; urgency=low
 
   * Silly empty commit to get around git-dch restriction.
