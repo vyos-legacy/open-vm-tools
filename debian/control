@@ -23,7 +23,7 @@ Provides: open-vm-modules
 Recommends: open-vm-tools
 Depends: linux-image-2.6.35-1-amd64-vyatta-virt
 Description: Vyatta version of the open-vm modules for amd64
- This package provides the accelerated drivers vyatta on VMWare for kernel
+ This package provides the accelerated drivers vyatta on VMware for kernel
  linux-image-2.6.35-1-amd64-vyatta-virt.
 
 Package: open-vm-tools
