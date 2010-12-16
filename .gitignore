@@ -1,6 +1,5 @@
 # Normal rules
 #
-.*
 *.o
 *.o.*
 *.a
