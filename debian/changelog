@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-10) unstable; urgency=low
+
+  * update .gitignore
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Thu, 16 Dec 2010 09:25:04 -0800
+
 open-vm-tools (1:8.4.2+vyatta-9) unstable; urgency=low
 
   * Fix spelling
