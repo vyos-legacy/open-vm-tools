@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-10+mendocino1) unstable; urgency=low
+
+  * new branch
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Tue, 28 Dec 2010 20:33:04 +0000
+
 open-vm-tools (1:8.4.2+vyatta-10) unstable; urgency=low
 
   * update .gitignore
