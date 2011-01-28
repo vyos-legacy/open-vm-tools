@@ -1,4 +1,2 @@
 /sbin/mount.vmhgfs				/sbin/vmware-hgfsmounter
 /usr/share/man/man8/vmware-hgfsmounter.8	/usr/share/man/man8/mount.vmhgfs.8
-/usr/lib/open-vm-tools/plugins/vmsvc		/usr/lib/open-vm-tools/vmsvc
-/usr/lib/open-vm-tools/plugins/vmusr		/usr/lib/open-vm-tools/vmusr
