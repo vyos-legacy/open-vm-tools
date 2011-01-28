@@ -1,0 +1,66 @@
+.TH VMSOCK 9 "2010\-04\-08" "2010.03.20\-243334" "Open VM Tools"
+
+.SH NAME
+vmsock \- vmware kernel module
+
+.SH SYNOPSIS
+modprobe vmsock
+
+.SH DESCRIPTION
+This is a Linux kernel device driver module that provides datagram and stream socket interfaces to the underlying VMCI device. The module implements a Linux socket family and one of the files in the module, vmci_sockets.h, provides the various constants and functions necessary to create and, in the case of streams, connect sockets.
+.PP
+When the module is loaded, /dev/vsock will be created with restricted permissions. Access to /dev/vsock is required to use VMCI sockets, so it's recommended that permissions be relaxed via a udev policy file. For reference, the VMware Tools init script changes the permissions of /dev/vsock to 666.
+.PP
+Normally, issuing a socket(2) system call will automatically load the kernel module providing that socket family, but as the vsock module is out\-of\-tree, there is no in\-tree socket family reservation for VMCI sockets. Before sockets are created, userspace applications must call VMCISock_GetAFValue (defined in vmci_sockets.h) which will instruct the vsock module to dynamically acquire a socket family reservation from the kernel. This function is implemented via ioctl(2) into the vsock module, so the vsock module must be manually loaded by the user (perhaps using /etc/modules).
+.PP
+The vmci_sockets.h header should be installed in a system\-wide location. We recommend /usr/include/vmci.
+.PP
+The vsock module depends on symbols from the vmci module, and so the vmci module must be loaded first.
+
+.SH OPTIONS
+vmsock has no options.
+
+.SH SEE ALSO
+\fIvmware\-checkvm\fR(1)
+.br
+\fIvmware\-hgfsclient\fR(1)
+.br
+\fIvmware\-toolbox\fR(1)
+.br
+\fIvmware\-toolbox\-cmd\fR(1)
+.br
+\fIvmware\-user\fR(1)
+.br
+\fIvmware\-xferlogs\fR(1)
+.br
+\fIlibguestlib\fR(3)
+.br
+\fIlibvmtools\fR(3)
+.br
+\fIvmware\-guestd\fR(8)
+.br
+\fIvmware\-hgfsmounter\fR(8)
+.br
+\fIvmware\-user\-suid\-wrapper\fR(8)
+.br
+\fIvmblock\fR(9)
+.br
+\fIvmci\fR(9)
+.br
+\fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
+.br
+\fIvmsock\fR(9)
+.br
+\fIvmxnet\fR(9)
+.br
+\fIvmxnet3\fR(9)
+
+.SH HOMEPAGE
+More information about vmsock and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+
+.SH AUTHOR
+Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
+.PP
+This manual page was put together from homepage materials by Daniel Baumann <\fIdaniel@debian.org\fR>, for the Debian project (but may be used by others).
