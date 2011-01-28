@@ -1,3 +1,13 @@
+open-vm-tools (1:8.4.2+vyatta-10+mendocino5) unstable; urgency=low
+
+  * Update documentation files to current Debian squeeze
+  * Update solaris modules
+  * update freebsd stuff
+  * Remove unused test
+  * Use infrastructure files from Squeeze version
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Fri, 28 Jan 2011 09:29:10 -0800
+
 open-vm-tools (1:8.4.2+vyatta-10+mendocino4) unstable; urgency=low
 
   * rebuild with new kernel 2.6.35-1+vyatta+31+mendocino3
