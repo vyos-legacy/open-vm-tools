@@ -1,4 +1,5 @@
-open-vm-tools: non-dev-pkg-with-shlib-symlink
 open-vm-tools: desktop-entry-missing-required-key
+open-vm-tools: init.d-script-missing-dependency-on-remote_fs
+open-vm-tools: non-dev-pkg-with-shlib-symlink
 open-vm-tools: package-name-doesnt-match-sonames
 open-vm-tools: setuid-binary sbin/mount.vmhgfs 4755 root/root

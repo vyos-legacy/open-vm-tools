@@ -34,7 +34,7 @@ case "${1}" in
 		log_end_msg 0
 
 		log_daemon_msg "Starting open-vm daemon" "vmtoolsd"
-		/usr/bin/vmtoolsd --plugin-path /usr/lib/open-vm-tools/plugins --background /var/run/vmtoolsd.pid
+		/usr/bin/vmtoolsd --background /var/run/vmtoolsd.pid
 		log_end_msg $?
 		;;
 

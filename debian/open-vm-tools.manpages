@@ -1,5 +1,7 @@
 debian/manpages/vmware-checkvm.1
 debian/manpages/vmware-hgfsclient.1
+debian/manpages/vmware-toolbox-cmd.1
 debian/manpages/vmware-xferlogs.1
 debian/manpages/vmware-hgfsmounter.8
+debian/manpages/*.3
 debian/manpages/*.9
