@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-10+mendocino3) unstable; urgency=low
+
+  * Fix path to open-vm-tools
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Thu, 27 Jan 2011 20:32:35 -0800
+
 open-vm-tools (1:8.4.2+vyatta-10+mendocino2) unstable; urgency=low
 
   * rebuild with new kernel 2.6.35-1+vyatta+31+mendocino2
