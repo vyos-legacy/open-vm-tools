@@ -1,16 +1,16 @@
-.TH VMMEMCTL 9 "2010\-04\-08" "2010.03.20\-243334" "Open VM Tools"
+.TH VMCI 9 "2010\-04\-08" "2010.03.20\-243334" "Open VM Tools"
 
 .SH NAME
-vmmemctl \- vmware kernel module
+vmci \- vmware kernel module
 
 .SH SYNOPSIS
-modprobe vmmemctl
+modprobe vmci
 
 .SH DESCRIPTION
-This is a kernel module. It isn't backed by a virtual hardware device, so it must be loaded manually. It has no dependencies, nor do any Tools components depend on it, so it can be loaded at any time during the boot process. Once loaded, no further action is needed.
+This is a Linux kernel device driver module that drives VMware's inter\-VM communication device. The device itself is backed by a PCI\-based virtual hardware implementation, so hotplug or udev should load it at guest boot time in any VMs using hardware version 7.
 
 .SH OPTIONS
-vmmemctl has no options.
+vmci has no options.
 
 .SH SEE ALSO
 \fIvmware\-checkvm\fR(1)
@@ -37,9 +37,9 @@ vmmemctl has no options.
 .br
 \fIvmblock\fR(9)
 .br
-\fIvmci\fR(9)
-.br
 \fIvmhgfs\fR(9)
+.br
+\fIvmmemctl\fR(9)
 .br
 \fIvmsock\fR(9)
 .br
@@ -50,7 +50,7 @@ vmmemctl has no options.
 \fIvmxnet3\fR(9)
 
 .SH HOMEPAGE
-More information about vmmemctl and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
+More information about vmci and the Open VM Tools can be found at <\fIhttp://open\-vm\-tools.sourceforge.net/\fR>.
 
 .SH AUTHOR
 Open VM Tools were written by VMware, Inc. <\fIhttp://www.vmware.com/\fR>.
