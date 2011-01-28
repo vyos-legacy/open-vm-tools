@@ -42,6 +42,7 @@ extern "C" {
 
 #include "vmwareuserInt.h"
 #include "vm_assert.h"
+#include "vm_app.h"
 #include "eventManager.h"
 #include "hgfsServerManager.h"
 #include "vmcheck.h"
@@ -54,7 +55,7 @@ extern "C" {
 #include "dnd.h"
 #include "syncDriver.h"
 #include "str.h"
-#include "guestApp.h"
+#include "guestApp.h" // for ALLOW_TOOLS_IN_FOREIGN_VM
 #include "unity.h"
 #include "ghIntegration.h"
 #include "resolution.h"
@@ -63,8 +64,8 @@ extern "C" {
 #include "vm_atomic.h"
 #include "hostinfo.h"
 #include "vmwareuser_version.h"
+
 #include "embed_version.h"
-#include "vmware/guestrpc/tclodefs.h"
 } // extern "C"
 VM_EMBED_VERSION(VMWAREUSER_VERSION_STRING);
 
@@ -98,6 +99,12 @@ Bool VMwareUserRpcInCapRegCB   (char const **result, size_t *resultLen,
                                 size_t argsSize, void *clientData);
 void VMwareUserRpcInErrorCB    (void *clientdata, char const *status);
 
+extern "C" {
+extern Bool ForeignTools_Initialize(GuestApp_Dict *configDictionaryParam,
+                                    DblLnkLst_Links *eventQueue);
+extern void ForeignTools_Shutdown(void);
+}
+
 static Bool InitGroupLeader(Window *groupLeader, Window *rootWindow);
 static Bool AcquireDisplayLock(void);
 static Bool QueryX11Lock(Display *dpy, Window w, Atom lockAtom);
@@ -115,12 +122,13 @@ static Bool gDnDRegistered;
 static Bool gHgfsServerRegistered;
 static pid_t gParentPid;
 static char gLogFilePath[PATH_MAX];
+static Bool gRpcInStarted;      // Set after ATR handshake.  Indicates RpcIn is a go.
 
 /*
  * The following are flags set by our signal handler.  They are evaluated
  * in main() only if gtk_main() ever returns.
  */
-static Bool gReloadSelf;        // Set by SIGUSR2; triggers reload.
+static Bool gReloadSelf;        // Set by SIGUSR2 + error handlers; triggers reload.
 static Bool gYieldBlock;        // Set by SIGUSR1; triggers DND shutdown
 static Bool gSigExit;           // Set by all but SIGUSR1; triggers app shutdown
 
@@ -174,8 +182,9 @@ static int const gSignals[] = {
  *-----------------------------------------------------------------------------
  */
 
-void VMwareUserCleanupRpc(void)
+void VMwareUserCleanupRpc(Bool isXError) // IN
 {
+   Debug("%s: enter\n", __FUNCTION__);
    if (gRpcIn) {
       Unity_UnregisterCaps();
       GHI_Cleanup();
@@ -188,7 +197,7 @@ void VMwareUserCleanupRpc(void)
       }
 
       if (!RpcIn_stop(gRpcIn)) {
-         Debug("Failed to stop RpcIn loop\n");
+         Debug("%s: failed to stop RpcIn loop\n", __FUNCTION__);
       }
       if (gOpenUrlRegistered) {
          FoundryToolsDaemon_UnregisterOpenUrl();
@@ -196,10 +205,23 @@ void VMwareUserCleanupRpc(void)
       }
 
       CopyPasteDnDWrapper *p = CopyPasteDnDWrapper::GetInstance();
+
+      /*
+       * We can't call the normal APIs to tear down DnD/CP because they
+       * involve Xlib calls that can't be made after X IO error. So, use
+       * an entry point that performs a subset of the cleanup we normally
+       * do on a reset, to ensure that any file transfers in flight get
+       * failed properly. See bug 458626.
+       */
       if (p) {
-         p->UnregisterDnD();
-         p->UnregisterCP();
+         if (!isXError) {
+            p->UnregisterDnD();
+            p->UnregisterCP();
+         } else {
+            p->Cancel();
+         }
       }
+
       RpcIn_Destruct(gRpcIn);
       gRpcIn = NULL;
    }
@@ -238,10 +260,6 @@ void VMwareUserSignalHandler(int sig) // IN
       gSigExit = TRUE;
    }
 
-   if (gSigExit) {
-      VMwareUserCleanupRpc();
-   }
-
 #if defined(HAVE_GTKMM)
    Gtk::Main::quit();
 #else
@@ -271,7 +289,6 @@ void
 VMwareUser_OnDestroy(GtkWidget *widget, // IN: Unused
                      gpointer data)     // IN: Unused
 {
-   VMwareUserCleanupRpc();
 #if defined(HAVE_GTKMM)
    Gtk::Main::quit();
 #else
@@ -368,6 +385,9 @@ VMwareUserRpcInResetCB(RpcInData *data)   // IN/OUT
    if (p) {
       p->OnReset();
    }
+
+   gRpcInStarted = TRUE;
+
    return RPCIN_SETRETVALS(data, "ATR " TOOLS_DND_NAME, TRUE);
 }
 
@@ -377,13 +397,16 @@ VMwareUserRpcInResetCB(RpcInData *data)   // IN/OUT
  *
  * VMwareUserRpcInErrorCB  --
  *
- *      Callback called when their is some error on the backdoor channel.
+ *      Callback called when there is some error on the backdoor channel.
  *
  * Results:
- *      None.
+ *      This function calls the exit handler, VMwareUser_OnDestroy.
  *
  * Side effects:
- *      None.
+ *      If the RpcIn channel had been up previously, as indicated by performing
+ *      the ATR handshake, then this function will set the gSigExit and
+ *      gReloadSelf flags.  This is only to attempt recovery from an error
+ *      occurring while vmware-user was in its steady running state.
  *
  *-----------------------------------------------------------------------------
  */
@@ -391,8 +414,15 @@ VMwareUserRpcInResetCB(RpcInData *data)   // IN/OUT
 void
 VMwareUserRpcInErrorCB(void *clientdata, char const *status)
 {
-   Warning("Error in the RPC recieve loop: %s\n", status);
-   Warning("Another instance of VMwareUser may be running.\n\n");
+   Warning("Error in the RPC receive loop: %s\n", status);
+   Warning("Another instance of %s may be running.\n\n", VMUSER_TITLE);
+
+   if (gRpcInStarted) {
+      Debug("Channel had been up previously.  Perhaps we're waking from hibernation?\n");
+      gSigExit = TRUE;
+      gReloadSelf = TRUE;
+   }
+
    VMwareUser_OnDestroy(NULL, NULL);
 }
 
@@ -543,7 +573,7 @@ VMwareUserRpcInSetOptionCB(char const **result,     // OUT
    char *value;
    unsigned int index = 0;
    Bool ret = FALSE;
-   const char *retStr = NULL;
+   char *retStr = NULL;
 
    /* parse the option & value string */
    option = StrUtil_GetNextToken(&index, args, " ");
@@ -638,13 +668,13 @@ int VMwareUserXIOErrorHandler(Display *dpy)
     * watching the process being run.  When it dies, it will come
     * through here, so we don't want to let it shut down the Rpc
     */
-   Debug("> VMwareUserXIOErrorHandler\n");
+   Debug("> %s\n", __FUNCTION__);
    if (my_pid == gParentPid) {
-      VMwareUserCleanupRpc();
+      VMwareUserCleanupRpc(TRUE);
       ReloadSelf();
       exit(EXIT_FAILURE);
    } else {
-      Debug("VMwareUserXIOErrorHandler hit from forked() child, not cleaning Rpc\n");
+      Debug("%s hit from forked() child, not cleaning Rpc\n", __FUNCTION__);
       _exit(EXIT_FAILURE);
    }
 
@@ -767,8 +797,12 @@ main(int argc,         // IN
    Atomic_Init();
 
    if (!VmCheck_IsVirtualWorld()) {
+#ifndef ALLOW_TOOLS_IN_FOREIGN_VM
       Warning("vmware-user must be run inside a virtual machine.\n");
       return EXIT_SUCCESS;
+#else
+      runningInForeignVM = TRUE;
+#endif
    }
 
    confDict = Conf_Load();
@@ -918,6 +952,13 @@ main(int argc,         // IN
       p->SetGHWnd(gGHWnd);
    }
 
+   if (runningInForeignVM) {
+      Bool success = ForeignTools_Initialize(confDict, gEventQueue);
+      if (!success) {
+         return EXIT_FAILURE;
+      }
+   }
+
    EventManager_Add(gEventQueue, CONF_POLL_TIME, VMwareUserConfFileLoop,
                     &confDict);
 
@@ -997,7 +1038,7 @@ main(int argc,         // IN
 
    for (;;) {
       /*
-       * We'll block here until the window is destroyed or a signal is recieved
+       * We'll block here until the window is destroyed or a signal is received.
        */
 #if defined(HAVE_GTKMM)
       main.run();
@@ -1024,6 +1065,10 @@ main(int argc,         // IN
       }
    }
 
+   if (runningInForeignVM) {
+      ForeignTools_Shutdown();
+   }
+
    Signal_ResetGroupHandler(gSignals, olds, ARRAYSIZE(gSignals));
 
    if (DnD_BlockIsReady(&gBlockCtrl) &&
@@ -1038,6 +1083,11 @@ main(int argc,         // IN
       Notify_Cleanup();
    }
 #endif
+
+   /*
+    * Clean up everything attached to the backdoor before waving goodbye.
+    */
+   VMwareUserCleanupRpc(FALSE);
 
    /*
     * SIGUSR2 sets this to TRUE, indicating that we should relaunch ourselves.

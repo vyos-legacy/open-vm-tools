@@ -28,6 +28,7 @@
 extern "C" {
 #include "vmwareuserInt.h"
 #include "vmblock.h"
+#include "vm_app.h"
 #include "file.h"
 #include "dnd.h"
 #include "dndMsg.h"
@@ -41,7 +42,6 @@ extern "C" {
 #include "unity.h"
 #include <gtk/gtk.h>
 #include <X11/extensions/XTest.h>       /* for XTest*() */
-#include "vmware/guestrpc/tclodefs.h"
 }
 
 #include "dndGuest.h"
@@ -268,6 +268,26 @@ DnDUI::CommonResetCB(void)
    m_dc = NULL;
    m_isFileDnD = false;
    RemoveBlock();
+}
+
+
+/**
+ *
+ * Cancel any DnD file transfers and reset.
+ */
+
+void
+DnDUI::Cancel()
+{
+   Debug("%s: enter\n", __FUNCTION__);
+   if (m_blockAdded) {
+      /*
+       * If we don't do this, the destination will have something to
+       * copy, and likely truncated. So remove it.
+       */
+      DnD_DeleteStagingFiles(m_HGStagingDir.c_str(), false);
+   }
+   CommonResetCB();
 }
 
 
@@ -499,6 +519,10 @@ DnDUI::CommonUpdateDetWndCB(bool bShow,
                             int32 x,
                             int32 y)
 {
+   Debug("%s: enter 0x%lx show %d x %d y %d\n",
+         __FUNCTION__,
+         (unsigned long) m_detWnd->get_window()->gobj(), bShow, x, y);
+
    /* If the window is being shown, move it to the right place. */
    if (bShow) {
       x = MAX(x - DRAG_DET_WINDOW_WIDTH / 2, 0);
@@ -538,6 +562,10 @@ DnDUI::CommonUpdateUnityDetWndCB(bool bShow,
                                  uint32 unityWndId,
                                  bool bottom)
 {
+   Debug("%s: enter 0x%lx unityID 0x%x\n",
+         __FUNCTION__,
+         (unsigned long) m_detWnd->get_window()->gobj(),
+         unityWndId);
    if (bShow && ((unityWndId > 0) || bottom)) {
       int width = m_detWnd->GetScreenWidth();
       int height = m_detWnd->GetScreenHeight();
@@ -650,9 +678,9 @@ DnDUI::GtkDestDragMotionCB(const Glib::RefPtr<Gdk::DragContext> &dc,
    /*
     * If this is a Host to Guest drag, we are done here, so return.
     */
-   Debug("%s: enter", __FUNCTION__);
-
    unsigned long curTime = GetTimeInMillis();
+   Debug("%s: enter dc %p, m_dc %p\n", __FUNCTION__,
+         dc ? dc->gobj() : NULL, m_dc ? m_dc : NULL);
    if (curTime - m_destDropTime <= 1000) {
       Debug("%s: ignored %ld %ld %ld\n", __FUNCTION__,
             curTime, m_destDropTime, curTime - m_destDropTime);
@@ -763,7 +791,21 @@ void
 DnDUI::GtkDestDragLeaveCB(const Glib::RefPtr<Gdk::DragContext> &dc,
                           guint time)
 {
-   Debug("%s: enter\n", __FUNCTION__);
+   Debug("%s: enter dc %p, m_dc %p\n", __FUNCTION__,
+         dc ? dc->gobj() : NULL, m_dc ? m_dc : NULL);
+
+   /*
+    * If we reach here after reset DnD, or we are getting a late
+    * DnD drag leave signal (we have started another DnD), then
+    * finish the old DnD. Otherwise, Gtk will not reset and a new
+    * DnD will not start until Gtk+ times out (which appears to
+    * be 5 minutes).
+    * See http://bugzilla.eng.vmware.com/show_bug.cgi?id=528320
+    */
+   if (!m_dc || dc->gobj() != m_dc) {
+      Debug("%s: calling drag_finish\n", __FUNCTION__);
+      dc->drag_finish(true, false, time);
+   }
 }
 
 
@@ -820,7 +862,11 @@ DnDUI::GtkSourceDragDataGetCB(const Glib::RefPtr<Gdk::DragContext> &dc,
 
    const utf::string target = selection_data.get_target().c_str();
 
-   Debug("%s: enter\n", __FUNCTION__);
+   selection_data.set(target.c_str(), "");
+
+   Debug("%s: enter dc %p, m_dc %p with target %s\n", __FUNCTION__,
+         dc ? dc->gobj() : NULL, m_dc ? m_dc : NULL,
+         target.c_str());
 
    if (!m_inHGDrag) {
       Debug("%s: not in drag, return\n", __FUNCTION__);
@@ -992,7 +1038,8 @@ DnDUI::GtkDestDragDataReceivedCB(const Glib::RefPtr<Gdk::DragContext> &dc,
                                  guint info,
                                  guint time)
 {
-   Debug("%s: enter\n", __FUNCTION__);
+   Debug("%s: enter dc %p, m_dc %p\n", __FUNCTION__,
+         dc ? dc->gobj() : NULL, m_dc ? m_dc : NULL);
    /* The GH DnD may already finish before we got response. */
    if (!m_GHDnDInProgress) {
       Debug("%s: not valid\n", __FUNCTION__);
@@ -1058,7 +1105,8 @@ DnDUI::GtkDestDragDropCB(const Glib::RefPtr<Gdk::DragContext> &dc,
                          int y,
                          guint time)
 {
-   Debug("%s: enter x %d y %d\n", __FUNCTION__, x, y);
+   Debug("%s: enter dc %p, m_dc %p x %d y %d\n", __FUNCTION__,
+         (dc ? dc->gobj() : NULL), (m_dc ? m_dc : NULL), x, y);
 
    Glib::ustring target;
 
@@ -1346,11 +1394,18 @@ DnDUI::SendFakeXEvents(const bool showWidget,
 {
    GtkWidget *widget;
    Window rootWnd;
-   bool ret;
+   bool ret = false;
    Display *dndXDisplay;
    Window dndXWindow;
+   Window rootReturn;
    int x;
    int y;
+   Window childReturn;
+   int rootXReturn;
+   int rootYReturn;
+   int winXReturn;
+   int winYReturn;
+   unsigned int maskReturn;
 
    x = xCoord;
    y = yCoord;
@@ -1364,6 +1419,7 @@ DnDUI::SendFakeXEvents(const bool showWidget,
 
    dndXDisplay = GDK_WINDOW_XDISPLAY(widget->window);
    dndXWindow = GDK_WINDOW_XWINDOW(widget->window);
+   rootWnd = RootWindow(dndXDisplay, DefaultScreen(dndXDisplay));
 
    /*
     * Turn on X synchronization in order to ensure that our X events occur in
@@ -1381,22 +1437,11 @@ DnDUI::SendFakeXEvents(const bool showWidget,
 
    /* Get the current location of the mouse if coordinates weren't provided. */
    if (!coordsProvided) {
-      Window rootReturn;
-      Window childReturn;
-      int rootXReturn;
-      int rootYReturn;
-      int winXReturn;
-      int winYReturn;
-      unsigned int maskReturn;
-
-      rootWnd = RootWindow(dndXDisplay, DefaultScreen(dndXDisplay));
-      ret = XQueryPointer(dndXDisplay, rootWnd, &rootReturn, &childReturn,
-                          &rootXReturn, &rootYReturn, &winXReturn, &winYReturn,
-                          &maskReturn);
-      if (ret == False) {
+      if (!XQueryPointer(dndXDisplay, rootWnd, &rootReturn, &childReturn,
+                         &rootXReturn, &rootYReturn, &winXReturn, &winYReturn,
+                         &maskReturn)) {
          Warning("%s: XQueryPointer() returned False.\n", __FUNCTION__);
-         XSynchronize(dndXDisplay, False);
-         return false;
+         goto exit;
       }
 
       Debug("%s: current mouse is at (%d, %d)\n", __FUNCTION__,
@@ -1469,9 +1514,120 @@ DnDUI::SendFakeXEvents(const bool showWidget,
       Debug("%s: faking left mouse button %s\n", __FUNCTION__,
             buttonPress ? "press" : "release");
       XTestFakeButtonEvent(dndXDisplay, 1, buttonPress, CurrentTime);
+      XSync(dndXDisplay, False);
+
+      if (!buttonPress) {
+         /*
+          * The button release simulation may be failed with some distributions
+          * like Ubuntu 10.4 and RHEL 6 for guest->host DnD. So first query
+          * mouse button status. If some button is still down, we will try
+          * mouse device level event simulation. For details please refer
+          * to bug 552807.
+          */
+         if (!XQueryPointer(dndXDisplay, rootWnd, &rootReturn, &childReturn,
+                            &rootXReturn, &rootYReturn, &winXReturn,
+                            &winYReturn, &maskReturn)) {
+            Warning("%s: XQueryPointer returned False.\n", __FUNCTION__);
+            goto exit;
+         }
+
+         if ((maskReturn & Button1Mask) ||
+             (maskReturn & Button2Mask) ||
+             (maskReturn & Button3Mask) ||
+             (maskReturn & Button4Mask) ||
+             (maskReturn & Button5Mask)) {
+            Debug("%s: XTestFakeButtonEvent was not working for button "
+                  "release, trying XTestFakeDeviceButtonEvent now.\n",
+                  __FUNCTION__);
+            ret = TryXTestFakeDeviceButtonEvent();
+         } else {
+            Debug("%s: XTestFakeButtonEvent was working for button release.\n",
+                  __FUNCTION__);
+            ret = true;
+         }
+      } else {
+         ret = true;
+      }
    }
 
+exit:
    XSynchronize(dndXDisplay, False);
+   return ret;
+}
+
+
+/**
+ * Fake X mouse events in device level.
+ *
+ * XXX The function will only be called if XTestFakeButtonEvent does not work
+ * for mouse button release. Later on we may only call this one for mouse
+ * button simulation if this is more reliable.
+ *
+ * @return true on success, false on failure.
+ */
+
+bool
+DnDUI::TryXTestFakeDeviceButtonEvent(void)
+{
+   XDeviceInfo *list = NULL;
+   XDeviceInfo *list2 = NULL;
+   XDevice *tdev = NULL;
+   XDevice *buttonDevice = NULL;
+   int numDevices = 0;
+   int i = 0;
+   int j = 0;
+   XInputClassInfo *ip = NULL;
+   GtkWidget *widget;
+   Display *dndXDisplay;
+
+   widget = GetDetWndAsWidget();
+
+   if (!widget) {
+      Debug("%s: unable to get widget\n", __FUNCTION__);
+      return false;
+   }
+
+   dndXDisplay = GDK_WINDOW_XDISPLAY(widget->window);
+
+   /* First get list of all input device. */
+   if (!(list = XListInputDevices (dndXDisplay, &numDevices))) {
+      Debug("%s: XListInputDevices failed\n", __FUNCTION__);
+      return false;
+   } else {
+      Debug("%s: XListInputDevices got %d devices\n", __FUNCTION__, numDevices);
+   }
+
+   list2 = list;
+
+   for (i = 0; i < numDevices; i++, list++) {
+      /* We only care about mouse device. */
+      if (list->use != IsXExtensionPointer) {
+         continue;
+      }
+
+      tdev = XOpenDevice(dndXDisplay, list->id);
+      if (!tdev) {
+         Debug("%s: XOpenDevice failed\n", __FUNCTION__);
+         continue;
+      }
+
+      for (ip = tdev->classes, j = 0; j < tdev->num_classes; j++, ip++) {
+         if (ip->input_class == ButtonClass) {
+            buttonDevice = tdev;
+            break;
+         }
+      }
+
+      if (buttonDevice) {
+         Debug("%s: calling XTestFakeDeviceButtonEvent for %s\n",
+               __FUNCTION__, list->name);
+         XTestFakeDeviceButtonEvent(dndXDisplay, buttonDevice, 1, False,
+                                    NULL, 0, CurrentTime);
+         buttonDevice = NULL;
+      }
+      XCloseDevice(dndXDisplay, tdev);
+   }
+   XFreeDeviceList(list2);
    return true;
 }
 
