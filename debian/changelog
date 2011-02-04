@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-10+mendocino8) unstable; urgency=low
+
+  * rebuild with new kernel 2.6.35-1+vyatta+31+mendocino6
+
+ -- An-Cheng Huang <ancheng@vyatta.com>  Fri, 04 Feb 2011 08:49:26 -0800
+
 open-vm-tools (1:8.4.2+vyatta-10+mendocino7) unstable; urgency=low
 
   * rebuild with new kernel 2.6.35-1+vyatta+31+mendocino5
