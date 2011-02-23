@@ -52,7 +52,9 @@ static void HgfsDestroyInode(struct inode *inode);
 #ifndef VMW_USE_IGET_LOCKED
 static void HgfsReadInode(struct inode *inode);
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
 static void HgfsClearInode(struct inode *inode);
+#endif
 static void HgfsPutSuper(struct super_block *sb);
 #if defined VMW_STATFS_2618
 static int HgfsStatfs(struct dentry *dentry,
@@ -70,7 +72,9 @@ struct super_operations HgfsSuperOperations = {
 #ifndef VMW_USE_IGET_LOCKED
    .read_inode    = HgfsReadInode,
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
    .clear_inode   = HgfsClearInode,
+#endif
    .put_super     = HgfsPutSuper,
    .statfs        = HgfsStatfs,
 };
@@ -182,6 +186,7 @@ HgfsReadInode(struct inode *inode) // IN/OUT: VFS inode to fill in
  *-----------------------------------------------------------------------------
  */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
 static void
 HgfsClearInode(struct inode *inode) // IN: The VFS inode
 {
@@ -199,6 +204,7 @@ HgfsClearInode(struct inode *inode) // IN: The VFS inode
    }
 #endif
 }
+#endif
 
 /*
  *-----------------------------------------------------------------------------
