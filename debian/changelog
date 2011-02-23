@@ -1,3 +1,21 @@
+open-vm-tools (1:8.4.2+vyatta-12) unstable; urgency=low
+
+  * Fix path to open-vm-tools
+  * Update documentation files to current Debian squeeze
+  * Update solaris modules
+  * update freebsd stuff
+  * Remove unused test
+  * Use infrastructure files from Squeeze version
+  * Update vmware-user
+  * update icons (unused)
+  * Add unused kernel modules
+  * Adapt to kernel API changes in 2.6.36 super
+  * Adapt kernel API for compatiablity with 2.6.37
+  * Replace use of semaphore as mutex
+  * Change to 2.6.37 kernel
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 23 Feb 2011 08:46:33 -0800
+
 open-vm-tools (1:8.4.2+vyatta-11) unstable; urgency=low
 
   * new branch
