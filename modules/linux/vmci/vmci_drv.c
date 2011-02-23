@@ -39,6 +39,7 @@
 #include "compat_ioport.h"
 #include "compat_interrupt.h"
 #include "compat_page.h"
+#include "compat_mutex.h"
 #include "vm_basic_types.h"
 #include "vm_device_version.h"
 #include "kernelStubs.h"
@@ -58,7 +59,7 @@
 #define VMCI_DEVICE_MINOR_NUM 0
 
 typedef struct vmci_device {
-   struct semaphore lock;
+   compat_mutex_t lock;
 
    unsigned int ioaddr;
    unsigned int ioaddr_size;
@@ -73,8 +74,14 @@ static int vmci_probe_device(struct pci_dev *pdev,
 static void vmci_remove_device(struct pci_dev* pdev);
 static int vmci_open(struct inode *inode, struct file *file);
 static int vmci_close(struct inode *inode, struct file *file);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35)
 static int vmci_ioctl(struct inode *inode, struct file *file, 
                       unsigned int cmd, unsigned long arg);
+#else
+static long vmci_ioctl(struct file *file, 
+		       unsigned int cmd, unsigned long arg);
+#endif
+
 static unsigned int vmci_poll(struct file *file, poll_table *wait);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
 static compat_irqreturn_t vmci_interrupt(int irq, void *dev_id, 
@@ -93,7 +100,11 @@ static struct file_operations vmci_ops = {
    .owner   = THIS_MODULE,
    .open    = vmci_open,
    .release = vmci_close,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35)
    .ioctl   = vmci_ioctl,
+#else
+   .unlocked_ioctl = vmci_ioctl,
+#endif
    .poll    = vmci_poll,
 };
 
@@ -153,7 +164,7 @@ vmci_init(void)
    printk("VMCI: Major device number is: %d\n", device_major_nr);
 
    /* Initialize device data. */
-   init_MUTEX(&vmci_dev.lock);
+   compat_mutex_init(&vmci_dev.lock);
    spin_lock_init(&vmci_dev.dev_spinlock);
    vmci_dev.enabled = FALSE;
 
@@ -274,7 +285,7 @@ vmci_probe_device(struct pci_dev *pdev,           // IN: vmci PCI device
    outl(VMCI_CAPS_DATAGRAM, ioaddr + VMCI_CAPS_ADDR);
 
    /* Device struct initialization. */
-   down(&vmci_dev.lock);
+   compat_mutex_lock(&vmci_dev.lock);
    if (vmci_dev.enabled) {
       printk(KERN_ERR "VMCI device already enabled.\n");
       goto unlock;
@@ -317,7 +328,7 @@ vmci_probe_device(struct pci_dev *pdev,           // IN: vmci PCI device
 
    printk(KERN_INFO "Registered vmci device.\n");
 
-   up(&vmci_dev.lock);
+   compat_mutex_unlock(&vmci_dev.lock);
 
    /* Enable specific interrupt bits. */
    outl(VMCI_IMR_DATAGRAM, vmci_dev.ioaddr + VMCI_IMR_ADDR);
@@ -333,7 +344,7 @@ vmci_probe_device(struct pci_dev *pdev,           // IN: vmci PCI device
    VMCIEvent_Exit();
    VMCIProcess_Exit();
  unlock:
-   up(&vmci_dev.lock);
+   compat_mutex_unlock(&vmci_dev.lock);
  release:
    release_region(ioaddr, ioaddr_size);
  pci_disable:
@@ -373,7 +384,7 @@ vmci_remove_device(struct pci_dev* pdev)
    //VMCIDatagram_Exit();
    VMCIProcess_Exit();
    
-   down(&dev->lock);
+   compat_mutex_lock(&dev->lock);
    printk(KERN_INFO "Resetting vmci device\n");
    outl(VMCI_CONTROL_RESET, vmci_dev.ioaddr + VMCI_CONTROL_ADDR);
    free_irq(dev->irq, dev);
@@ -381,7 +392,7 @@ vmci_remove_device(struct pci_dev* pdev)
    dev->enabled = FALSE;
 
    printk(KERN_INFO "Unregistered vmci device.\n");
-   up(&dev->lock);
+   compat_mutex_unlock(&dev->lock);
    
    compat_pci_disable_device(pdev);
 }
@@ -416,7 +427,7 @@ vmci_open(struct inode *inode,  // IN
       return -ENODEV;
    }
 
-   down(&vmci_dev.lock);
+   compat_mutex_lock(&vmci_dev.lock);
    if (!vmci_dev.enabled) {
       printk(KERN_INFO "Received open on uninitialized vmci device.\n");
       errcode = -ENODEV;
@@ -434,12 +445,12 @@ vmci_open(struct inode *inode,  // IN
    devHndl->objType = VMCIOBJ_NOT_SET;
    file->private_data = devHndl;
 
-   up(&vmci_dev.lock);
+   compat_mutex_unlock(&vmci_dev.lock);
 
    return 0;
 
  unlock:
-   up(&vmci_dev.lock);
+   compat_mutex_unlock(&vmci_dev.lock);
    return errcode;
 }
 
@@ -496,11 +507,17 @@ vmci_close(struct inode *inode,  // IN
  *-----------------------------------------------------------------------------
  */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35)
 static int
 vmci_ioctl(struct inode *inode,  // IN
            struct file *file,    // IN
            unsigned int cmd,     // IN
            unsigned long arg)    // IN
+#else
+static long vmci_ioctl(struct file *file, 
+		       unsigned int cmd,
+		       unsigned long arg)
+#endif
 {
 #ifndef VMX86_DEVEL
    return -ENOTTY;
@@ -800,9 +817,9 @@ VMCI_DeviceEnabled(void)
 {
    Bool retval;
 
-   down(&vmci_dev.lock);
+   compat_mutex_lock(&vmci_dev.lock);
    retval = vmci_dev.enabled;
-   up(&vmci_dev.lock);
+   compat_mutex_unlock(&vmci_dev.lock);
    
    return retval;
 }
