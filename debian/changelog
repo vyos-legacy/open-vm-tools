@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-14) unstable; urgency=low
+
+  * force build with new kernel
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Tue, 15 Mar 2011 09:12:43 -0700
+
 open-vm-tools (1:8.4.2+vyatta-13) unstable; urgency=low
 
   * rebuild with kernel 2.6.37-1+vyatta+3
