@@ -29,7 +29,7 @@ case "${1}" in
 
 		log_daemon_msg "Loading open-vm-tools modules"
 		log_progress_msg "vmhgfs"; modprobe vmhgfs
-		log_progress_msg "vmmemctl"; modprobe vmware_balloon
+		log_progress_msg "vmmemctl"; modprobe vmw_balloon
 		log_progress_msg "vmsync"; modprobe vmsync
 		log_end_msg 0
 
@@ -54,7 +54,7 @@ case "${1}" in
 
 		log_daemon_msg "Removing open-vm-tools modules"
 		log_progress_msg "vmhgfs"; modprobe -r vmhgfs
-		log_progress_msg "vmmemctl"; modprobe -r vmware_balloon
+		log_progress_msg "vmmemctl"; modprobe -r vmw_balloon
 		log_progress_msg "vmsync"; modprobe -r vmsync
 		log_end_msg $?
 		;;
