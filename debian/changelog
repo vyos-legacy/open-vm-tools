@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-19) unstable; urgency=low
+
+  * Fix naming of irq's on vmxnet device
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Wed, 30 Mar 2011 15:03:11 -0700
+
 open-vm-tools (1:8.4.2+vyatta-18) unstable; urgency=low
 
   * rebuild with kernel 2.6.37-1+vyatta+9
