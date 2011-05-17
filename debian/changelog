@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-22) unstable; urgency=low
+
+  * rebuild for kernel 2.6.37-1+vyatta+12
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Tue, 17 May 2011 11:04:28 -0700
+
 open-vm-tools (1:8.4.2+vyatta-21) unstable; urgency=low
 
   * update kernel
