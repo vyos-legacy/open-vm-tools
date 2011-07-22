@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-27) unstable; urgency=low
+
+  * force rebuild for 2.6.37-1+vyatta+18
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Thu, 21 Jul 2011 20:40:17 -0700
+
 open-vm-tools (1:8.4.2+vyatta-26) unstable; urgency=low
 
   * new branch
