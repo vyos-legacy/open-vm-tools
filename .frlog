@@ -4,3 +4,4 @@ Tue May 24 15:03:07 PDT 2011: [force rebuild for 2.6.37-1+vyatta+13] at [debian/
 Wed Jun  8 15:42:06 PDT 2011: [force rebuild for 2.6.37-1+vyatta+14] at [debian/8.4.2+vyatta-23]
 Tue Jun 14 11:33:04 PDT 2011: [force rebuild for 2.6.37-1+vyatta+16] at [debian 1:8.4.2+vyatta-24]
 Thu Jul  7 20:45:40 PDT 2011: [new branch] at [debian/8.4.2+vyatta-25]
+Tue Jul 26 14:30:14 PDT 2011: [rebuild for linux-image 2.6.37-1+vyatta+16+napa2] at [debian/8.4.2+vyatta-25+napa1]
