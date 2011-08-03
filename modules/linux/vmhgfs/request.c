@@ -42,8 +42,6 @@
 #include "vm_assert.h"
 
 static uint64 hgfsIdCounter = 0;
-static spinlock_t hgfsIdLock = SPIN_LOCK_UNLOCKED;
-
 
 /*
  *----------------------------------------------------------------------
@@ -65,6 +63,7 @@ static spinlock_t hgfsIdLock = SPIN_LOCK_UNLOCKED;
 HgfsReq *
 HgfsGetNewRequest(void)
 {
+   static atomic_t hgfsIdCounter = ATOMIC_INIT(0);
    HgfsReq *req = NULL;
 
    req = kmem_cache_alloc(hgfsReqCache, GFP_KERNEL);
@@ -73,6 +72,7 @@ HgfsGetNewRequest(void)
               "can't allocate memory\n"));
       return NULL;
    }
+
    INIT_LIST_HEAD(&req->list);
    init_waitqueue_head(&req->queue);
    req->payloadSize = 0;
@@ -80,10 +80,9 @@ HgfsGetNewRequest(void)
    /* Setup the packet prefix. */
    memcpy(req->packet, HGFS_SYNC_REQREP_CLIENT_CMD,
           HGFS_SYNC_REQREP_CLIENT_CMD_LEN);
-   spin_lock(&hgfsIdLock);
-   req->id = hgfsIdCounter;
-   hgfsIdCounter++;
-   spin_unlock(&hgfsIdLock);
+
+   req->id = atomic_inc_return(&hgfsIdCounter) - 1;
+
    return req;
 }
 

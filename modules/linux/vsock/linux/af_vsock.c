@@ -102,29 +102,22 @@
 #include <linux/miscdevice.h>
 #include <linux/poll.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
+#include <linux/bitops.h>
+#include <linux/list.h>
+#include <linux/wait.h>
+#include <linux/init.h>
 #include <asm/io.h>
 #if defined(__x86_64__) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 12)
-#   if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 0)
-#      include <asm/ioctl32.h>
-#   else
-#      include <linux/ioctl32.h>
-#   endif
+#   include <linux/ioctl32.h>
 /* Use weak: not all kernels export sys_ioctl for use by modules */
-#   if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 66)
 asmlinkage __attribute__((weak)) long
 sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg);
-#   else
-asmlinkage __attribute__((weak)) int
-sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg);
-#   endif
 #endif
 
+#include "compat_cred.h"
 #include "compat_module.h"
 #include "compat_kernel.h"
-#include "compat_init.h"
 #include "compat_sock.h"
-#include "compat_wait.h"
 #include "compat_version.h"
 #include "compat_workqueue.h"
 #include "compat_list.h"

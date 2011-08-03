@@ -43,7 +43,7 @@
 /* Must be included after semaphore.h. */
 #include <linux/timer.h>
 /* Must be included after sched.h. */
-#include <linux/smp_lock.h>
+#include <linux/interrupt.h> /* for spin_lock_bh */
 
 #include "bdhandler.h"
 #include "hgfsDevLinux.h"
@@ -187,9 +187,9 @@ HgfsTransportAddPendingRequest(HgfsReq *req)   // IN: Request to add
 {
    ASSERT(req);
 
-   spin_lock(&hgfsRepQueueLock);
+   spin_lock_bh(&hgfsRepQueueLock);
    list_add_tail(&req->list, &hgfsRepPending);
-   spin_unlock(&hgfsRepQueueLock);
+   spin_unlock_bh(&hgfsRepQueueLock);
 }
 
 
@@ -214,11 +214,11 @@ HgfsTransportRemovePendingRequest(HgfsReq *req)   // IN: Request to dequeue
 {
    ASSERT(req);
 
-   spin_lock(&hgfsRepQueueLock);
+   spin_lock_bh(&hgfsRepQueueLock);
    if (!list_empty(&req->list)) {
       list_del_init(&req->list);
    }
-   spin_unlock(&hgfsRepQueueLock);
+   spin_unlock_bh(&hgfsRepQueueLock);
 }
 
 
@@ -261,7 +261,7 @@ HgfsTransportProcessPacket(char *receivedPacket,    //IN: received packet
     * Search through hgfsRepPending queue for the matching id and wake up
     * the associated waiting process. Delete the req from the queue.
     */
-   spin_lock(&hgfsRepQueueLock);
+   spin_lock_bh(&hgfsRepQueueLock);
    list_for_each_safe(cur, next, &hgfsRepPending) {
       HgfsReq *req;
       req = list_entry(cur, HgfsReq, list);
@@ -272,7 +272,7 @@ HgfsTransportProcessPacket(char *receivedPacket,    //IN: received packet
          break;
       }
    }
-   spin_unlock(&hgfsRepQueueLock);
+   spin_unlock_bh(&hgfsRepQueueLock);
 
    if (!found) {
       LOG(4, ("VMware hgfs: %s: No matching id, dropping reply\n",
@@ -305,7 +305,7 @@ HgfsTransportBeforeExitingRecvThread(void)
    struct list_head *cur, *next;
 
    /* Walk through hgfsRepPending queue and reply them with error. */
-   spin_lock(&hgfsRepQueueLock);
+   spin_lock_bh(&hgfsRepQueueLock);
    list_for_each_safe(cur, next, &hgfsRepPending) {
       HgfsReq *req;
       HgfsReply reply;
@@ -317,7 +317,7 @@ HgfsTransportBeforeExitingRecvThread(void)
               __func__, req->id));
       HgfsCompleteReq(req, (char *)&reply, sizeof reply);
    }
-   spin_unlock(&hgfsRepQueueLock);
+   spin_unlock_bh(&hgfsRepQueueLock);
 }
 
 

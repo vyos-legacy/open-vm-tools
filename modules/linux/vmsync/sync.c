@@ -47,9 +47,9 @@
 #include "compat_fs.h"
 #include "compat_module.h"
 #include "compat_namei.h"
+#include "compat_mutex.h"
 #include "compat_slab.h"
 #include "compat_workqueue.h"
-#include "compat_mutex.h"
 
 #include "syncDriverIoc.h"
 #include "vmsync_version.h"
@@ -227,7 +227,7 @@ VmSyncAddPath(const VmSyncState *state,   // IN
    struct nameidata nd;
    VmSyncBlockDevice *dev;
 
-   if ((result = path_lookup(path, LOOKUP_FOLLOW, &nd)) != 0) {
+   if ((result = compat_path_lookup(path, LOOKUP_FOLLOW, &nd)) != 0) {
       goto exit;
    }
    inode = compat_vmw_nd_to_dentry(nd)->d_inode;
