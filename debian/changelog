@@ -1,3 +1,12 @@
+open-vm-tools (1:8.4.2+vyatta-28) unstable; urgency=low
+
+  * Change target kernel release to 3.0.0
+  * Remove kernel drivers already integrated upstream
+  * Update open-vm-tools kernel modules to handle kernel changes
+  * Ignore more files
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 03 Aug 2011 11:44:40 -0700
+
 open-vm-tools (1:8.4.2+vyatta-27) unstable; urgency=low
 
   * force rebuild for 2.6.37-1+vyatta+18
