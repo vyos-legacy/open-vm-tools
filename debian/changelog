@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-25+napa3) unstable; urgency=low
+
+  * rebuild for 2.6.37-1+vyatta+16+napa3
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Thu, 11 Aug 2011 11:18:57 -0700
+
 open-vm-tools (1:8.4.2+vyatta-25+napa2) unstable; urgency=low
 
   * rebuild for linux-image 2.6.37-1+vyatta+16+napa2
