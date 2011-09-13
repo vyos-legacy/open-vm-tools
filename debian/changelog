@@ -1,3 +1,9 @@
+open-vm-tools (1:8.4.2+vyatta-34) unstable; urgency=low
+
+  * force rebuild for 3.0.4-1+vyatta+4
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Tue, 13 Sep 2011 11:38:00 -0700
+
 open-vm-tools (1:8.4.2+vyatta-33) unstable; urgency=low
 
   * update to 3.0.4
