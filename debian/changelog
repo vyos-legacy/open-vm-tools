@@ -1,16 +1,8 @@
-<<<<<<< HEAD
-open-vm-tools (1:8.6.0+vyatta+1) unstable; urgency=low
-
-  * Update to open-vm-tools 8.6.0
-
- -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Fri, 23 Sep 2011 11:07:02 -0700
-=======
 open-vm-tools (1:8.4.2+vyatta-35) unstable; urgency=low
 
   * Update to 3.0.6 kernel
 
  -- Stephen Hemminger <shemminger@vyatta.com>  Tue, 04 Oct 2011 10:09:25 -0700
->>>>>>> 7ab129a161f9dba2f42ff4a4a71d8bf739eaa338
 
 open-vm-tools (1:8.4.2+vyatta-34) unstable; urgency=low
 
