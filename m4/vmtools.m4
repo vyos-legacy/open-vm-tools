@@ -231,8 +231,8 @@ AC_DEFUN([AC_VMW_CHECK_X11_LIB],[
          [X11/extensions/scrnsaver.h],
          [],
          [
-          $have_header=0;
-          ${action-if-not-found}
+          have_header=0;
+          $4
          ],
          [])
    fi
@@ -242,7 +242,7 @@ AC_DEFUN([AC_VMW_CHECK_X11_LIB],[
          [$1],
          [$3],
          [COMMON_XLIBS="-l$1 $COMMON_XLIBS"],
-         [${action-if-not-found}],
+         [$4],
          [$COMMON_XLIBS])
    fi
 ])
@@ -263,5 +263,29 @@ AC_DEFUN([AC_VMW_LIB_ERROR],[
       feature="$1"
    fi
    AC_MSG_ERROR([Cannot find $1 library. Please configure without $feature (using --without-$2), or install the $1 libraries and devel package(s).])
+])
+
+
+#
+# AC_VMW_DEFAULT_FLAGS(library)
+#
+# For use with libraries that don't have config scripts or pkg-config data.
+# This makes sure that CUSTOM_${LIB}_CPPFLAGS is set to a reasonable default
+# so that AC_VMW_CHECK_LIB can find the library.
+#
+#     library ($1): library name (as in CUSTOM_${library}_CPPFLAGS)
+#     subdir  ($2): optional subdirectory to append to the default path
+#
+AC_DEFUN([AC_VMW_DEFAULT_FLAGS],[
+   if test -z "$CUSTOM_$1_CPPFLAGS"; then
+      if test "$os" = freebsd; then
+         CUSTOM_$1_CPPFLAGS="-I/usr/local/include"
+      else
+         CUSTOM_$1_CPPFLAGS="-I/usr/include"
+      fi
+      if test -n "$2"; then
+         CUSTOM_$1_CPPFLAGS="${CUSTOM_$1_CPPFLAGS}/$2"
+      fi
+   fi
 ])
 

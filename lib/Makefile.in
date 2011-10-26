@@ -50,15 +50,8 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
-@ENABLE_UNITY_TRUE@am__append_1 = appUtil
-@HAVE_GTKMM_TRUE@am__append_2 = dndGuest
-@ENABLE_UNITY_TRUE@am__append_3 = ghIntegration
-@ENABLE_UNITY_FALSE@am__append_4 = ghIntegrationStub
-@ENABLE_UNITY_TRUE@am__append_5 = image
-@ENABLE_UNITY_TRUE@am__append_6 = raster region
-@HAVE_X11_TRUE@am__append_7 = resolution
-@ENABLE_UNITY_TRUE@am__append_8 = unity unityWindowTracker
-@ENABLE_UNITY_FALSE@am__append_9 = unityStub
+@HAVE_X11_TRUE@am__append_1 = appUtil
+@USE_SLASH_PROC_TRUE@am__append_2 = slashProc
 subdir = lib
 DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in COPYING
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -87,15 +80,12 @@ AM_RECURSIVE_TARGETS = $(RECURSIVE_TARGETS:-recursive=) \
 	distdir
 ETAGS = etags
 CTAGS = ctags
-DIST_SUBDIRS = guestRpc appUtil auth backdoor conf dict deployPkg dnd \
-	dndGuest dynxdr err eventManager file foundryMsg ghIntegration \
-	ghIntegrationStub guestApp guestInfo hgfs hgfsBd hgfsHelper \
-	hgfsServer hgfsServerManagerGuest hgfsServerPolicyGuest image \
-	impersonate message misc netUtil panic panicDefault printer \
-	procMgr raster region resolution rpcChannel rpcIn rpcOut \
-	rpcVmx SLPv2Parser socketMgr string stubs sync syncDriver \
-	system unicode unity unityWindowTracker unityStub user \
-	vixTools vmCheck vmSignal wiper
+DIST_SUBDIRS = guestRpc appUtil auth backdoor dict dynxdr err file \
+	foundryMsg guestApp hgfs hgfsBd hgfsHelper hgfsServer \
+	hgfsServerManagerGuest hgfsServerPolicyGuest impersonate lock \
+	message misc netUtil panic panicDefault printer procMgr \
+	rpcChannel rpcIn rpcOut rpcVmx slashProc string stubs \
+	syncDriver system unicode user vmCheck vmSignal wiper xdg
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 am__relativize = \
   dir0=`pwd`; \
@@ -132,9 +122,12 @@ AWK = @AWK@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
+COMMON_PLUGIN_INSTALLDIR = @COMMON_PLUGIN_INSTALLDIR@
 COMMON_XLIBS = @COMMON_XLIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+CUNIT_CPPFLAGS = @CUNIT_CPPFLAGS@
+CUNIT_LIBS = @CUNIT_LIBS@
 CXX = @CXX@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
@@ -170,6 +163,7 @@ GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
 HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
+HGFS_LIBS = @HGFS_LIBS@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -177,23 +171,18 @@ INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
+INSTVMSG = @INSTVMSG@
 KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
-LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
 LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
-LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
-LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
 LIB_IMPERSONATE_CPPFLAGS = @LIB_IMPERSONATE_CPPFLAGS@
-LIB_MISC_CPPFLAGS = @LIB_MISC_CPPFLAGS@
-LIB_PROC_MGR_CPPFLAGS = @LIB_PROC_MGR_CPPFLAGS@
-LIB_STRING_CPPFLAGS = @LIB_STRING_CPPFLAGS@
 LIB_USER_CPPFLAGS = @LIB_USER_CPPFLAGS@
+LINUXINCLUDE = @LINUXINCLUDE@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
@@ -217,6 +206,8 @@ PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_URL = @PACKAGE_URL@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
 PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
@@ -226,31 +217,29 @@ PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
 RPCGENFLAGS = @RPCGENFLAGS@
+RPCGEN_WRAPPER = @RPCGEN_WRAPPER@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
 SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
 TOOLS_VERSION = @TOOLS_VERSION@
-URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
-URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
 VIX_LIBADD = @VIX_LIBADD@
 VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
 VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
 VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
-VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
-VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XCOMPOSITE_LIBS = @XCOMPOSITE_LIBS@
 XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
+XSM_LIBS = @XSM_LIBS@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
 X_LIBS = @X_LIBS@
 X_PRE_LIBS = @X_PRE_LIBS@
-ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
-ZLIB_LIBS = @ZLIB_LIBS@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
@@ -308,16 +297,12 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-SUBDIRS = guestRpc $(am__append_1) auth backdoor conf dict deployPkg \
-	dnd $(am__append_2) dynxdr err eventManager file foundryMsg \
-	$(am__append_3) $(am__append_4) guestApp guestInfo hgfs hgfsBd \
-	hgfsHelper hgfsServer hgfsServerManagerGuest \
-	hgfsServerPolicyGuest $(am__append_5) impersonate message misc \
-	netUtil panic panicDefault printer procMgr $(am__append_6) \
-	$(am__append_7) rpcChannel rpcIn rpcOut rpcVmx SLPv2Parser \
-	socketMgr string stubs sync syncDriver system unicode \
-	$(am__append_8) $(am__append_9) user vixTools vmCheck vmSignal \
-	wiper
+SUBDIRS = guestRpc $(am__append_1) auth backdoor dict dynxdr err file \
+	foundryMsg guestApp hgfs hgfsBd hgfsHelper hgfsServer \
+	hgfsServerManagerGuest hgfsServerPolicyGuest impersonate lock \
+	message misc netUtil panic panicDefault printer procMgr \
+	rpcChannel rpcIn rpcOut rpcVmx $(am__append_2) string stubs \
+	syncDriver system unicode user vmCheck vmSignal wiper xdg
 all: all-recursive
 
 .SUFFIXES:

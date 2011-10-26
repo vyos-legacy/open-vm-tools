@@ -107,7 +107,7 @@ FileIO_MsgError(FileIOResult status) // IN
        * because you can call your native function to retrieve a more
        * accurate message.
        */
-      result = MSGID(fileio.generic) "Generic error";
+      result = MSGID(fileio.generic) "Error";
       break;
 
    case FILEIO_OPEN_ERROR_EXIST:
@@ -127,7 +127,7 @@ FileIO_MsgError(FileIOResult status) // IN
       break;
 
    case FILEIO_NO_PERMISSION:
-      result = MSGID(fileio.noPerm) "Insufficient permissions to access the file";
+      result = MSGID(fileio.noPerm) "Insufficient permission to access the file";
       break;
 
    case FILEIO_FILE_NAME_TOO_LONG:
@@ -158,7 +158,7 @@ FileIO_MsgError(FileIOResult status) // IN
    }
 
    if (!result) {
-      Warning("FileIO_MsgError was passed bad code %d\n", status);
+      Warning("%s: bad code %d\n", __FUNCTION__, status);
       ASSERT(0);
       result = MSGID(fileio.unknown) "Unknown error";
    }
@@ -243,8 +243,8 @@ FileIO_Cleanup(FileIODescriptor *fd)  // IN/OUT:
  */
 
 FileIOResult
-FileIO_Lock(FileIODescriptor *file, // IN/OUT:
-            int access)             // IN:
+FileIO_Lock(FileIODescriptor *file,  // IN/OUT:
+            int access)              // IN:
 {
    FileIOResult ret = FILEIO_SUCCESS;
 
@@ -317,7 +317,7 @@ FileIO_Lock(FileIODescriptor *file, // IN/OUT:
  */
 
 FileIOResult
-FileIO_Unlock(FileIODescriptor *file)     // IN/OUT:
+FileIO_Unlock(FileIODescriptor *file)  // IN/OUT:
 {
    FileIOResult ret = FILEIO_SUCCESS;
 
@@ -327,7 +327,7 @@ FileIO_Unlock(FileIODescriptor *file)     // IN/OUT:
    if (file->lockToken != NULL) {
       int err;
 
-      err = FileLock_Unlock(file->fileName, file->lockToken);
+      err = FileLock_Unlock(file->lockToken);
 
       if (err != 0) {
          Warning(LGPFX" %s on '%s' failed: %s\n",
@@ -349,107 +349,52 @@ FileIO_Unlock(FileIODescriptor *file)     // IN/OUT:
 /*
  *----------------------------------------------------------------------
  *
- * FileIO_StatsInit --
+ * FileIO_GetSize --
  *
- *      Initialize the stat structure in the FileIODescriptor.
+ *      Get size of file.
  *
  * Results:
- *      None.
+ *      Size of file or -1.
  *
  * Side effects:
- *      None.
+ *      errno is set on error.
  *
  *----------------------------------------------------------------------
  */
 
-void
-FileIO_StatsInit(FileIODescriptor *fd)  // IN:
+int64
+FileIO_GetSize(const FileIODescriptor *fd)  // IN:
 {
-   /* zero out the stat counters */
+   int64 logicalBytes;
 
-   ASSERT(fd);
-
-#if defined(VMX86_STATS)
-   fd->readIn = 0; fd->writeIn = 0;
-   fd->readvIn = 0; fd->writevIn = 0;
-   fd->preadvIn = 0; fd->pwritevIn = 0;
-   fd->readDirect = 0; fd->writeDirect = 0;
-   fd->readvDirect = 0; fd->writevDirect = 0;
-   fd->preadDirect = 0; fd->pwriteDirect = 0;
-   fd->bytesRead = 0; fd->bytesWritten = 0;
-   fd->numReadCoalesced = 0; fd->numWriteCoalesced = 0;
-#endif
+   return (FileIO_GetAllocSize(fd, &logicalBytes, NULL) != FILEIO_SUCCESS) ?
+      -1 : logicalBytes;
 }
 
 
 /*
  *----------------------------------------------------------------------
  *
- * FileIO_StatsLog --
+ * FileIO_GetSizeByPath --
  *
- *      Dump statistics about file access in the log file.
+ *      Get size of a file specified by path. 
  *
  * Results:
- *      None.
+ *      Size of file or -1.
  *
  * Side effects:
- *      Logs.
+ *      errno is set on error
  *
  *----------------------------------------------------------------------
  */
 
-void
-FileIO_StatsLog(FileIODescriptor *fd)  // IN:
+int64
+FileIO_GetSizeByPath(ConstUnicode pathName)  // IN:
 {
-   ASSERT(fd);
+   int64 logicalBytes;
 
-#if defined(VMX86_STATS)
-   if (fd->bytesRead + fd->bytesWritten == 0) {
-      /* No activity --> no interesting stats */
-      return;
-   }
-
-   if (fd->readIn + fd->writeIn + fd->readvIn + fd->writevIn +
-       fd->preadvIn + fd->pwritevIn < 100) {
-      /*
-       * Less than 100 operations is insufficient to be interesting and this
-       * way we don't get spew everytime a file (generally a disk) is opened
-       * temporarily.
-       */
-      return;
-   }
-
-   Log("FILEIOSTATS | \"%s\" %d %d %d %d %d %d %d %d %d %d %d %d %d %d %"FMT64"d %"FMT64"d\n",
-       fd->fileName ? UTF8(fd->fileName) : "",
-       fd->readIn, fd->readDirect, fd->writeIn, fd->writeDirect,
-       fd->readvIn, fd->readvDirect, fd->writevIn, fd->writevDirect,
-       fd->preadvIn, fd->preadDirect, fd->pwritevIn, fd->pwriteDirect,
-       fd->numReadCoalesced, fd->numWriteCoalesced,
-       fd->bytesRead, fd->bytesWritten);
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * FileIO_StatsExit --
- *
- *      Release resources allocated for statistics.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------
- */
-
-void
-FileIO_StatsExit(const FileIODescriptor *fd)  // IN:
-{
-   ASSERT(fd);
+   return (FileIO_GetAllocSizeByPath(pathName, &logicalBytes, NULL) !=
+      FILEIO_SUCCESS) ? -1 : logicalBytes;
 }
 
 
@@ -472,14 +417,16 @@ FileIO_StatsExit(const FileIODescriptor *fd)  // IN:
  */
 
 ConstUnicode
-FileIO_Filename(FileIODescriptor *fd) // IN
+FileIO_Filename(FileIODescriptor *fd)  // IN:
 {
+   ASSERT(fd);
+
    return fd->fileName;
 }
 
 
-#if defined(_WIN32) || defined(GLIBC_VERSION_21) || defined(__APPLE__) || \
-    defined(__FreeBSD__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || \
+    defined(__FreeBSD__) || defined(sun)
 /*
  *----------------------------------------------------------------------
  *
@@ -500,10 +447,10 @@ FileIO_Filename(FileIODescriptor *fd) // IN
  */
 
 FileIOResult
-FileIO_Pread(FileIODescriptor *fd,    // IN: File descriptor
-             void *buf,               // IN: Buffer to read into
-             size_t len,              // IN: Length of the buffer
-             uint64 offset)           // IN: Offset to start reading
+FileIO_Pread(FileIODescriptor *fd,  // IN: File descriptor
+             void *buf,             // IN: Buffer to read into
+             size_t len,            // IN: Length of the buffer
+             uint64 offset)         // IN: Offset to start reading
 {
    struct iovec iov;
 
@@ -536,10 +483,10 @@ FileIO_Pread(FileIODescriptor *fd,    // IN: File descriptor
  */
 
 FileIOResult
-FileIO_Pwrite(FileIODescriptor *fd,   // IN: File descriptor
-              void const *buf,        // IN: Buffer to write from
-              size_t len,             // IN: Length of the buffer
-              uint64 offset)          // IN: Offset to start writing
+FileIO_Pwrite(FileIODescriptor *fd,  // IN: File descriptor
+              void const *buf,       // IN: Buffer to write from
+              size_t len,            // IN: Length of the buffer
+              uint64 offset)         // IN: Offset to start writing
 {
    struct iovec iov;
 

@@ -27,17 +27,32 @@
 #include <string.h>
 
 #include "vmware.h"
-#include "foundryToolsDaemon.h"
 #include "syncDriver.h"
 #include "vixCommands.h"
 #include "vixPluginInt.h"
-#include "vmtools.h"
+#include "vmware/tools/utils.h"
 
 #if !defined(__APPLE__)
 #include "embed_version.h"
 #include "vmtoolsd_version.h"
 VM_EMBED_VERSION(VMTOOLSD_VERSION_STRING);
 #endif
+
+/**
+ * Clean up internal state on shutdown.
+ *
+ * @param[in]  src      The source object.
+ * @param[in]  ctx      Unused.
+ * @param[in]  plugin   Plugin registration data.
+ */
+
+static void
+VixShutdown(gpointer src,
+            ToolsAppCtx *ctx,
+            ToolsPluginData *plugin)
+{
+   FoundryToolsDaemon_Uninitialize(ctx);
+}
 
 
 /**
@@ -62,8 +77,6 @@ ToolsOnLoad(ToolsAppCtx *ctx)
          FoundryToolsDaemonRunProgram, NULL, NULL, NULL, 0 },
       { VIX_BACKDOORCOMMAND_GET_PROPERTIES,
          FoundryToolsDaemonGetToolsProperties, NULL, NULL, 0 },
-      { VIX_BACKDOORCOMMAND_CHECK_USER_ACCOUNT,
-         ToolsDaemonTcloCheckUserAccount, NULL, NULL, NULL, 0 },
       { VIX_BACKDOORCOMMAND_SEND_HGFS_PACKET,
          ToolsDaemonHgfsImpersonated, NULL, NULL, NULL, 0 },
       { VIX_BACKDOORCOMMAND_COMMAND,
@@ -77,8 +90,12 @@ ToolsOnLoad(ToolsAppCtx *ctx)
          ToolsDaemonTcloSyncDriverThaw, NULL, NULL, NULL, 0 }
 #endif
    };
+   ToolsPluginSignalCb sigs[] = {
+      { TOOLS_CORE_SIG_SHUTDOWN, VixShutdown, &regData }
+   };
    ToolsAppReg regs[] = {
-      { TOOLS_APP_GUESTRPC, VMTools_WrapArray(rpcs, sizeof *rpcs, ARRAYSIZE(rpcs)) }
+      { TOOLS_APP_GUESTRPC, VMTools_WrapArray(rpcs, sizeof *rpcs, ARRAYSIZE(rpcs)) },
+      { TOOLS_APP_SIGNALS, VMTools_WrapArray(sigs, sizeof *sigs, ARRAYSIZE(sigs)) }
    };
 
 #if defined(G_PLATFORM_WIN32)

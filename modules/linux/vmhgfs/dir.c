@@ -1,4 +1,3 @@
-
 /*********************************************************
  * Copyright (C) 2006 VMware, Inc. All rights reserved.
  *
@@ -168,7 +167,7 @@ HgfsUnpackSearchReadReply(HgfsReq *req,        // IN: Reply packet
     * Make sure name length is legal.
     */
    if (fileNameLength > NAME_MAX ||
-       fileNameLength > HGFS_PACKET_MAX - replySize) {
+       fileNameLength > req->bufferSize - replySize) {
       return -ENAMETOOLONG;
    }
 
@@ -396,7 +395,7 @@ HgfsPackDirOpenRequest(struct file *file,   // IN: File pointer for this open
    }
 
    /* Build full name to send to server. */
-   if (HgfsBuildPath(name, HGFS_PACKET_MAX - (requestSize - 1),
+   if (HgfsBuildPath(name, req->bufferSize - (requestSize - 1),
                      file->f_dentry) < 0) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsPackDirOpenRequest: build path failed\n"));
       return -EINVAL;
@@ -406,7 +405,7 @@ HgfsPackDirOpenRequest(struct file *file,   // IN: File pointer for this open
 
    /* Convert to CP name. */
    result = CPName_ConvertTo(name,
-                             HGFS_PACKET_MAX - (requestSize - 1),
+                             req->bufferSize - (requestSize - 1),
                              name);
    if (result < 0) {
       LOG(4, (KERN_DEBUG "VMware hgfs: HgfsPackDirOpenRequest: CP conversion failed\n"));
@@ -689,18 +688,18 @@ HgfsDirLlseek(struct file *file,
 {
    struct dentry *dentry = file->f_dentry;
    struct inode *inode = dentry->d_inode;
-   compat_mutex_t mtx;
+   compat_mutex_t *mtx;
 
    LOG(4, (KERN_DEBUG "Got llseek call with origin = %d, offset = %u,"
            "pos = %u\n", origin, (uint32)offset, (uint32)file->f_pos));
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 16)
-   mtx = inode->i_sem;
+   mtx = &inode->i_sem;
 #else
-   mtx = inode->i_mutex;
+   mtx = &inode->i_mutex;
 #endif
 
-   compat_mutex_lock(&mtx);
+   compat_mutex_lock(mtx);
 
    switch(origin) {
 
@@ -745,7 +744,7 @@ HgfsDirLlseek(struct file *file,
    }
 
 out:
-   compat_mutex_unlock(&mtx);
+   compat_mutex_unlock(mtx);
    return offset;
 }
 

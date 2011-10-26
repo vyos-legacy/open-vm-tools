@@ -71,25 +71,11 @@ PROGRAMS = $(bin_PROGRAMS)
 am_vmtoolsd_OBJECTS = vmtoolsd-cmdLine.$(OBJEXT) \
 	vmtoolsd-mainLoop.$(OBJEXT) vmtoolsd-mainPosix.$(OBJEXT) \
 	vmtoolsd-pluginMgr.$(OBJEXT) vmtoolsd-serviceObj.$(OBJEXT) \
-	vmtoolsd-toolsRpc.$(OBJEXT) vmtoolsd-svcSignals.$(OBJEXT)
+	vmtoolsd-threadPool.$(OBJEXT) vmtoolsd-toolsRpc.$(OBJEXT) \
+	vmtoolsd-svcSignals.$(OBJEXT)
 vmtoolsd_OBJECTS = $(am_vmtoolsd_OBJECTS)
 am__DEPENDENCIES_1 =
 vmtoolsd_DEPENDENCIES = $(am__DEPENDENCIES_1)
-DEFAULT_INCLUDES = -I.@am__isrc@
-depcomp = $(SHELL) $(top_srcdir)/config/depcomp
-am__depfiles_maybe = depfiles
-am__mv = mv -f
-COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
-	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
-LTCOMPILE = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
-	--mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
-	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
-CCLD = $(CC)
-LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
-	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
-	$(LDFLAGS) -o $@
-SOURCES = $(vmtoolsd_SOURCES)
-DIST_SOURCES = $(vmtoolsd_SOURCES)
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
     $(srcdir)/*) f=`echo "$$p" | sed "s|^$$srcdirstrip/||"`;; \
@@ -111,7 +97,22 @@ am__nobase_list = $(am__nobase_strip_setup); \
 am__base_list = \
   sed '$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;s/\n/ /g' | \
   sed '$$!N;$$!N;$$!N;$$!N;s/\n/ /g'
-DATA = $(pam_DATA)
+SCRIPTS = $(pam_SCRIPTS)
+DEFAULT_INCLUDES = -I.@am__isrc@
+depcomp = $(SHELL) $(top_srcdir)/config/depcomp
+am__depfiles_maybe = depfiles
+am__mv = mv -f
+COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
+	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
+LTCOMPILE = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
+	--mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
+	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
+CCLD = $(CC)
+LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
+	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
+SOURCES = $(vmtoolsd_SOURCES)
+DIST_SOURCES = $(vmtoolsd_SOURCES)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -125,9 +126,12 @@ AWK = @AWK@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
+COMMON_PLUGIN_INSTALLDIR = @COMMON_PLUGIN_INSTALLDIR@
 COMMON_XLIBS = @COMMON_XLIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+CUNIT_CPPFLAGS = @CUNIT_CPPFLAGS@
+CUNIT_LIBS = @CUNIT_LIBS@
 CXX = @CXX@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
@@ -163,6 +167,7 @@ GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
 HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
+HGFS_LIBS = @HGFS_LIBS@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -170,23 +175,18 @@ INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
+INSTVMSG = @INSTVMSG@
 KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
-LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
 LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
-LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
-LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
 LIB_IMPERSONATE_CPPFLAGS = @LIB_IMPERSONATE_CPPFLAGS@
-LIB_MISC_CPPFLAGS = @LIB_MISC_CPPFLAGS@
-LIB_PROC_MGR_CPPFLAGS = @LIB_PROC_MGR_CPPFLAGS@
-LIB_STRING_CPPFLAGS = @LIB_STRING_CPPFLAGS@
 LIB_USER_CPPFLAGS = @LIB_USER_CPPFLAGS@
+LINUXINCLUDE = @LINUXINCLUDE@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
@@ -210,6 +210,8 @@ PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_URL = @PACKAGE_URL@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
 PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
@@ -219,31 +221,29 @@ PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
 RPCGENFLAGS = @RPCGENFLAGS@
+RPCGEN_WRAPPER = @RPCGEN_WRAPPER@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
 SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
 TOOLS_VERSION = @TOOLS_VERSION@
-URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
-URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
 VIX_LIBADD = @VIX_LIBADD@
 VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
 VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
 VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
-VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
-VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XCOMPOSITE_LIBS = @XCOMPOSITE_LIBS@
 XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
+XSM_LIBS = @XSM_LIBS@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
 X_LIBS = @X_LIBS@
 X_PRE_LIBS = @X_PRE_LIBS@
-ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
-ZLIB_LIBS = @ZLIB_LIBS@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
@@ -303,11 +303,12 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 pamdir = $(PAM_PREFIX)/pam.d
 vmtoolsd_CPPFLAGS = @VMTOOLS_CPPFLAGS@ @GMODULE_CPPFLAGS@ \
-	@GOBJECT_CPPFLAGS@ @GTHREAD_CPPFLAGS@ -I$(builddir)
+	@GOBJECT_CPPFLAGS@ @GTHREAD_CPPFLAGS@ -I$(builddir) \
+	-DVMTOOLSD_PLUGIN_ROOT=\"$(pkglibdir)/plugins\"
 vmtoolsd_LDADD = @VMTOOLS_LIBS@ @GMODULE_LIBS@ @GOBJECT_LIBS@ \
 	@GTHREAD_LIBS@ $(am__append_1)
 vmtoolsd_SOURCES = cmdLine.c mainLoop.c mainPosix.c pluginMgr.c \
-	serviceObj.c toolsRpc.c svcSignals.c
+	serviceObj.c threadPool.c toolsRpc.c svcSignals.c
 BUILT_SOURCES = svcSignals.c svcSignals.h
 CLEANFILES = svcSignals.c svcSignals.h
 EXTRA_DIST = svcSignals.gm
@@ -317,8 +318,10 @@ EXTRA_DIST = svcSignals.gm
 @HAVE_ICU_TRUE@                      $(AM_CXXFLAGS) $(CXXFLAGS) $(AM_LDFLAGS) \
 @HAVE_ICU_TRUE@                      $(LDFLAGS) -o $@
 
-@LINUX_TRUE@@PAMD_TRUE@@THIRTY_TWO_BIT_USERSPACE_FALSE@pam_DATA = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd-x64
-@LINUX_TRUE@@PAMD_TRUE@@THIRTY_TWO_BIT_USERSPACE_TRUE@pam_DATA = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd
+
+# PAM support is currently only available for Linux, so HAVE_PAM is only
+# defined for that OS.
+@HAVE_PAM_TRUE@pam_SCRIPTS = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd
 all: $(BUILT_SOURCES)
 	$(MAKE) $(AM_MAKEFLAGS) all-am
 
@@ -400,6 +403,40 @@ clean-binPROGRAMS:
 vmtoolsd$(EXEEXT): $(vmtoolsd_OBJECTS) $(vmtoolsd_DEPENDENCIES) 
 	@rm -f vmtoolsd$(EXEEXT)
 	$(vmtoolsd_LINK) $(vmtoolsd_OBJECTS) $(vmtoolsd_LDADD) $(LIBS)
+install-pamSCRIPTS: $(pam_SCRIPTS)
+	@$(NORMAL_INSTALL)
+	test -z "$(pamdir)" || $(MKDIR_P) "$(DESTDIR)$(pamdir)"
+	@list='$(pam_SCRIPTS)'; test -n "$(pamdir)" || list=; \
+	for p in $$list; do \
+	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
+	  if test -f "$$d$$p"; then echo "$$d$$p"; echo "$$p"; else :; fi; \
+	done | \
+	sed -e 'p;s,.*/,,;n' \
+	    -e 'h;s|.*|.|' \
+	    -e 'p;x;s,.*/,,;$(transform)' | sed 'N;N;N;s,\n, ,g' | \
+	$(AWK) 'BEGIN { files["."] = ""; dirs["."] = 1; } \
+	  { d=$$3; if (dirs[d] != 1) { print "d", d; dirs[d] = 1 } \
+	    if ($$2 == $$4) { files[d] = files[d] " " $$1; \
+	      if (++n[d] == $(am__install_max)) { \
+		print "f", d, files[d]; n[d] = 0; files[d] = "" } } \
+	    else { print "f", d "/" $$4, $$1 } } \
+	  END { for (d in files) print "f", d, files[d] }' | \
+	while read type dir files; do \
+	     if test "$$dir" = .; then dir=; else dir=/$$dir; fi; \
+	     test -z "$$files" || { \
+	       echo " $(INSTALL_SCRIPT) $$files '$(DESTDIR)$(pamdir)$$dir'"; \
+	       $(INSTALL_SCRIPT) $$files "$(DESTDIR)$(pamdir)$$dir" || exit $$?; \
+	     } \
+	; done
+
+uninstall-pamSCRIPTS:
+	@$(NORMAL_UNINSTALL)
+	@list='$(pam_SCRIPTS)'; test -n "$(pamdir)" || exit 0; \
+	files=`for p in $$list; do echo "$$p"; done | \
+	       sed -e 's,.*/,,;$(transform)'`; \
+	test -n "$$list" || exit 0; \
+	echo " ( cd '$(DESTDIR)$(pamdir)' && rm -f" $$files ")"; \
+	cd "$(DESTDIR)$(pamdir)" && rm -f $$files
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -413,6 +450,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmtoolsd-pluginMgr.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmtoolsd-serviceObj.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmtoolsd-svcSignals.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmtoolsd-threadPool.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vmtoolsd-toolsRpc.Po@am__quote@
 
 .c.o:
@@ -506,6 +544,20 @@ vmtoolsd-serviceObj.obj: serviceObj.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmtoolsd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmtoolsd-serviceObj.obj `if test -f 'serviceObj.c'; then $(CYGPATH_W) 'serviceObj.c'; else $(CYGPATH_W) '$(srcdir)/serviceObj.c'; fi`
 
+vmtoolsd-threadPool.o: threadPool.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmtoolsd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmtoolsd-threadPool.o -MD -MP -MF $(DEPDIR)/vmtoolsd-threadPool.Tpo -c -o vmtoolsd-threadPool.o `test -f 'threadPool.c' || echo '$(srcdir)/'`threadPool.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/vmtoolsd-threadPool.Tpo $(DEPDIR)/vmtoolsd-threadPool.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='threadPool.c' object='vmtoolsd-threadPool.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmtoolsd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmtoolsd-threadPool.o `test -f 'threadPool.c' || echo '$(srcdir)/'`threadPool.c
+
+vmtoolsd-threadPool.obj: threadPool.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmtoolsd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmtoolsd-threadPool.obj -MD -MP -MF $(DEPDIR)/vmtoolsd-threadPool.Tpo -c -o vmtoolsd-threadPool.obj `if test -f 'threadPool.c'; then $(CYGPATH_W) 'threadPool.c'; else $(CYGPATH_W) '$(srcdir)/threadPool.c'; fi`
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/vmtoolsd-threadPool.Tpo $(DEPDIR)/vmtoolsd-threadPool.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='threadPool.c' object='vmtoolsd-threadPool.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmtoolsd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o vmtoolsd-threadPool.obj `if test -f 'threadPool.c'; then $(CYGPATH_W) 'threadPool.c'; else $(CYGPATH_W) '$(srcdir)/threadPool.c'; fi`
+
 vmtoolsd-toolsRpc.o: toolsRpc.c
 @am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(vmtoolsd_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT vmtoolsd-toolsRpc.o -MD -MP -MF $(DEPDIR)/vmtoolsd-toolsRpc.Tpo -c -o vmtoolsd-toolsRpc.o `test -f 'toolsRpc.c' || echo '$(srcdir)/'`toolsRpc.c
 @am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/vmtoolsd-toolsRpc.Tpo $(DEPDIR)/vmtoolsd-toolsRpc.Po
@@ -539,26 +591,6 @@ mostlyclean-libtool:
 
 clean-libtool:
 	-rm -rf .libs _libs
-install-pamDATA: $(pam_DATA)
-	@$(NORMAL_INSTALL)
-	test -z "$(pamdir)" || $(MKDIR_P) "$(DESTDIR)$(pamdir)"
-	@list='$(pam_DATA)'; test -n "$(pamdir)" || list=; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(pamdir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(pamdir)" || exit $$?; \
-	done
-
-uninstall-pamDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(pam_DATA)'; test -n "$(pamdir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	test -n "$$files" || exit 0; \
-	echo " ( cd '$(DESTDIR)$(pamdir)' && rm -f" $$files ")"; \
-	cd "$(DESTDIR)$(pamdir)" && rm -f $$files
 
 ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
 	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
@@ -645,7 +677,7 @@ distdir: $(DISTFILES)
 check-am: all-am
 check: $(BUILT_SOURCES)
 	$(MAKE) $(AM_MAKEFLAGS) check-am
-all-am: Makefile $(PROGRAMS) $(DATA)
+all-am: Makefile $(PROGRAMS) $(SCRIPTS)
 installdirs:
 	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(pamdir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
@@ -700,8 +732,9 @@ info: info-am
 
 info-am:
 
-install-data-am: install-pamDATA
-
+install-data-am: install-pamSCRIPTS
+	@$(NORMAL_INSTALL)
+	$(MAKE) $(AM_MAKEFLAGS) install-data-hook
 install-dvi: install-dvi-am
 
 install-dvi-am:
@@ -747,26 +780,26 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-binPROGRAMS uninstall-pamDATA
+uninstall-am: uninstall-binPROGRAMS uninstall-pamSCRIPTS
 	@$(NORMAL_INSTALL)
 	$(MAKE) $(AM_MAKEFLAGS) uninstall-hook
-.MAKE: all check install install-am install-exec-am install-strip \
-	uninstall-am
+.MAKE: all check install install-am install-data-am install-exec-am \
+	install-strip uninstall-am
 
 .PHONY: CTAGS GTAGS all all-am check check-am clean clean-binPROGRAMS \
 	clean-generic clean-libtool ctags distclean distclean-compile \
 	distclean-generic distclean-libtool distclean-tags distdir dvi \
 	dvi-am html html-am info info-am install install-am \
-	install-binPROGRAMS install-data install-data-am install-dvi \
-	install-dvi-am install-exec install-exec-am install-exec-hook \
-	install-html install-html-am install-info install-info-am \
-	install-man install-pamDATA install-pdf install-pdf-am \
-	install-ps install-ps-am install-strip installcheck \
-	installcheck-am installdirs maintainer-clean \
-	maintainer-clean-generic mostlyclean mostlyclean-compile \
-	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
-	tags uninstall uninstall-am uninstall-binPROGRAMS \
-	uninstall-hook uninstall-pamDATA
+	install-binPROGRAMS install-data install-data-am \
+	install-data-hook install-dvi install-dvi-am install-exec \
+	install-exec-am install-exec-hook install-html install-html-am \
+	install-info install-info-am install-man install-pamSCRIPTS \
+	install-pdf install-pdf-am install-ps install-ps-am \
+	install-strip installcheck installcheck-am installdirs \
+	maintainer-clean maintainer-clean-generic mostlyclean \
+	mostlyclean-compile mostlyclean-generic mostlyclean-libtool \
+	pdf pdf-am ps ps-am tags uninstall uninstall-am \
+	uninstall-binPROGRAMS uninstall-hook uninstall-pamSCRIPTS
 
 
 svcSignals.c: $(top_srcdir)/services/vmtoolsd/svcSignals.gm
@@ -776,6 +809,10 @@ svcSignals.c: $(top_srcdir)/services/vmtoolsd/svcSignals.gm
 svcSignals.h: $(top_srcdir)/services/vmtoolsd/svcSignals.gm
 	glib-genmarshal --header $(top_srcdir)/services/vmtoolsd/svcSignals.gm > \
 	   $@ || (rm -f $@ && exit 1)
+
+# Message catalogs.
+install-data-hook:
+	@INSTVMSG@ vmtoolsd $(srcdir)/l10n $(DESTDIR)$(datadir)
 
 install-exec-hook:
 	$(INSTALL) -d $(DESTDIR)/etc/vmware-tools

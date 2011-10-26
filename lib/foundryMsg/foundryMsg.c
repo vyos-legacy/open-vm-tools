@@ -33,6 +33,7 @@
 
 #include "vixOpenSource.h"
 #include "vixCommands.h"
+#include "unicodeBase.h"
 
 static char PlainToObfuscatedCharMap[256];
 static char ObfuscatedToPlainCharMap[256];
@@ -83,10 +84,8 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_RUN_PROGRAM,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_PROPERTY,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_PROPERTY,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_KEYSTROKES,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_READ_REGISTRY,
@@ -127,26 +126,18 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_UPGRADE_VIRTUAL_HARDWARE,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_NIC_BANDWIDTH,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CREATE_DISK,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CREATE_FLOPPY,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_RELOAD_VM,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_DELETE_VM,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SYNCDRIVER_FREEZE,
-                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SYNCDRIVER_THAW,
-                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_HOT_ADD_DISK,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_HOT_REMOVE_DISK,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_GUEST_PRINTER,
-                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_WAIT_FOR_TOOLS,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CREATE_RUNNING_VM_SNAPSHOT,
@@ -167,15 +158,12 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_OPEN_VM,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_DISK_PROPERTIES,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_OPEN_URL,
-                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    /* GET_HANDLE_STATE is needed for the initial handshake */
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_HANDLE_STATE,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_HANDLE_STATE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_UNUSED_COMMAND,
@@ -187,12 +175,9 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CAPTURE_SCREEN,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_VMDB_VALUES,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_VMDB_VALUES,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_READ_XML_FILE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_TOOLS_STATE,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_UNUSED_COMMAND,
@@ -235,14 +220,13 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_KILL_PROCESS,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_VM_FORK_COMMAND,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_LOGOUT_IN_GUEST,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_READ_VARIABLE,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_WRITE_VARIABLE,
-                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+                           VIX_COMMAND_CATEGORY_MIXED),
    VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CONNECT_DEVICE,
@@ -286,10 +270,7 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_VPROBE_RESET,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   
-   /* LIST_USB_DEVICES is needed for the initial handshake. */
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_LIST_USB_DEVICES,
-                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CONNECT_HOST,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_UNUSED_COMMAND,
@@ -323,28 +304,20 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_VM_UNPAUSE,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_SNAPSHOT_LOG_INFO,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_REPLAY_SPEED,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_ANSWER_USER_MESSAGE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_CLIENT_LOCALE,
-                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_PERFORMANCE_DATA,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_REFRESH_RUNTIME_PROPERTIES,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_SNAPSHOT_SCREENSHOT,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_ADD_TIMEMARKER,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_WAIT_FOR_USER_ACTION_IN_GUEST,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_VMDB_END_TRANSACTION,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_VMDB_SET,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CHANGE_VIRTUAL_HARDWARE,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_HOT_PLUG_CPU,
@@ -361,32 +334,20 @@ static const VixCommandInfo vixCommandInfoTable[] = {
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_DEBUGGER_SEND_COMMAND,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
-
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_RECORD_STATE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_RECORD_STATE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_REMOVE_RECORD_STATE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_REPLAY_STATE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_REPLAY_STATE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_REMOVE_REPLAY_STATE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   
    VIX_DEFINE_UNUSED_COMMAND,
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CANCEL_USER_PROGRESS_MESSAGE,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    /* GET_VMX_DEVICE_STATE is needed for the initial handshake. */   
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_VMX_DEVICE_STATE,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_NUM_TIMEMARKERS,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_GET_TIMEMARKER,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_REMOVE_TIMEMARKER,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_SNAPSHOT_INFO,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SNAPSHOT_SET_MRU,
@@ -404,19 +365,13 @@ static const VixCommandInfo vixCommandInfoTable[] = {
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_TRANSFER_FINAL_DATA,
                            VIX_COMMAND_CATEGORY_PRIVILEGED),
 
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
 
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER_VMX,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER_VMX,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
-   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER_VMX,
-                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
+   VIX_DEFINE_UNUSED_COMMAND,
 
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_LIST_FILESYSTEMS,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
@@ -438,6 +393,64 @@ static const VixCommandInfo vixCommandInfoTable[] = {
 
    VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CHANGE_DISPLAY_TOPOLOGY_MODES,
                            VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_QUERY_CHILDREN,
+                           VIX_COMMAND_CATEGORY_PRIVILEGED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_LIST_FILES,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CREATE_DIRECTORY_EX,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_MOVE_GUEST_FILE_EX,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_MOVE_GUEST_DIRECTORY,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CREATE_TEMPORARY_FILE_EX,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_CREATE_TEMPORARY_DIRECTORY,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_SET_GUEST_FILE_ATTRIBUTES,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_COPY_FILE_FROM_GUEST_TO_READER,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_START_PROGRAM,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_LIST_PROCESSES_EX,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_READ_ENV_VARIABLES,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_INITIATE_FILE_TRANSFER_FROM_GUEST,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_INITIATE_FILE_TRANSFER_TO_GUEST,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_ACQUIRE_CREDENTIALS,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_RELEASE_CREDENTIALS,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_VALIDATE_CREDENTIALS,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_TERMINATE_PROCESS,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_DELETE_GUEST_FILE_EX,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_DELETE_GUEST_DIRECTORY_EX,
+                           VIX_COMMAND_CATEGORY_ALWAYS_ALLOWED),
+
+   VIX_DEFINE_COMMAND_INFO(VIX_COMMAND_HOT_CHANGE_MONITOR_TYPE,
+                           VIX_COMMAND_CATEGORY_PRIVILEGED),
 };
 
 
@@ -445,13 +458,24 @@ static const VixCommandInfo *VixGetCommandInfoForOpCode(int opCode);
 
 static void VixMsgInitializeObfuscationMapping(void);
 
-static char *VixMsgEncodeBuffer(const uint8 *buffer,
-                                size_t bufferLength,
-                                Bool includeEncodingId);
+static VixError VixMsgEncodeBuffer(const uint8 *buffer,
+                                   size_t bufferLength,
+                                   Bool includeEncodingId,
+                                   char **result);
 
-static char *VixMsgDecodeBuffer(const char *str,
-                                Bool nullTerminateResult,
-                                size_t *bufferLength);
+static VixError VixMsgDecodeBuffer(const char *str,
+                                   Bool nullTerminateResult,
+                                   char **result,
+                                   size_t *bufferLength);
+
+static VixError VMAutomationMsgParserInit(const char *caller,
+                                          unsigned int line,
+                                          VMAutomationMsgParser *state,
+                                          const VixMsgHeader *msg,
+                                          size_t headerLength,
+                                          size_t fixedLength,
+                                          size_t miscDataLength,
+                                          const char *packetType);
 
 
 /*
@@ -593,36 +617,38 @@ VixMsg_InitResponseMsg(VixCommandResponseHeader *responseHeader,     // IN
 
 VixCommandRequestHeader *
 VixMsg_AllocRequestMsg(size_t msgHeaderAndBodyLength,    // IN
-                       int opCode,                    // IN
-                       uint64 cookie,                 // IN
-                       int credentialType,            // IN
-                       const char *userNamePassword)  // IN
+                       int opCode,                       // IN
+                       uint64 cookie,                    // IN
+                       int credentialType,               // IN
+                       const char *credential)           // IN
 {
    size_t totalMessageSize;
    VixCommandRequestHeader *commandRequest = NULL;
-   size_t credentialLength = 0;
-   size_t namePasswordLength = 0;
+   size_t providedCredentialLength = 0;
+   size_t totalCredentialLength = 0;
    char *destPtr;
 
-   if ((VIX_USER_CREDENTIAL_NAME_PASSWORD == credentialType) 
+   if ((VIX_USER_CREDENTIAL_NAME_PASSWORD == credentialType)
       || (VIX_USER_CREDENTIAL_HOST_CONFIG_SECRET == credentialType)
-      || (VIX_USER_CREDENTIAL_HOST_CONFIG_HASHED_SECRET == credentialType)) {
+      || (VIX_USER_CREDENTIAL_HOST_CONFIG_HASHED_SECRET == credentialType)
+      || (VIX_USER_CREDENTIAL_TICKETED_SESSION == credentialType)
+      || (VIX_USER_CREDENTIAL_SSPI == credentialType)) {
       /*
-       * Both of these are optional.
+       * All of these are optional.
        */
-      if (NULL != userNamePassword) {
-         namePasswordLength = strlen(userNamePassword);
-         credentialLength += namePasswordLength;
+      if (NULL != credential) {
+         providedCredentialLength = strlen(credential);
+         totalCredentialLength += providedCredentialLength;
       }
       /*
        * Add 1 to each string to include '\0' for the end of the string.
        */
-      credentialLength += 1;
+      totalCredentialLength += 1;
    } else {
-      credentialLength = 0;
+      totalCredentialLength = 0;
    }
 
-   totalMessageSize = msgHeaderAndBodyLength + credentialLength;
+   totalMessageSize = msgHeaderAndBodyLength + totalCredentialLength;
    if (totalMessageSize > VIX_COMMAND_MAX_REQUEST_SIZE) {
       /*
        * We don't want to allocate any requests larger than
@@ -640,11 +666,11 @@ VixMsg_AllocRequestMsg(size_t msgHeaderAndBodyLength,    // IN
    commandRequest->commonHeader.magic = VIX_COMMAND_MAGIC_WORD;
    commandRequest->commonHeader.messageVersion = VIX_COMMAND_MESSAGE_VERSION;
    commandRequest->commonHeader.totalMessageLength =
-      msgHeaderAndBodyLength + credentialLength;
+      msgHeaderAndBodyLength + totalCredentialLength;
    commandRequest->commonHeader.headerLength = sizeof(VixCommandRequestHeader);
    commandRequest->commonHeader.bodyLength = msgHeaderAndBodyLength -
       sizeof(VixCommandRequestHeader);
-   commandRequest->commonHeader.credentialLength = credentialLength;
+   commandRequest->commonHeader.credentialLength = totalCredentialLength;
    commandRequest->commonHeader.commonFlags = VIX_COMMAND_REQUEST;
 
    commandRequest->opCode = opCode;
@@ -656,13 +682,15 @@ VixMsg_AllocRequestMsg(size_t msgHeaderAndBodyLength,    // IN
 
    if ((VIX_USER_CREDENTIAL_NAME_PASSWORD == credentialType)
          || (VIX_USER_CREDENTIAL_HOST_CONFIG_SECRET == credentialType)
-         || (VIX_USER_CREDENTIAL_HOST_CONFIG_HASHED_SECRET == credentialType)) {
+         || (VIX_USER_CREDENTIAL_HOST_CONFIG_HASHED_SECRET == credentialType)
+         || (VIX_USER_CREDENTIAL_TICKETED_SESSION == credentialType)
+         || (VIX_USER_CREDENTIAL_SSPI == credentialType)) {
       destPtr = (char *) commandRequest;
       destPtr += commandRequest->commonHeader.headerLength;
       destPtr += commandRequest->commonHeader.bodyLength;
-      if (NULL != userNamePassword) {
-         Str_Strcpy(destPtr, userNamePassword, namePasswordLength + 1);
-         destPtr += namePasswordLength;
+      if (NULL != credential) {
+         Str_Strcpy(destPtr, credential, providedCredentialLength + 1);
+         destPtr += providedCredentialLength;
       }
       *(destPtr++) = 0;
    }
@@ -993,10 +1021,12 @@ VixMsgInitializeObfuscationMapping(void)
  *-----------------------------------------------------------------------------
  */
 
-char *
+VixError
 VixMsg_ObfuscateNamePassword(const char *userName,      // IN
-                             const char *password)      // IN
+                             const char *password,      // IN
+                             char **result)             // OUT
 {
+   VixError err = VIX_OK;
    char *packedBuffer = NULL;
    char *resultString = NULL;
    char *destPtr;
@@ -1014,7 +1044,12 @@ VixMsg_ObfuscateNamePassword(const char *userName,      // IN
     * Leave space for null terminating characters.
     */
    packedBufferLength = nameLength + 1 + passwordLength + 1;
-   packedBuffer = Util_SafeMalloc(packedBufferLength);
+   packedBuffer = VixMsg_MallocClientData(packedBufferLength);
+   if (packedBuffer == NULL) {
+      err = VIX_E_OUT_OF_MEMORY;
+      goto abort;
+   }
+
    destPtr = packedBuffer;
    if (NULL != userName) {
       Str_Strcpy(destPtr, userName, nameLength + 1);
@@ -1027,11 +1062,20 @@ VixMsg_ObfuscateNamePassword(const char *userName,      // IN
    }
    *(destPtr++) = 0;
 
-   resultString = VixMsgEncodeBuffer(packedBuffer, packedBufferLength, FALSE);
+   err = VixMsgEncodeBuffer(packedBuffer, packedBufferLength, FALSE,
+                            &resultString);
+   if (err != VIX_OK) {
+      goto abort;
+   }
 
+abort:
    Util_ZeroFree(packedBuffer, packedBufferLength);
 
-   return(resultString);
+   if (err == VIX_OK) {
+      *result = resultString;
+   }
+
+   return err;
 } // VixMsg_ObfuscateNamePassword
 
 
@@ -1044,7 +1088,7 @@ VixMsg_ObfuscateNamePassword(const char *userName,      // IN
  *      See the notes for that procedure.
  *
  * Results:
- *      Bool. TRUE on success, FALSE otherwise.
+ *      VixError. VIX_OK if successful.
  *
  * Side effects:
  *      None.
@@ -1052,36 +1096,55 @@ VixMsg_ObfuscateNamePassword(const char *userName,      // IN
  *-----------------------------------------------------------------------------
  */
 
-Bool
+VixError
 VixMsg_DeObfuscateNamePassword(const char *packagedName,   // IN
                                char **userNameResult,      // OUT
                                char **passwordResult)      // OUT
 {
-   Bool success = FALSE;
+   VixError err;
    char *packedString = NULL;
    char *srcPtr;
    size_t packedStringLength;
+   char *userName = NULL;
+   char *passwd = NULL;
 
-   packedString = VixMsgDecodeBuffer(packagedName, FALSE, &packedStringLength);
-   if (NULL == packedString) {
+   err = VixMsgDecodeBuffer(packagedName, FALSE,
+                            &packedString, &packedStringLength);
+   if (err != VIX_OK) {
       goto abort;
    }
 
    srcPtr = packedString;
    if (NULL != userNameResult) {
-      *userNameResult = Util_SafeStrdup(srcPtr);
+      Bool allocateFailed;
+      userName = VixMsg_StrdupClientData(srcPtr, &allocateFailed);
+      if (allocateFailed) {
+         err = VIX_E_OUT_OF_MEMORY;
+         goto abort;
+      }
    }
    srcPtr = srcPtr + strlen(srcPtr);
    srcPtr++;
    if (NULL != passwordResult) {
-      *passwordResult = Util_SafeStrdup(srcPtr);
+      Bool allocateFailed;
+      passwd = VixMsg_StrdupClientData(srcPtr, &allocateFailed);
+      if (allocateFailed) {
+         err = VIX_E_OUT_OF_MEMORY;
+         goto abort;
+      }
    }
-   success = TRUE;
+
+   *userNameResult = userName;
+   userName = NULL;
+   *passwordResult = passwd;
+   passwd = NULL;
 
 abort:
    Util_ZeroFree(packedString, packedStringLength);
+   Util_ZeroFreeString(userName);
+   Util_ZeroFreeString(passwd);
 
-   return(success);
+   return err;
 } // VixMsg_DeObfuscateNamePassword
 
 
@@ -1104,14 +1167,15 @@ abort:
  *-----------------------------------------------------------------------------
  */
 
-char *
-VixMsg_EncodeString(const char *str)  // IN
+VixError
+VixMsg_EncodeString(const char *str,  // IN
+                    char **result)    // OUT
 {
    if (NULL == str) {
       str = "";
    }
 
-   return VixMsgEncodeBuffer(str, strlen(str), TRUE);
+   return VixMsgEncodeBuffer(str, strlen(str), TRUE, result);
 } // VixMsg_EncodeString
 
 
@@ -1134,11 +1198,13 @@ VixMsg_EncodeString(const char *str)  // IN
  *-----------------------------------------------------------------------------
  */
 
-char *
+VixError
 VixMsgEncodeBuffer(const uint8 *buffer,     // IN
                    size_t bufferLength,     // IN
-                   Bool includeEncodingId)  // IN: Add 'a' (ASCII) at start of output
+                   Bool includeEncodingId,  // IN: Add 'a' (ASCII) at start of output
+                   char ** result)          // OUT
 {
+   VixError err = VIX_OK;
    char *base64String = NULL;
    char *resultString = NULL;
    size_t resultBufferLength = 0;
@@ -1149,12 +1215,18 @@ VixMsgEncodeBuffer(const uint8 *buffer,     // IN
    
    base64Length = Base64_EncodedLength((uint8 const *) buffer,
                                        bufferLength);
-   base64String = Util_SafeMalloc(base64Length);
+   base64String = VixMsg_MallocClientData(base64Length);
+   if (base64String == NULL) {
+      err = VIX_E_OUT_OF_MEMORY;
+      goto abort;
+   }
+
    if (!(Base64_Encode((uint8 const *) buffer,
                        bufferLength,
                        base64String, 
                        base64Length,
                        &base64Length))) {
+      err = VIX_E_FAIL;
       goto abort;
    }
 
@@ -1168,7 +1240,12 @@ VixMsgEncodeBuffer(const uint8 *buffer,     // IN
       resultBufferLength++;
    }
 
-   resultString = Util_SafeMalloc(resultBufferLength + 1);
+   resultString = VixMsg_MallocClientData(resultBufferLength + 1);
+   if (resultString == NULL) {
+      err = VIX_E_OUT_OF_MEMORY;
+      goto abort;
+   }
+
    destPtr = resultString;
    srcPtr = base64String;
    endSrcPtr = base64String + base64Length;
@@ -1202,7 +1279,11 @@ VixMsgEncodeBuffer(const uint8 *buffer,     // IN
 abort:
    free(base64String);
 
-   return resultString;
+   if (err == VIX_OK) {
+      *result = resultString;
+   }
+
+   return err;
 } // VixMsgEncodeBuffer
 
 /*
@@ -1214,7 +1295,7 @@ abort:
  *       See the notes for that procedure.
  *
  * Results:
- *      A pointer to the decoded string, or NULL on failure.
+ *      VixError. VIX_OK if successful.
  *
  * Side effects:
  *      None.
@@ -1222,18 +1303,20 @@ abort:
  *-----------------------------------------------------------------------------
  */
 
-char *
-VixMsg_DecodeString(const char *str)   // IN
+VixError
+VixMsg_DecodeString(const char *str,   // IN
+                    char **result)     // OUT
 {
    /*
     * Check the character set. 
     *   'a' means ASCII.
     */
    if ((NULL == str) || ('a' != *str)) {
-      return(NULL);
+      *result = NULL;
+      return VIX_E_INVALID_ARG;
    }
 
-   return VixMsgDecodeBuffer(str + 1, TRUE, NULL);
+   return VixMsgDecodeBuffer(str + 1, TRUE, result, NULL);
 } // VixMsg_DecodeString
 
 
@@ -1246,7 +1329,7 @@ VixMsg_DecodeString(const char *str)   // IN
  *      See the notes for that procedure.
  *
  * Results:
- *      A pointer to the decoded string, or NULL on failure.
+ *      VixError. VIX_OK if successful.
  *
  * Side effects:
  *      None.
@@ -1254,17 +1337,20 @@ VixMsg_DecodeString(const char *str)   // IN
  *-----------------------------------------------------------------------------
  */
 
-char *
+VixError
 VixMsgDecodeBuffer(const char *str,           // IN
                    Bool nullTerminateResult,  // OUT
+                   char **result,             // OUT
                    size_t *bufferLength)      // OUT: Optional
 {
+   VixError err = VIX_OK;
    char *base64String = NULL;
    char *resultStr = NULL;
    char *srcPtr;
    char *destPtr;
    size_t resultStrAllocatedLength;
    size_t resultStrLogicalLength;
+   Bool allocateFailed;
 
    if (NULL != bufferLength) {
       *bufferLength = 0;
@@ -1275,7 +1361,11 @@ VixMsgDecodeBuffer(const char *str,           // IN
     * Do this in a private copy because we will change the string in place.
     */
    VixMsgInitializeObfuscationMapping();
-   base64String = Util_SafeStrdup(str);
+   base64String = VixMsg_StrdupClientData(str, &allocateFailed);
+   if (allocateFailed) {
+      err = VIX_E_OUT_OF_MEMORY;
+      goto abort;
+   }
    destPtr = base64String;
    srcPtr = base64String;
 
@@ -1331,7 +1421,11 @@ VixMsgDecodeBuffer(const char *str,           // IN
 abort:
    free(base64String);
 
-   return(resultStr);
+   if (err == VIX_OK) {
+      *result = resultStr;
+   }
+
+   return err;
 } // VixMsgDecodeBuffer
 
 
@@ -1486,3 +1580,892 @@ VixGetCommandInfoForOpCode(int opCode)  // IN
 
    return commandInfo;
 } // VixGetCommandInfoForOpCode
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixMsg_AllocGenericRequestMsg --
+ *
+ *      Allocate and initialize a generic request message.
+ *
+ *      Assumes the caller holds the lock to 'propertyList'.
+ *
+ * Results:
+ *      Returns VixError.
+ *      Upon retrun, *request will contain either the message with the
+ *      headers properly initialized or NULL.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+VixMsg_AllocGenericRequestMsg(int opCode,                         // IN
+                              uint64 cookie,                      // IN
+                              int credentialType,                 // IN
+                              const char *userNamePassword,       // IN
+                              int options,                        // IN
+                              VixPropertyListImpl *propertyList,  // IN
+                              VixCommandGenericRequest **request) // OUT
+{
+   VixError err;
+   VixCommandGenericRequest *requestLocal = NULL;
+   size_t msgHeaderAndBodyLength;
+   char *serializedBufferBody = NULL;
+   size_t serializedBufferLength = 0;
+
+   if (NULL == request) {
+      ASSERT(0);
+      err = VIX_E_FAIL;
+      goto abort;
+   }
+
+   *request = NULL;
+
+   if (NULL != propertyList) {
+      err = VixPropertyList_Serialize(propertyList,
+                                      FALSE,
+                                      &serializedBufferLength,
+                                      &serializedBufferBody);
+      if (VIX_OK != err) {
+         goto abort;
+      }
+   }
+
+   msgHeaderAndBodyLength = sizeof(*requestLocal) + serializedBufferLength;
+   requestLocal = (VixCommandGenericRequest *)
+      VixMsg_AllocRequestMsg(msgHeaderAndBodyLength,
+                             opCode,
+                             cookie,
+                             credentialType,
+                             userNamePassword);
+   if (NULL == requestLocal) {
+      err = VIX_E_FAIL;
+      goto abort;
+   }
+
+   requestLocal->options = options;
+   requestLocal->propertyListSize = serializedBufferLength;
+
+   if (NULL != serializedBufferBody) {
+      char *dst = (char *)request + sizeof(*request);
+      memcpy(dst, serializedBufferBody, serializedBufferLength);
+   }
+
+   *request = requestLocal;
+   err = VIX_OK;
+
+ abort:
+   free(serializedBufferBody);
+
+   return err;
+}  // VixMsg_AllocGenericRequestMsg
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixMsg_ParseGenericRequestMsg --
+ *
+ *      Extract the options and property list from the request
+ *      message, while validating message.
+ *
+ * Results:
+ *      VixError
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+VixMsg_ParseGenericRequestMsg(const VixCommandGenericRequest *request,  // IN
+                              int *options,                             // OUT
+                              VixPropertyListImpl *propertyList)        // OUT
+{
+   VixError err;
+   uint64 headerAndBodyLength;
+
+   if ((NULL == request) || (NULL == options) || (NULL == propertyList)) {
+      ASSERT(0);
+      err = VIX_E_FAIL;
+      goto abort;
+   }
+
+   *options = 0;
+   VixPropertyList_Initialize(propertyList);
+
+   /*
+    * In most cases we will have already called VixMsg_ValidateResponseMsg()
+    * on this request before, but call it here so that this function will
+    * always be sufficient to validate the request.
+    */
+   err = VixMsg_ValidateRequestMsg(request,
+                                   request->header.commonHeader.totalMessageLength);
+   if (VIX_OK != err) {
+      goto abort;
+   }
+
+   if (request->header.commonHeader.totalMessageLength < sizeof *request) {
+      err = VIX_E_INVALID_MESSAGE_BODY;
+      goto abort;
+   }
+
+   headerAndBodyLength = (uint64) request->header.commonHeader.headerLength
+      + request->header.commonHeader.bodyLength;
+
+   if (headerAndBodyLength < ((uint64) sizeof *request
+                              + request->propertyListSize)) {
+      err = VIX_E_INVALID_MESSAGE_BODY;
+      goto abort;
+   }
+
+   if (request->propertyListSize > 0) {
+      const char *serializedBuffer = (const char *) request + sizeof(*request);
+
+      err = VixPropertyList_Deserialize(propertyList,
+                                        serializedBuffer,
+                                        request->propertyListSize,
+                                        VIX_PROPERTY_LIST_BAD_ENCODING_ERROR);
+      if (VIX_OK != err) {
+         goto abort;
+      }
+   }
+
+   *options = request->options;
+   err = VIX_OK;
+
+ abort:
+
+   return err;
+} // VixMsg_ParseGenericRequestMsg
+
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixMsg_ParseSimpleResponseWithString --
+ *
+ *      Takes a response packet that consists of a VixCommandResponseHeader
+ *      followed by a string containing the response data, validates
+ *      the packet, and then passes out a pointer to that string.
+ *
+ * Results:
+ *      VixError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+VixMsg_ParseSimpleResponseWithString(const VixCommandResponseHeader *response,  // IN
+                                     const char **result)                       // OUT
+{
+   VixError err;
+   VMAutomationMsgParser parser;
+
+   err = VMAutomationMsgParserInitResponse(&parser, response, sizeof *response);
+   if (VIX_OK != err) {
+      goto abort;
+   }
+
+   err = VMAutomationMsgParserGetOptionalString(&parser,
+                                                response->commonHeader.bodyLength,
+                                                result);
+
+abort:
+   return err;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixMsg_MallocClientData --
+ *
+ *      Allocates the memory needed to copy from a client-provided buffer.
+ *
+ * Results:
+ *      Pointer to allocated memory
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void *
+VixMsg_MallocClientData(size_t size)  // IN
+{
+   return malloc(size);
+} // VixMsg_MallocClientData
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixMsg_ReallocClientData --
+ *
+ *      Reallocates the memory needed to copy from a client-provided buffer.
+ *
+ * Results:
+ *      Pointer to allocated memory
+ *
+ * Side effects:
+ *      Frees memory pointed to by ptr.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void *
+VixMsg_ReallocClientData(void *ptr,   // IN
+                         size_t size) // IN
+{
+   return realloc(ptr, size);
+} // VixMsg_ReallocClientData
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixMsg_StrdupClientData --
+ *
+ *      Allocates memory and copies client-provided string.
+ *
+ * Results:
+ *      Pointer to allocated string
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+char *
+VixMsg_StrdupClientData(const char *s,          // IN
+                        Bool *allocateFailed)   // OUT
+{
+   char* newString = NULL;
+
+   ASSERT(allocateFailed);
+   if (NULL == allocateFailed) {
+      goto abort;
+   }
+
+   *allocateFailed = FALSE;
+
+   if (NULL != s) {
+#if defined(_WIN32)
+         newString = _strdup(s);
+#else
+         newString = strdup(s);
+#endif
+      if (NULL == newString) {
+         *allocateFailed = TRUE;
+      }
+   }
+
+abort:
+   return newString;
+} // VixMsg_StrdupClientData
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * __VMAutomationValidateString --
+ *
+ *      Verifies that string at specified address is NUL terminated within
+ *      specified number of bytes, and is valid UTF-8.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static VixError
+__VMAutomationValidateString(const char  *caller,              // IN
+                             unsigned int line,                // IN
+                             const char  *buffer,              // IN
+                             size_t       available)           // IN
+{
+   size_t stringLength;
+
+   /*
+    * NUL terminated string needs at least one byte - NUL one.
+    */
+   if (available < 1) {
+      Log("%s(%u): Message body too short to contain string.\n", caller, line);
+      return VIX_E_INVALID_MESSAGE_BODY;
+   }
+
+   /*
+    * Reject message if there is no NUL before request end.  There must
+    * be one...
+    */
+
+   stringLength = Str_Strlen(buffer, available);
+   if (stringLength >= available) {
+      Log("%s(%u): Variable string is not NUL terminated "
+          "before message end.\n", caller, line);
+      return VIX_E_INVALID_MESSAGE_BODY;
+   }
+
+   /*
+    * If string is shorter than expected, complain.  Maybe it is too strict,
+    * but clients seems to not send malformed messages, so keep doing this.
+    */
+
+   if (stringLength + 1 != available) {
+      Log("%s(%u): Retrieved fixed string \"%s\" with "
+          "trailing garbage.\n", caller, line, buffer);
+      return VIX_E_INVALID_MESSAGE_BODY;
+   }
+
+   /*
+    * If string is not UTF-8, reject it.  We do not want to pass non-UTF-8
+    * strings through vmx bowels - they could hit some ASSERT somewhere...
+    */
+
+   if (!Unicode_IsBufferValid(buffer, stringLength, STRING_ENCODING_UTF8)) {
+      Log("%s(%u): Variable string is not an UTF8 string.\n", caller, line);
+      return VIX_E_INVALID_UTF8_STRING;
+   }
+
+   return VIX_OK;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * __VMAutomationValidateStringInBuffer --
+ *
+ *      Verifies that string at specified address is NUL terminated within
+ *      specified number of bytes, and is valid UTF-8.
+ *      String does not have to occupy the entire buffer.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.
+ *      Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static VixError
+__VMAutomationValidateStringInBuffer(const char  *caller,              // IN
+                                     unsigned int line,                // IN
+                                     const char  *buffer,              // IN
+                                     size_t       available,           // IN
+                                     size_t      *strLen)              // IN
+{
+   size_t stringLength;
+
+   /*
+    * NUL terminated string needs at least one byte - NUL one.
+    */
+   if (available < 1) {
+      Log("%s(%u): Message body too short to contain string.\n", caller, line);
+      return VIX_E_INVALID_MESSAGE_BODY;
+   }
+
+   /*
+    * Reject message if there is no NUL before request end.  There must
+    * be one...
+    */
+
+   stringLength = Str_Strlen(buffer, available);
+   *strLen = stringLength;
+
+   if (stringLength >= available) {
+      Log("%s(%u): Variable string is not NUL terminated "
+          "before message end.\n", caller, line);
+      return VIX_E_INVALID_MESSAGE_BODY;
+   }
+
+   /*
+    * If string is not UTF-8, reject it.  We do not want to pass non-UTF-8
+    * strings through vmx bowels - they could hit some ASSERT somewhere...
+    */
+
+   if (!Unicode_IsBufferValid(buffer, stringLength, STRING_ENCODING_UTF8)) {
+      Log("%s(%u): Variable string is not an UTF8 string.\n", caller, line);
+      return VIX_E_INVALID_UTF8_STRING;
+   }
+
+   return VIX_OK;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * __VMAutomationMsgParserInitRequest --
+ * VMAutomationMsgParserInitRequest --
+ *
+ *      Initializes request parser, and performs basic message validation
+ *      not performed elsewhere.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+__VMAutomationMsgParserInitRequest(const char *caller,                  // IN
+                                   unsigned int line,                   // IN
+                                   VMAutomationMsgParser *state,        // OUT (opt)
+                                   const VixCommandRequestHeader *msg,  // IN
+                                   size_t fixedLength)                  // IN
+{
+   size_t miscDataLength = 0;
+
+   /*
+    * If the VM is encrypted, there is additional data factored into
+    * the total message size that needs to be accounted for.
+    */
+
+   if (VIX_REQUESTMSG_INCLUDES_AUTH_DATA_V1 & msg->requestFlags) {
+      miscDataLength = sizeof(VixMsgAuthDataV1);
+   } else {
+      miscDataLength = 0;
+   }
+
+   return VMAutomationMsgParserInit(caller, line, state, &msg->commonHeader,
+                                    sizeof *msg, fixedLength, miscDataLength, "request");
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * __VMAutomationMsgParserInitResponse --
+ * VMAutomationMsgParserInitResponse --
+ *
+ *      Initializes response parser, and performs basic message validation
+ *      not performed elsewhere.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+__VMAutomationMsgParserInitResponse(const char *caller,                  // IN
+                                    unsigned int line,                   // IN
+                                    VMAutomationMsgParser *state,        // OUT (opt)
+                                    const VixCommandResponseHeader *msg, // IN
+                                    size_t fixedLength)                  // IN
+{
+   return VMAutomationMsgParserInit(caller, line, state, &msg->commonHeader,
+                                    sizeof *msg, fixedLength, 0, "response");
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomationMsgParserInit --
+ *
+ *      Initializes message parser, and performs basic message validation
+ *      not performed elsewhere.
+ *
+ * Results:
+ *      VixError. VIX_OK on success. Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static VixError
+VMAutomationMsgParserInit(const char *caller,              // IN
+                          unsigned int line,               // IN
+                          VMAutomationMsgParser *state,    // OUT (opt)
+                          const VixMsgHeader *msg,         // IN
+                          size_t headerLength,             // IN
+                          size_t fixedLength,              // IN
+                          size_t miscDataLength,           // IN
+                          const char *packetType)          // IN
+{
+   uint32 headerAndBodyLength;
+   // use int64 to prevent overflow
+   int64 computedTotalLength = (int64)msg->headerLength +
+      (int64)msg->bodyLength + (int64)msg->credentialLength +
+      (int64)miscDataLength;
+
+   int64 extBodySize = (int64)msg->headerLength + (int64)msg->bodyLength -
+      (int64)fixedLength;
+
+   if (computedTotalLength != (int64)msg->totalMessageLength) {
+      Log("%s:%d, header information mismatch.\n", __FILE__, __LINE__);
+      return VIX_E_INVALID_MESSAGE_HEADER;
+   }
+
+   if (extBodySize < 0) {
+      Log("%s:%d, %s too short.\n", __FILE__, __LINE__, packetType);
+      return VIX_E_INVALID_MESSAGE_HEADER;
+   }
+
+   /*
+    * Protocol allows for headerLength expansion, but predefined structures
+    * do not anticipate that even a bit. So give up if header length is
+    * incompatible with our structures.
+    */
+
+   if (msg->headerLength != headerLength) {
+      Log("%s(%u): %s header length %u is not supported "
+          "(%"FMTSZ"u is required).\n",
+          caller, line, packetType, msg->headerLength, headerLength);
+      return VIX_E_INVALID_MESSAGE_HEADER;
+   }
+
+   /*
+    * Message looks reasonable.  Skip over fixed part.
+    */
+
+   headerAndBodyLength = msg->headerLength + msg->bodyLength;
+
+   if (state) {
+      state->currentPtr = (const char *)msg + fixedLength;
+      state->endPtr = (const char *)msg + headerAndBodyLength;
+   }
+   return VIX_OK;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomation_VerifyRequestLength --
+ *
+ *      Ensures that request contains at least fixedLength bytes in
+ *      header and body.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+VMAutomation_VerifyRequestLength(const VixCommandRequestHeader *request, // IN
+                                 size_t fixedLength)                     // IN
+{
+   return VMAutomationMsgParserInitRequest(NULL, request, fixedLength);
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomationMsgParserGetRemainingData --
+ *
+ *      Fetches all data remaining in the request.
+ *
+ * Results:
+ *      Pointer to the data.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+const void *
+VMAutomationMsgParserGetRemainingData(VMAutomationMsgParser *state,   // IN/OUT
+                                      size_t *length)                 // OUT
+{
+   const void *data;
+
+   *length = state->endPtr - state->currentPtr;
+   data = state->currentPtr;
+   state->currentPtr = state->endPtr;
+
+   return data;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomationMsgParserGetData --
+ * __VMAutomationMsgParserGetData --
+ *
+ *      Fetches specified number of bytes.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+__VMAutomationMsgParserGetData(const char *caller,             // IN
+                               unsigned int line,              // IN
+                               VMAutomationMsgParser *state,   // IN/OUT
+                               size_t length,                  // IN
+                               const char **result)            // OUT (opt)
+{
+   size_t available;
+
+   available = state->endPtr - state->currentPtr;
+
+   /* If message is too short, return an error. */
+   if (available < length) {
+      Log("%s(%u): Message has only %"FMTSZ"u bytes available when "
+          "looking for %"FMTSZ"u bytes od data.\n",
+          caller, line, available, length);
+      return VIX_E_INVALID_MESSAGE_BODY;
+   }
+
+   if (result) {
+      *result = state->currentPtr;
+   }
+   state->currentPtr += length;
+   return VIX_OK;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomationMsgParserGetOptionalString --
+ * __VMAutomationMsgParserGetOptionalString --
+ *
+ *      Fetches string of specified length from the request.  Length includes
+ *      terminating NUL byte, which must be present.  Length of zero results
+ *      in NULL being returned.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+__VMAutomationMsgParserGetOptionalString(const char *caller,           // IN
+                                         unsigned int line,            // IN
+                                         VMAutomationMsgParser *state, // IN/OUT
+                                         size_t length,                // IN
+                                         const char **result)          // OUT
+{
+   if (length) {
+      VixError err;
+      const char *string;
+
+      err = __VMAutomationMsgParserGetData(caller, line, state, length,
+                                           &string);
+      if (VIX_OK != err) {
+         return err;
+      }
+      err = __VMAutomationValidateString(caller, line, string, length);
+      if (VIX_OK != err) {
+         return err;
+      }
+      *result = string;
+   } else {
+      *result = NULL;
+   }
+   return VIX_OK;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomationMsgParserGetOptionalStrings --
+ * __VMAutomationMsgParserGetOptionalStrings --
+ *
+ *      Fetches an array of strings from the request.  Length includes the
+ *      terminating NUL byte of each string.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.
+ *      Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+__VMAutomationMsgParserGetOptionalStrings(const char *caller,   // IN
+                                          unsigned int line,    // IN
+                                VMAutomationMsgParser *state,   // IN/OUT
+                                          uint32 count,         // IN
+                                          size_t length,        // IN
+                                          const char **result) // OUT
+{
+   VixError err = VIX_OK;
+   const char *buffer;
+   const char *theResult;
+   int i;
+   size_t strLen;
+
+   if (0 == count) {
+      *result = NULL;
+      goto abort;
+   }
+
+   err = __VMAutomationMsgParserGetData(caller, line, state, length,
+                                        &buffer);
+   if (VIX_OK != err) {
+      return err;
+   }
+
+   theResult = buffer;
+
+   for (i = 0; i < count; ++i) {
+      err = __VMAutomationValidateStringInBuffer(caller, line,
+                                                 buffer, length, &strLen);
+      if (VIX_OK != err) {
+         return err;
+      }
+      ASSERT(strLen < length);
+      buffer += (strLen + 1);
+      length -= (strLen + 1);
+   }
+
+   /*
+    * If string is shorter than expected, complain.  Maybe it is too strict,
+    * but clients seems to not send malformed messages, so keep doing this.
+    */
+
+   if (length != 0) {
+      Log("%s(%u): Retrieved an array of string with trailing garbage.\n",
+          caller, line);
+      return VIX_E_INVALID_MESSAGE_BODY;
+   }
+
+   *result = theResult;
+
+abort:
+
+   return err;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomationMsgParserGetString --
+ * __VMAutomationMsgParserGetString --
+ *
+ *      Fetches string of specified length from the request.  Length of
+ *      string is specified in number of usable characters: function consumes
+ *      length + 1 bytes from request, and first length bytes must be non-NUL,
+ *      while length+1st byte must be NUL.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+__VMAutomationMsgParserGetString(const char *caller,            // IN
+                                 unsigned int line,             // IN
+                                 VMAutomationMsgParser *state,  // IN/OUT
+                                 size_t length,                 // IN
+                                 const char **result)           // OUT
+{
+   VixError err;
+   const char *string;
+
+   length++;
+   if (!length) {
+      Log("%s(%u): String is too long.\n", caller, line);
+      return VIX_E_INVALID_ARG;
+   }
+   err = __VMAutomationMsgParserGetData(caller, line, state, length,
+                                        &string);
+   if (VIX_OK != err) {
+      return err;
+   }
+   err = __VMAutomationValidateString(caller, line, string, length);
+   if (VIX_OK != err) {
+      return err;
+   }
+
+   *result = string;
+   return VIX_OK;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMAutomationMsgParserGetPropertyList --
+ * __VMAutomationMsgParserGetPropertyList --
+ *
+ *      Fetches specified number of bytes.
+ *
+ * Results:
+ *      VixError.  VIX_OK on success.  Some other VIX_* code if message is malformed.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VixError
+__VMAutomationMsgParserGetPropertyList(const char *caller,            // IN
+                                       unsigned int line,             // IN
+                                       VMAutomationMsgParser *state,  // IN/OUT
+                                       size_t length,                 // IN
+                                       VixPropertyListImpl *propList) // IN/OUT
+{
+   VixError err;
+
+   err = VIX_OK;
+   if (length) {
+      const char *data;
+
+      err = __VMAutomationMsgParserGetData(caller, line, state, length,
+                                           &data);
+      if (VIX_OK == err) {
+         err = VixPropertyList_Deserialize(propList, data, length,
+                                           VIX_PROPERTY_LIST_BAD_ENCODING_ERROR);
+      }
+   }
+
+   return err;
+}

@@ -42,9 +42,6 @@
 #include <sys/time.h>
 #include <sys/times.h>
 #include <netdb.h>
-#if !defined(__APPLE__)
-#include <sys/timex.h>
-#endif
 #ifdef sun
 # include <sys/sockio.h>
 #endif
@@ -58,6 +55,10 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 
+#if defined sun || defined __APPLE__
+#   include <utmpx.h>
+#endif
+
 #ifdef __FreeBSD__
 #include "ifaddrs.h"
 #endif
@@ -70,23 +71,12 @@
 #include "dynbuf.h"
 #include "hashTable.h"
 #include "strutil.h"
+#include "vmstdio.h"
 
 #define MAX_IFACES      4
 #define LOOPBACK        "lo"
 #ifndef INET_ADDRSTRLEN
 #define INET_ADDRSTRLEN 16
-#endif
-
-/*
- * The interval between two ticks (in usecs) can only be altered by 10%,
- * and the default value is 10000. So the values 900000L and 1000000L
- * divided by USER_HZ, which is 100.
- */
-#ifdef __linux__
-#   define USER_HZ               100			/* from asm/param.h  */
-#   define TICK_INCR_NOMINAL    (1000000L / USER_HZ)	/* nominal tick increment */
-#   define TICK_INCR_MAX        (1100000L / USER_HZ)	/* maximum tick increment */
-#   define TICK_INCR_MIN        (900000L / USER_HZ)	/* minimum tick increment */
 #endif
 
 
@@ -125,30 +115,24 @@ static int SNEForEachCallback(const char *key, void *value, void *clientData);
 
 
 /*
- * System_Uptime --
+ *-----------------------------------------------------------------------------
  *
- *    Retrieve the time (in hundredth of s.) since the system has started.
+ * System_GetTimeMonotonic --
  *
- *    Note: On 32-bit Linux, whether you read /proc/uptime (2 system calls: seek(2)
- *          and read(2)) or times(2) (1 system call), the uptime information
- *          comes from the 'jiffies' kernel variable, whose type is 'unsigned
- *          long'. This means that on a ix86 with HZ == 100, it will wrap after
- *          497 days. This function can detect the wrapping and still return
- *          a correct, monotonic, 64 bit wide value if it is called at least
- *          once every 497 days.
+ *      See POSIX clock_gettime(CLOCK_MONOTONIC).
  *
- * Result:
- *    The value on success
- *    -1 on failure (never happens in this implementation)
+ * Results:
+ *      Returns monotonically increasing time in hundredths of a second on
+ *      success, -1 on failure.
  *
  * Side effects:
- *    None
+ *      None.
  *
- *----------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
  */
 
 uint64
-System_Uptime(void)
+System_GetTimeMonotonic(void)
 {
    /*
     * Dummy variable b/c times(NULL) segfaults on FreeBSD 3.2 --greg
@@ -179,301 +163,85 @@ System_Uptime(void)
 
 
 /*
- *----------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
  *
- * System_GetCurrentTime --
+ * System_Uptime --
  *
- *      Get the time in seconds & microseconds since XXX from
- *      the guest OS.
+ *      Retrieve the time (in hundredth of s.) since the system has started.
  *
- * Results:
- *      TRUE/FALSE: success/failure
- *
- * Side effects:
- *	None.
- *
- *----------------------------------------------------------------------
- */
-
-Bool
-System_GetCurrentTime(int64 *secs,  // OUT
-                      int64 *usecs) // OUT
-{
-   struct timeval tv;
-
-   ASSERT(secs);
-   ASSERT(usecs);
-
-   if (gettimeofday(&tv, NULL) < 0) {
-      return FALSE;
-   }
-
-   *secs = tv.tv_sec;
-   *usecs = tv.tv_usec;
-
-   return TRUE;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * System_EnableTimeSlew --
- *
- *      Slew the clock so that the time difference is covered within
- *      the timeSyncPeriod. timeSyncPeriod is the interval of the time
- *      sync loop and we intend to catch up delta us.
- *
- *      timeSyncPeriod is ignored on FreeBSD and Solaris.
- *
- * Results:
- *      TRUE/FALSE: success/failure
- *
- * Side effects:
- *      This changes the tick frequency and hence needs to be reset
- *      after the time sync is achieved.
- *
- *----------------------------------------------------------------------
- */
-
-Bool
-System_EnableTimeSlew(int64 delta,            // IN: Time difference in us
-                      int64 timeSyncPeriod)   // IN: Time interval in us
-{
-#if defined(__FreeBSD__) || defined(sun)
-
-   struct timeval tx;
-   struct timeval oldTx;
-   int error;
-
-   tx.tv_sec = delta / 1000000L;
-   tx.tv_usec = delta % 1000000L;
-
-   error = adjtime(&tx, &oldTx);
-   if (error) {
-      Log("%s: adjtime failed\n", __FUNCTION__);
-      return FALSE;
-   }
-   Log("%s: time slew start.\n", __FUNCTION__);
-   return TRUE;
-
-#elif defined(__linux__) /* For Linux. */
-
-   struct timex tx;
-   int error;
-   int64 tick;
-
-   ASSERT(timeSyncPeriod > 0);
-
-   /*
-    * Set the tick so that delta time is corrected in timeSyncPeriod period.
-    * tick is the number of microseconds added per clock tick. We adjust this
-    * so that we get the desired delta + the timeSyncPeriod in timeSyncPeriod
-    * interval.
-    */
-   tx.modes = ADJ_TICK;
-   tick = (timeSyncPeriod + delta) /
-          ((timeSyncPeriod / 1000000) * USER_HZ);
-   if (tick > TICK_INCR_MAX) {
-      tick = TICK_INCR_MAX;
-   } else if (tick < TICK_INCR_MIN) {
-      tick = TICK_INCR_MIN;
-   }
-   tx.tick = tick;
-
-   error = adjtimex(&tx);
-   if (error == -1) {
-      Log("%s: adjtimex failed: %d %s\n", __FUNCTION__, error, strerror(errno));
-         return FALSE;
-   }
-   Log("%s: time slew start: %ld\n", __FUNCTION__, tx.tick);
-   return TRUE;
-
-#else /* Apple */
-
-   return FALSE;
-
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * System_DisableTimeSlew --
- *
- *      Disable time slewing, setting the tick frequency to default.
- *
- * Results:
- *      TRUE/FALSE: success/failure
- *
- * Side effects:
- *      If failed to disable the tick frequency, system time will
- *      not reflect the actual time - will be behind.
- *
- *----------------------------------------------------------------------
- */
-
-Bool
-System_DisableTimeSlew(void)
-{
-#if defined(__FreeBSD__) || defined(sun)
-
-   struct timeval tx = {0};
-   int error;
-
-   error = adjtime(&tx, NULL);
-   if (error) {
-      Log("%s: adjtime failed\n", __FUNCTION__);
-      return FALSE;
-   }
-   return TRUE;
-
-#elif defined(__linux__) /* For Linux. */
-
-   struct timex tx;
-   int error;
-
-   tx.modes = ADJ_TICK;
-   tx.tick = TICK_INCR_NOMINAL;
-
-   error = adjtimex(&tx);
-   if (error == -1) {
-      Log("%s: adjtimex failed: %d %s\n", __FUNCTION__, error,
-            strerror(errno));
-      return FALSE;
-   }
-   Log("%s: time slew end - %d\n", __FUNCTION__, error);
-   return TRUE;
-
-#else /* Apple */
-   return TRUE;
-
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * System_IsTimeSlewEnabled --
- *
- *      Returns TRUE if time slewing has been enabled.
- *
- * Results:
- *      TRUE/FALSE: enabled/disabled
+ * Result:
+ *      Returns the uptime on success or -1 on failure.
  *
  * Side effects:
  *      None.
  *
- *----------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
  */
 
-Bool
-System_IsTimeSlewEnabled(void)
+uint64
+System_Uptime(void)
 {
-#if defined(__FreeBSD__) || defined(sun)
+   uint64 uptime = -1;
 
-   struct timeval oldTx;
-   int error;
+#ifdef __linux__
+   {
+      FILE *procStream;
+      char *buf = NULL;
+      size_t bufSize;
+      uint64 sec;
+      unsigned int csec;
 
-   /*
-    * Solaris needs first argument non-NULL and zero
-    * to get the old timeval value.
-    */
-#if defined(sun)
-   struct timeval tx = {0};
-   error = adjtime(&tx, &oldTx);
-#else
-   error = adjtime(NULL, &oldTx);
+      if (((procStream = Posix_Fopen("/proc/uptime", "r")) != NULL) &&
+          (StdIO_ReadNextLine(procStream, &buf, 80, &bufSize) == StdIO_Success) &&
+          (sscanf(buf, "%"FMT64"u.%2u", &sec, &csec) == 2)) {
+         uptime = sec * 100 + csec;
+      } else {
+         Warning("%s: Unable to parse /proc/uptime.\n", __func__);
+      }
+
+      free(buf);
+
+      if (procStream) {
+         fclose(procStream);
+      }
+   }
+#elif defined sun || defined __APPLE__
+   {
+      struct utmpx *boot, tmp;
+
+      tmp.ut_type = BOOT_TIME;
+      if ((boot = getutxid(&tmp)) != NULL) {
+         struct timeval now;
+         struct timeval *boottime = &boot->ut_tv;
+
+         gettimeofday(&now, NULL);
+         uptime =
+            (now.tv_sec * 100 + now.tv_usec / 10000) -
+            (boottime->tv_sec * 100 + boottime->tv_usec / 10000);
+      } else {
+         Warning("%s: Unable to determine boot time.\n", __func__);
+      }
+
+      endutxent();
+   }
+#else // FreeBSD
+   {
+      /*
+       * FreeBSD: src/usr.bin/w/w.c rev 1.59:
+       *   "Obtain true uptime through clock_gettime(CLOCK_MONOTONIC,
+       *    struct *timespec) instead of subtracting 'bootime' from 'now'."
+       */
+      struct timespec ts;
+
+      if (clock_gettime(CLOCK_MONOTONIC, &ts) != -1) {
+         uptime = ts.tv_sec * 100 + ts.tv_nsec / 10000000;
+      } else {
+         Warning("%s: clock_gettime: %d\n", __func__, errno);
+      }
+   }
 #endif
-   if (error) {
-      Log("%s: adjtime failed: %s.\n", __FUNCTION__, strerror(errno));
-      return FALSE;
-   }
-   return ((oldTx.tv_sec || oldTx.tv_usec) ? TRUE : FALSE);
 
-#elif defined(__linux__) /* For Linux. */
-
-   struct timex tx = {0};
-   int error;
-
-   error = adjtimex(&tx);
-   if (error == -1) {
-      Log("%s: adjtimex failed: %d %s\n", __FUNCTION__, error,
-            strerror(errno));
-      return FALSE;
-   }
-   return ((tx.tick == TICK_INCR_NOMINAL) ? FALSE : TRUE);
-
-#else /* Apple */
-
-   return FALSE;
-
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * System_AddToCurrentTime --
- *
- *      Adjust the current system time by adding the given number of
- *      seconds & milliseconds.
- *
- * Results:
- *      TRUE/FALSE: success/failure
- *
- * Side effects:
- *      This function disables any time slewing to correctly set the guest
- *      time.
- *
- *----------------------------------------------------------------------
- */
-
-Bool
-System_AddToCurrentTime(int64 deltaSecs,  // IN
-                        int64 deltaUsecs) // IN
-{
-   struct timeval tv;
-   int64 newTime;
-   int64 secs;
-   int64 usecs;
-
-   if (!System_GetCurrentTime(&secs, &usecs)) {
-      return FALSE;
-   }
-
-   if (System_IsTimeSlewEnabled()) {
-      System_DisableTimeSlew();
-   }
-
-   newTime = (secs + deltaSecs) * 1000000L + (usecs + deltaUsecs);
-   ASSERT(newTime > 0);
-
-   /*
-    * timeval.tv_sec is a 32-bit signed integer. So, Linux will treat
-    * newTime as a time before the epoch if newTime is a time 68 years
-    * after the epoch (beacuse of overflow).
-    *
-    * If it is a 64-bit linux, everything should be fine.
-    */
-   if (sizeof tv.tv_sec < 8 && newTime / 1000000L > MAX_INT32) {
-      Log("System_AddToCurrentTime() overflow: deltaSecs=%"FMT64"d, secs=%"FMT64"d\n",
-          deltaSecs, secs);
-
-      return FALSE;
-   }
-
-   tv.tv_sec = newTime / 1000000L;
-   tv.tv_usec = newTime % 1000000L;
-
-   if (settimeofday(&tv, NULL) < 0) {
-      return FALSE;
-   }
-
-   return TRUE;
+   return uptime;
 }
 
 
@@ -485,7 +253,7 @@ System_AddToCurrentTime(int64 deltaSecs,  // IN
  *      Returns the current time as a formatted string, useful for prepending
  *      to debugging output.
  *
- *      For example: "Oct 05 18:03:24.948: "
+ *      For example: "Oct 05 18:03:24.948"
  *
  * Results:
  *      On success, allocates and returns a string containing the formatted
@@ -544,38 +312,12 @@ System_GetTimeAsString(void)
    if (dateTime == NULL) {
       goto out;
    }
-   output = Unicode_Format("%s.%03d: ", dateTime, msec);
+   output = Unicode_Format("%s.%03d", dateTime, msec);
 
   out:
    free(buf);
    Unicode_Free(dateTime);
    return output;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * System_IsACPI --
- *
- *    Is this an ACPI system?
- *
- * Results:
- *    TRUE if this is an ACPI system.
- *    FALSE if this is not an ACPI system.
- *
- * Side effects:
- *	None.
- *
- *----------------------------------------------------------------------
- */
-
-Bool
-System_IsACPI(void)
-{
-   ASSERT(FALSE);
-
-   return FALSE;
 }
 
 
@@ -669,11 +411,7 @@ System_GetEnv(Bool global,           // IN
 {
    char *result;
 
-#if defined(sun)
-   result = NULL;
-#else
    result = Posix_Getenv(valueName);
-#endif
 
    if (NULL != result) {
       result = strdup(result);
@@ -707,119 +445,40 @@ System_SetEnv(Bool global,      // IN
               const char *valueName,  // IN: UTF-8
               const char *value)      // IN: UTF-8
 {
-#if defined(sun)
-   return(-1);
-#else
    return Posix_Setenv(valueName, value, 1);
-#endif
 } // System_SetEnv
 
 
 /*
- *----------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
  *
- * System_UnsetEnv --
+ * System_GetNodeName --
  *
- *    Unset environment variable.
- *
- * Results:
- *    0 if success, -1 otherwise.
- *
- * Side effects:
- *    Unsets the environment variable.
- *
- *----------------------------------------------------------------------
- */
-
-int
-System_UnsetEnv(const char *valueName) // IN: UTF-8
-{
-#if defined(sun)
-   return(-1);
-#else
-   Posix_Unsetenv(valueName);
-   return 0;
-#endif
-} // System_UnsetEnv
-
-
-/*
- *----------------------------------------------------------------------
- *
- * System_SetLDPath --
- *
- *    Set LD_LIBRARY_PATH. If native is TRUE, use VMWARE_LD_LIBRARY_PATH
- *    as the value (and ignore the path argument, which should be set to
- *    NULL in this case). If native is FALSE, use the passed in path (and
- *    if that path is NULL, unsetenv the value).
+ *      Returns the guest's configured node name.  Does not necessarily
+ *      correspond to a proper DNS host name.
  *
  * Results:
- *    The previous value of the environment variable. The caller is
- *    responsible for calling free() on this pointer.
+ *      On success, returns TRUE with node name written to outBuf.
  *
  * Side effects:
- *    Manipulates the value of LD_LIBRARY_PATH variable.
+ *      None.
  *
- *----------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
  */
 
-char *
-System_SetLDPath(const char *path,      // IN: UTF-8
-                 const Bool native)     // IN: If TRUE, ignore path and use VMware value
+Bool
+System_GetNodeName(size_t outBufSize, // IN:  size of output buffer
+                   char *outBuf)      // OUT: output buffer
 {
-   char *vmldpath = NULL;
-   char *tmppath = NULL;
-   char *oldpath;
+   ASSERT(outBuf);
 
-   ASSERT(!native || path == NULL);
-
-   /*
-    * Get the original LD_LIBRARY_PATH, so the installed applications
-    * don't try to use our versions of the libraries.
-    *
-    * From bora/apps/lib/lui/browser.cc::ResetEnvVars():
-    *
-    * For each variable we care about, there are three possible states:
-    * 1) The variable was not considered for saving.
-    *    This is indicated by VMWARE_<foo>'s first character not being
-    *    set to either "1" or "0".
-    *    We should not manipulate <foo>.
-    * 2) The variable was considered but was not set.
-    *    VMWARE_<foo> is set to "0".
-    *    We should unset <foo>.
-    * 3) The variable was considered and was set.
-    *    VMWARE_<foo> is set to "1" + "<value of foo>".
-    *    We should set <foo> back to the saved value.
-    *
-    * XXX: There are other variables that may need resetting (for a list, check
-    * bora/apps/lib/lui/browser.cc or the wrapper scripts), but that would
-    * require some more refactoring of this code (not using system(3), for
-    * example).
-    */
-   oldpath = System_GetEnv(TRUE, "LD_LIBRARY_PATH");
-   if (native == TRUE) {
-      char *p = NULL;
-      vmldpath = tmppath = System_GetEnv(TRUE, "VMWARE_LD_LIBRARY_PATH");
-      if (vmldpath && strlen(vmldpath) && vmldpath[0] == '1') {
-         vmldpath++;
-      } else {
-         vmldpath = p = Util_SafeStrdup("");
-      }
-      if (System_SetEnv(TRUE, "LD_LIBRARY_PATH", vmldpath) == -1) {
-         Debug("%s: failed to set LD_LIBRARY_PATH\n", __FUNCTION__);
-      }
-      free(tmppath);
-      free(p);
-   } else if (path) {
-      /*
-       * Set LD_LIBRARY_PATH to the specified value.
-       */
-      System_SetEnv(TRUE, "LD_LIBRARY_PATH", (char *) path);
-   } else {
-      System_UnsetEnv("LD_LIBRARY_PATH");
+   if (gethostname(outBuf, outBufSize) < 0) {
+      Debug("Error, gethostname failed\n");
+      return FALSE;
    }
-   return oldpath;
-} // System_SetLDPath
+
+   return TRUE;
+}
 
 
 /*

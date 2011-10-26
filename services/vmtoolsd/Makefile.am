@@ -25,6 +25,7 @@ vmtoolsd_CPPFLAGS += @GMODULE_CPPFLAGS@
 vmtoolsd_CPPFLAGS += @GOBJECT_CPPFLAGS@
 vmtoolsd_CPPFLAGS += @GTHREAD_CPPFLAGS@
 vmtoolsd_CPPFLAGS += -I$(builddir)
+vmtoolsd_CPPFLAGS += -DVMTOOLSD_PLUGIN_ROOT=\"$(pkglibdir)/plugins\"
 
 vmtoolsd_LDADD =
 vmtoolsd_LDADD += @VMTOOLS_LIBS@
@@ -38,6 +39,7 @@ vmtoolsd_SOURCES += mainLoop.c
 vmtoolsd_SOURCES += mainPosix.c
 vmtoolsd_SOURCES += pluginMgr.c
 vmtoolsd_SOURCES += serviceObj.c
+vmtoolsd_SOURCES += threadPool.c
 vmtoolsd_SOURCES += toolsRpc.c
 vmtoolsd_SOURCES += svcSignals.c
 
@@ -70,18 +72,19 @@ else
    vmtoolsd_LINK = $(LINK)
 endif
 
-if LINUX
-if PAMD
-if THIRTY_TWO_BIT_USERSPACE
-pam_DATA = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd
-else
-pam_DATA = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd-x64
-endif !THIRTY_TWO_BIT_USERSPACE
-endif PAMD
-endif LINUX
+# PAM support is currently only available for Linux, so HAVE_PAM is only
+# defined for that OS.
+if HAVE_PAM
+pam_SCRIPTS = $(top_srcdir)/scripts/linux/pam.d/vmtoolsd
+endif HAVE_PAM
+
+# Message catalogs.
+install-data-hook:
+	@INSTVMSG@ vmtoolsd $(srcdir)/l10n $(DESTDIR)$(datadir)
 
 install-exec-hook:
 	$(INSTALL) -d $(DESTDIR)/etc/vmware-tools
 
 uninstall-hook:
 	rm -rf $(DESTDIR)/etc/vmware-tools
+

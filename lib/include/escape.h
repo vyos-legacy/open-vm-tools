@@ -32,32 +32,50 @@ Escape_DoString(const char *escStr,    // IN
                 int const *bytesToEsc, // IN
                 void const *bufIn,     // IN
                 size_t sizeIn,         // IN
-                size_t *sizeOut);      // OUT
+                size_t *sizeOut);      // OUT/OPT
 
 void *
 Escape_Do(char escByte,          // IN
           int const *bytesToEsc, // IN
           void const *bufIn,     // IN
           size_t sizeIn,         // IN
-          size_t *sizeOut);      // OUT
+          size_t *sizeOut);      // OUT/OPT
 
 void *
 Escape_Undo(char escByte,      // IN
             void const *bufIn, // IN
             size_t sizeIn,     // IN
-            size_t *sizeOut);  // OUT
+            size_t *sizeOut);  // OUT/OPT
+
+const char *
+Escape_Strchr(char escByte,      // IN
+              const char *bufIn, // IN
+              char c);           // IN
+
+char *
+Escape_Unescape(char escByte,       // IN
+                const char *bufIn); // IN
 
 void *
 Escape_AnsiToUnix(void const *bufIn, // IN
                   size_t sizeIn,     // IN
-                  size_t *sizeOut);  // OUT
+                  size_t *sizeOut);  // OUT/OPT
 
 void *
 Escape_Sh(void const *bufIn, // IN
           size_t sizeIn,     // IN
-          size_t *sizeOut);  // OUT
+          size_t *sizeOut);  // OUT/OPT
+
+void *
+Escape_BRE(void const *bufIn, // IN
+           size_t sizeIn,     // IN
+           size_t *sizeOut);  // OUT/OPT
 
 void
 Escape_UnescapeCString(char *buf); // IN/OUT
+
+char *
+Escape_Comma(const char *string); // IN
+
 
 #endif /* __ESCAPE_H__ */

@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * cpNameLinux.c --
  *
@@ -172,8 +186,5 @@ CPName_ConvertTo(char const *nameIn, // IN:  Buf to convert
 {
    int result;
    result = CPName_LinuxConvertTo(nameIn, bufOutSize, bufOut);
-   if (result > 0) {
-      result = HgfsEscape_Undo(bufOut, result);
-   }
    return result;
 }

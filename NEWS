@@ -1,3 +1,307 @@
+open-vm-tools 2011.09.23 changes:
+	* open-vm-tools now can use the built in Linux freeze / thaw
+	support for block devices, making the vmsync driver unnecessary
+	in kernels supporting that feature.
+
+	* The VMCI driver has been simplified, removing VM-to-VM
+	communication support (which is being removed from VMware products).
+
+	* The Unity team decided to remove the Unity plugin from open-vm-tools,
+	given its partial brokenness due to reliance on internally-modified
+	version of GNOME libraries, among other reasons.
+
+	* Other bug fixes and code cleanup.
+
+open-vm-tools 2011.08.21 changes:
+	* Enabled several VIX APIs on FreeBSD.
+
+	* Minor bug fixes and code cleanup.
+
+open-vm-tools 2011.07.19 changes:
+	* Fix an issue in the HGFS driver that could lead to a kernel
+	  panic.
+
+	* Update some code to support new compiler and kernel versions.
+
+	* Minor bug fixes and code cleanup.
+
+open-vm-tools 2011.06.27 changes:
+	* A few enhancements to Unity: XFCE support, better interaction
+	  with "the other" (Ubuntu's) Unity and compositing window
+	  managers, better X error handling, and a few bug fixes.
+
+	* A few bug fixes in HGFS, and minor bug fixes in other components.
+
+	* Otherwise, mostly code cleanup.
+
+open-vm-tools 2011.05.27 changes:
+	* Mostly cleanups and a few bug fixes.
+
+open-vm-tools 2011.04.25 changes:
+	* Mostly cleanups and small bug fixes in this release.
+
+	* Logging is enabled by default in vmtoolsd, writing to syslog.
+	  The default log level is not chatty, so few messages should
+	  make it to syslog during normal operation.
+
+	* The GUI version of the toolbox was removed.
+
+open-vm-tools 2011.03.28 changes:
+	* HGFS mounter and vmusr's suid wrapper were changed to avoid
+	  issues with symlink attacks. A new mount utility for vmblock on
+	  Solaris and FreeBSD was added.
+  
+	* The VMCI driver was thoroughly reworked so that it can serve as
+	  both the host and guest VMCI driver. This is mostly targeted at
+	  supporting nested VMs.
+  
+	* vmusr got better integration with X's session manager, including
+	  proper cleanup during session teardown.
+  
+	* Unity has been enhanced to better handle some desktop environments.
+
+	* Many small bug fixes in other areas, including updates for newer
+	  Linux kernels.
+
+open-vm-tools 2011.02.23 changes:
+	* Some copy & paste issues with KDE were fixed.
+
+	* Mostly cleanups and bug fixes, with a few build enhancements.
+
+open-vm-tools 2011.01.24 changes:
+	* Mostly cleanups and bug fixes.
+
+	* Install code fixed to handle translation catalogs correctly.
+
+open-vm-tools 2010.12.19 changes:
+	* New version of DnD code lands in open-vm-tools. The host part
+	of the new DnD protocol is not available yet in VMware products,
+	though.
+
+	* vmtoolsd gets some new functionality to support new features
+	being developed internally.
+
+	* vmxnet driver for FreeBSD fixed to allow changing the MAC address.
+
+	* lots of bug fixes and other cleanups in various areas.
+
+open-vm-tools 2010.11.17 changes:
+	* Mostly cleanups and bug fixes.
+
+	* vmxnet3 on Solaris now supports jumbo frames.
+
+open-vm-tools 2010.10.18 changes:
+	* The unity plugin has received some refactoring work, and the
+	menu gathering code has been enhanced to be more DE-agnostic and
+	support the new app icon code. It now needs glib 2.24 to compile.
+
+	* Several bug fixes and enhancements to the VIX plugin.
+
+	* Bug fixes to the guest info plugin so that it better supports
+	VMs with several network interfaces.
+
+	* Other minor enhancements and bug fixes in several areas, including
+	vsock, vmmemctl and copy & paste.
+
+open-vm-tools 2010.09.19 changes:
+	* Mostly cleanups and minor bug fixes.
+
+	* VIX plugin has been updated with lots of new commands being added
+	to the next VIX API release.
+
+open-vm-tools 2010.08.24 changes:
+	* HGFS and VMCI kernel module bug fixes, and updates to compile
+	in newer Linux kernels.
+
+	* HGFS server interface refactoring was finished, now supports
+	the transport abstraction available for the kernel interface.
+
+	* VIX operations are now properly implemented on Solaris, plus
+	new operations added to support features under development.
+
+	* Other minor cleanups and bug fixes.
+
+open-vm-tools 2010.07.25 changes:
+	* Features previously provided by vmware-user are now provided
+	as vmtoolsd plugins. vmware-user has been removed and code that
+	interacted with it changed to start the correct vmtoolsd instance.
+
+	* Lots of cleanup: removed old compatibility headers not needed
+	anymore, removed dead code, consolidated logging code.
+
+	* Time synchronization now works more like NTP.
+
+	* New code for features not yet exposed by VMware host software
+	is being added.
+
+open-vm-tools 2010.06.16 changes:
+	* VMCI moves towards unifying the guest and host driver APIs,
+	and gets support for MSI/MSI-X.
+
+	* More work on new VMCI-backed HGFS protocol.
+
+	* vmmemctl: Linux driver removed (it's now upstream), plus
+	cleanup and simplification of the FreeBSD and Solaris drivers.
+
+	* some Linux kernel compatibility fixes.
+
+	* Cleanup of old kernel support code.
+
+	* Some cleanup of old VIX features.
+
+	* toolbox-cmd was updated to use newer APIs, and got some i18n
+	enhancements.
+
+	* some bug fixes and enhancements to the logging code.
+
+	* update detection and use of some needed libraries.
+
+	* More progress in making libraries thread-safe.
+
+open-vm-tools 2010.04.25 changes:
+	* VMCI and HGFS get some initial work for new features.
+
+	* vmbackup support has been extended to more systems, allowing its
+	use even if the system lacks a proper "sync" implementation.
+
+	* A few bug fixes in different areas: Unity/X11, vmware-user startup
+	on upstart-based systems, and other minor fixes / thread safety fixes.
+
+	* The pvscsi driver was removed from the open-vm-tools distribution (it
+	is upstream as of Linux 2.6.33).
+
+	* The vmmemctl driver will be upstream as of Linux 2.6.34, at which
+	point it will be removed from open-vm-tools.
+
+open-vm-tools 2010.03.20 changes:
+	* New i18n support for Tools; it is based on VMware's internal tools
+	(instead of gettext).
+
+	* Logging infrastructure has been enhanced and now supports rotation
+	(without the need for logrotate) and syslog.
+
+	* Bug fixes in several areas (DnD, backup support, thread safety).
+
+	* Updates in Linux kernel modules for compatibility with newer kernels.
+
+	* New functionality in the Unity support code.
+
+open-vm-tools 2010.02.23 changes:
+	* Mostly bug fixes, cleanups and code refactoring.
+
+open-vm-tools 2010.01.19 changes:
+	* Linux modules have been updated to compile on newer kernels.
+
+	* Solaris modules now should compile on OpenSolaris (tested on 2009.06).
+
+	* Other than those, mostly bug fixes and minor refactoring.
+
+open-vm-tools 2009.12.16 changes:
+	* Some improvements to vmtoolsd, base libraries and and the plugin
+	interface.
+	
+	* Some library refactoring: use new lock library, changes to support
+	compilation of some code on ARM.
+	
+	* some fixes in configure.ac to try to correctly support newer distros.
+	
+	* vsock/vmci improvements.
+	
+	* bug fixes in the vmxnet / vmxnet3 drivers, and FreeBSD's vmblock driver.
+	
+	* vmxnet3 for Linux is now upstream (as of Linux 2.6.32), and will be
+	removed from later releases of open-vm-tools.
+	
+	* pvscsi will be available upstream starting with Linux 2.6.33 and at that
+	time will be removed from open-vm-tools.
+
+open-vm-tools 2009.11.16 changes:
+	* Lots of refactoring and cleanup in the code, mainly targeting the
+	definition of a set of public APIs.
+
+	* vmblock-fuse can now replace the vmblock kernel module for DnD
+	operations.
+
+	* Fix some memory leaks in the guestInfo module. Users of the 2009.10.15
+	release are recommended to upgrade, or at least crossport cid 6a8d4279.
+
+open-vm-tools 2009.10.15 changes:
+	* The HGFS module got some performance enhancements.
+
+	* Minor enhancements to vmtoolsd and the logging system.
+
+	* Fix for a few issues reported on the sourceforge bug tracker.
+
+	* Lots of code refactoring, and a few bug fixes.
+
+open-vm-tools 2009.09.18 changes:
+	* Mostly bug fixes and minor enhancements.
+
+	* The pvscsi code was re-factored in preparation for upstreaming. The
+	driver has been sent to the LKML for inclusion in the main Linux tree,
+	and might be removed from open-vm-tools once it's accepted.
+
+open-vm-tools 2009.08.24 changes:
+	* Remove support for Linux kernels < 2.6.9.
+
+	* The vsock now implements a new notification protocol that has better
+	performance than the previous.
+
+	* New infrastructure for sending more network config-related information
+	about the virtual machine to the host.
+
+	* Other bug fixes and minor improvements to the code.
+
+open-vm-tools 2009.07.22 changes:
+	* Better support for dkms by means of a script to help create a dkms tree.
+
+	* "make install" now also installs header files for public libraries, plus
+	a few fixes to incorrect install behavior.
+
+	* Lots of improvements to the new DnD code.
+
+	* This will be the last release with support for Linux kernels < 2.6.9.
+
+open-vm-tools 2009.06.18 changes:
+	* Mostly a bug fix release.
+
+	* vmhgfs now is able to use vsock as a transport (although backend support
+	for HGFS over vsock is not yet released in VMware products).
+
+open-vm-tools 2009.05.22 changes:
+	* Mostly a cleanup and bug fix release.
+
+	* Fix a build issue where a symlink attack could cause the open-vm-tools
+	build to overwrite data (by placing a symlink in /tmp).
+
+	* Second (and last?) batch of changes to clean up duplicate files
+	in the source tree, including Solaris and FreeBSD kernel modules and
+	other module-specific shared files.
+
+	* Plugins now are properly built using plugins_LTLIBRARIES so that
+	"-rpath" doesn't need to be used (this would cause an RPATH entry to
+	be added to the final binary, which some tools didn't like). Thanks to
+	Dominique Leuenberger for the suggestion.
+
+	* open-vm-tools now properly detects PAM and enables PAM support in the
+	code.
+
+open-vm-tools 2009.04.23 changes:
+	* Implemented copy & paste support for RTF data and file contents.
+
+	* guestd has been removed from open-vm-tools; vmtoolsd is now the only
+	option for the main tools service.
+
+	* Added vmblock and vmmemctl modules for Solaris (under the CDDL).
+
+	* vmware-user can now work with both vmblock-fuse and vmblock.
+
+	* Linux HGFS now has a stream-based (TCP, vsock) transport, still under
+	development.
+
+	* First batch of changes to cleanup duplicated files in the source tree.
+	Most duplicated files in the Linux kernel modules have been cleaned up.
+
 open-vm-tools 2009.03.18 changes:
 	* Mostly a bug fix release.
 

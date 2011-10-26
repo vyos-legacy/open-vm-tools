@@ -29,11 +29,14 @@
 #include "str.h"
 #include "rpcout.h"
 #include "vmcheck.h"
-#include "guestApp.h" // for ALLOW_TOOLS_IN_FOREIGN_VM
 #include "util.h"
 #include "debug.h"
 #include "strutil.h"
-#include "guestrpc/guestlibV3.h"
+#include "guestlibV3.h"
+#include "guestlibIoctl.h"
+#include "dynxdr.h"
+#include "xdrutil.h"
+#include "ctype.h"
 
 #define GUESTLIB_NAME "VMware Guest API"
 
@@ -88,11 +91,11 @@ typedef struct {
       void *_data;                                                              \
       GuestLibV3Stat _stat;                                                     \
                                                                                 \
-      ASSERT(HANDLE_VERSION(HANDLE) == 3);                                      \
       (ERROR) = VMGuestLibCheckArgs((HANDLE), (OUTPTR), &_data);                \
       if (VMGUESTLIB_ERROR_SUCCESS != (ERROR)) {                                \
          break;                                                                 \
       }                                                                         \
+      ASSERT(HANDLE_VERSION(HANDLE) == 3);                                      \
       (ERROR) = VMGuestLibGetStatisticsV3((HANDLE), (STATID), &_stat);          \
       if ((ERROR) != VMGUESTLIB_ERROR_SUCCESS) {                                \
          break;                                                                 \
@@ -104,6 +107,7 @@ typedef struct {
       ASSERT(_stat.d == (STATID));                                              \
       if (sizeof *(OUTPTR) < sizeof _stat.GuestLibV3Stat_u.FIELDNAME.value) {   \
          (ERROR) = VMGUESTLIB_ERROR_BUFFER_TOO_SMALL;                           \
+         break;                                                                 \
       }                                                                         \
       *(OUTPTR) = _stat.GuestLibV3Stat_u.FIELDNAME.value;                       \
       (ERROR) = VMGUESTLIB_ERROR_SUCCESS;                                       \
@@ -255,12 +259,10 @@ VMGuestLib_OpenHandle(VMGuestLibHandle *handle) // OUT
 {
    VMGuestLibHandleType *data;
 
-#ifndef ALLOW_TOOLS_IN_FOREIGN_VM
    if (!VmCheck_IsVirtualWorld()) {
       Debug("VMGuestLib_OpenHandle: Not in a VM.\n");
       return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
    }
-#endif
 
    if (NULL == handle) {
       return VMGUESTLIB_ERROR_INVALID_ARG;
@@ -408,7 +410,7 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
           * XXX: Maybe use another error code for this case where the host
           * product doesn't support this feature?
           */
-         ret = VMGUESTLIB_ERROR_UNSUPPORTED_VERSION;
+         ret = VMGUESTLIB_ERROR_NOT_ENABLED;
          break;
       } else if (hostVersion == 3) {
          /*
@@ -602,6 +604,7 @@ VMGuestLib_UpdateInfo(VMGuestLibHandle handle) // IN
    error = VMGuestLibUpdateInfo(handle);
    if (error != VMGUESTLIB_ERROR_SUCCESS) {
       Debug("VMGuestLibUpdateInfo failed: %d\n", error);
+      HANDLE_SESSIONID(handle) = 0;
       return error;
    }
 
@@ -818,8 +821,8 @@ VMGuestLib_GetHostProcessorSpeed(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                mhz, hostMHz,
-                                GUESTLIB_HOST_MHZ);
+                         mhz, hostMHz,
+                         GUESTLIB_HOST_MHZ);
    return error;
 }
 
@@ -846,8 +849,8 @@ VMGuestLib_GetMemReservationMB(VMGuestLibHandle handle,  // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memReservationMB, memReservationMB,
-                                GUESTLIB_MEM_RESERVATION_MB);
+                         memReservationMB, memReservationMB,
+                         GUESTLIB_MEM_RESERVATION_MB);
    return error;
 }
 
@@ -874,8 +877,8 @@ VMGuestLib_GetMemLimitMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memLimitMB, memLimitMB,
-                                GUESTLIB_MEM_LIMIT_MB);
+                         memLimitMB, memLimitMB,
+                         GUESTLIB_MEM_LIMIT_MB);
    return error;
 }
 
@@ -902,8 +905,8 @@ VMGuestLib_GetMemShares(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memShares, memShares,
-                                GUESTLIB_MEM_SHARES);
+                         memShares, memShares,
+                         GUESTLIB_MEM_SHARES);
    return error;
 }
 
@@ -930,8 +933,8 @@ VMGuestLib_GetMemMappedMB(VMGuestLibHandle handle,  // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memMappedMB, memMappedMB,
-                                GUESTLIB_MEM_MAPPED_MB);
+                         memMappedMB, memMappedMB,
+                         GUESTLIB_MEM_MAPPED_MB);
    return error;
 }
 
@@ -958,8 +961,8 @@ VMGuestLib_GetMemActiveMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memActiveMB, memActiveMB,
-                                GUESTLIB_MEM_ACTIVE_MB);
+                         memActiveMB, memActiveMB,
+                         GUESTLIB_MEM_ACTIVE_MB);
    return error;
 }
 
@@ -986,8 +989,8 @@ VMGuestLib_GetMemOverheadMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memOverheadMB, memOverheadMB,
-                                GUESTLIB_MEM_OVERHEAD_MB);
+                         memOverheadMB, memOverheadMB,
+                         GUESTLIB_MEM_OVERHEAD_MB);
    return error;
 }
 
@@ -1014,8 +1017,8 @@ VMGuestLib_GetMemBalloonedMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memBalloonedMB, memBalloonedMB,
-                                GUESTLIB_MEM_BALLOONED_MB);
+                         memBalloonedMB, memBalloonedMB,
+                         GUESTLIB_MEM_BALLOONED_MB);
    return error;
 }
 
@@ -1070,8 +1073,8 @@ VMGuestLib_GetMemSharedMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memSharedMB, memSharedMB,
-                                GUESTLIB_MEM_SHARED_MB);
+                         memSharedMB, memSharedMB,
+                         GUESTLIB_MEM_SHARED_MB);
    return error;
 }
 
@@ -1098,8 +1101,8 @@ VMGuestLib_GetMemSharedSavedMB(VMGuestLibHandle handle,  // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memSharedSavedMB, memSharedSavedMB,
-                                GUESTLIB_MEM_SHARED_SAVED_MB);
+                         memSharedSavedMB, memSharedSavedMB,
+                         GUESTLIB_MEM_SHARED_SAVED_MB);
    return error;
 }
 
@@ -1126,8 +1129,8 @@ VMGuestLib_GetMemUsedMB(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                memUsedMB, memUsedMB,
-                                GUESTLIB_MEM_USED_MB);
+                         memUsedMB, memUsedMB,
+                         GUESTLIB_MEM_USED_MB);
    return error;
 }
 
@@ -1154,8 +1157,8 @@ VMGuestLib_GetElapsedMs(VMGuestLibHandle handle, // IN
 {
    VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
    VMGUESTLIB_GETFN_BODY(handle, error,
-                                elapsedMs, elapsedMs,
-                                GUESTLIB_ELAPSED_MS);
+                         elapsedMs, elapsedMs,
+                         GUESTLIB_ELAPSED_MS);
    return error;
 }
 
@@ -1589,3 +1592,247 @@ VMGuestLib_GetHostMemUnmappedMB(VMGuestLibHandle handle,    // IN
    return error;
 }
 
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetMemZippedMB --
+ *
+ *      Total zipped VM memory
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetMemZippedMB(VMGuestLibHandle handle,    // IN
+                          uint32 *memZippedMB)        // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         memZippedMB, memZippedMB,
+                         GUESTLIB_MEM_ZIPPED_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetMemZipSavedMB --
+ *
+ *      Total memopry saved by zipping VM memory
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetMemZipSavedMB(VMGuestLibHandle handle,    // IN
+                            uint32 *memZipSavedMB)      // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         memZipSavedMB, memZipSavedMB,
+                         GUESTLIB_MEM_ZIPSAVED_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetMemLLSwappedMB --
+ *
+ *      VM memory swapped to SSD
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetMemLLSwappedMB(VMGuestLibHandle handle,    // IN
+                             uint32 *memLLSwappedMB)     // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         memLLSwappedMB, memLLSwappedMB,
+                         GUESTLIB_MEM_LLSWAPPED_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetMemSwapTargetMB --
+ *
+ *      VM memory swap target
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetMemSwapTargetMB(VMGuestLibHandle handle,    // IN
+                              uint32 *memSwapTargetMB)    // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         memSwapTargetMB, memSwapTargetMB,
+                         GUESTLIB_MEM_SWAP_TARGET_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetMemBalloonTargetMB --
+ *
+ *      VM memory balloon target size
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetMemBalloonTargetMB(VMGuestLibHandle handle,    // IN
+                                 uint32 *memBalloonTargetMB) // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         memBalloonTargetMB, memBalloonTargetMB,
+                         GUESTLIB_MEM_BALLOON_TARGET_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_GetMemBalloonMaxMB --
+ *
+ *      VM memory balloon limit
+ *
+ * Results:
+ *      VMGuestLibError
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+VMGuestLibError
+VMGuestLib_GetMemBalloonMaxMB(VMGuestLibHandle handle,    // IN
+                              uint32 *memBalloonMaxMB)    // OUT
+{
+   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
+   VMGUESTLIB_GETSTAT_V3(handle, error,
+                         memBalloonMaxMB, memBalloonMaxMB,
+                         GUESTLIB_MEM_BALLOON_MAX_MB);
+   return error;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLibIoctl --
+ *
+ *      Marshal and invoke the guestlib ioctl.
+ *
+ * Results:
+ *      TRUE on success, FALSE otherwise (reply contains error detail, if
+ *      provided)
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+VMGuestLibIoctl(const GuestLibIoctlParam *param,
+                char **reply,
+                size_t *replySize)
+{
+   XDR xdrs;
+   Bool ret;
+   static const char *request = VMGUESTLIB_IOCTL_COMMAND_STRING " ";
+
+   if (param == NULL || param->d >= GUESTLIB_IOCTL_MAX) {
+      return FALSE;
+   }
+   if (NULL == DynXdr_Create(&xdrs)) {
+      return FALSE;
+   }
+   if (!DynXdr_AppendRaw(&xdrs, request, strlen(request)) ||
+       !xdr_GuestLibIoctlParam(&xdrs, (GuestLibIoctlParam *)param)) {
+      DynXdr_Destroy(&xdrs, TRUE);
+      return FALSE;
+   }
+   ret = RpcOut_SendOneRaw(DynXdr_Get(&xdrs), xdr_getpos(&xdrs), reply, replySize);
+   DynXdr_Destroy(&xdrs, TRUE);
+   return ret;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VMGuestLib_AtomicUpdateCookie --
+ *
+ *      Atomically update a cookie on the host.
+ *
+ * Results:
+ *      TRUE on success, FALSE otherwise.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+VMGuestLib_AtomicUpdateCookie(const char *src,    // IN
+                              const char *dst,    // IN
+                              char **reply,       // OUT
+                              size_t *replySize)  // OUT
+{
+   GuestLibIoctlParam param;
+
+   ASSERT(src != NULL);
+   ASSERT(dst != NULL);
+
+   param.d = GUESTLIB_IOCTL_ATOMIC_UPDATE_COOKIE;
+   param.GuestLibIoctlParam_u.atomicUpdateCookie.src = (char *)src;
+   param.GuestLibIoctlParam_u.atomicUpdateCookie.dst = (char *)dst;
+   return VMGuestLibIoctl(&param, reply, replySize);
+}

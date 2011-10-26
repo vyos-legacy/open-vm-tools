@@ -59,13 +59,12 @@
  *   FreeBSD: really UTF-8
  *   ESX: UTF-8 by policy decree
  *   Mac: really UTF-8
- *   Netware: don't know (either no iconv, or really UTF-8)
  */
 
 #if defined(__FreeBSD__) || \
     defined(VMX86_SERVER) || \
     defined(__APPLE__) || \
-    defined(N_PLAT_NLM)
+    defined __ANDROID__
 #define CURRENT_IS_UTF8
 #endif
 
@@ -368,6 +367,18 @@ Bool
 CodeSet_Validate(const char *buf,   // IN: the string
                  size_t size,	    // IN: length of string
                  const char *code); // IN: encoding
+
+Bool CodeSet_UTF8ToUTF32(const char *utf8,
+                         char **utf32);
+
+Bool CodeSet_UTF32ToUTF8(const char *utf32,
+                         char **utf8);
+
+int CodeSet_LengthInCodePoints(const char *utf8);
+
+int CodeSet_GetUtf8(const char *string,
+                    const char *end,
+                    uint32 *uchar);
 
 
 /*

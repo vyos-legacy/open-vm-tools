@@ -46,7 +46,9 @@
 #include "wiper.h"
 #include "util.h"
 #include "str.h"
+#include "strutil.h"
 #include "fileIO.h"
+#include "vmstdio.h"
 #include "mntinfo.h"
 #include "posix.h"
 #include "util.h"
@@ -64,6 +66,9 @@
 --hpreg
 */
 #define WIPER_SECTOR_STEP 128
+
+/* Number of device numbers to store for device-mapper */
+#define WIPER_MAX_DM_NUMBERS 8
 
 #if defined(sun) || defined(__linux__)
 # define PROCFS "proc"
@@ -108,16 +113,144 @@ typedef struct WiperDiskString {
 } WiperDiskString;
 #endif
 
+typedef struct PartitionInfo {
+   const char          *name;
+   WiperPartition_Type  type;
+   const char          *comment;
+   Bool                 diskBacked;
+} PartitionInfo;
+
 
 /* Variables */
+
+static const char gRemoteFS[] = "Remote filesystem.";
+
+static const PartitionInfo gKnownPartitions[] = {
+   { "autofs",    PARTITION_UNSUPPORTED,  "autofs filesystem.",   FALSE       },
+   { "devpts",    PARTITION_UNSUPPORTED,  "devpts filesystem.",   FALSE       },
+   { "nfs",       PARTITION_UNSUPPORTED,  gRemoteFS,              FALSE       },
+   { "smbfs",     PARTITION_UNSUPPORTED,  gRemoteFS,              FALSE       },
+   { "swap",      PARTITION_UNSUPPORTED,  "Swap partition.",      FALSE       },
+   { "vmhgfs",    PARTITION_UNSUPPORTED,  gRemoteFS,              FALSE       },
+   { PROCFS,      PARTITION_UNSUPPORTED,  "proc filesystem.",     FALSE       },
+   { "ext2",      PARTITION_EXT2,         NULL,                   TRUE        },
+   { "ext3",      PARTITION_EXT3,         NULL,                   TRUE        },
+   { "ext4",      PARTITION_EXT4,         NULL,                   TRUE        },
+   { "hfs",       PARTITION_HFS,          NULL,                   TRUE        },
+   { "msdos",     PARTITION_FAT,          NULL,                   TRUE        },
+   { "ntfs",      PARTITION_NTFS,         NULL,                   TRUE        },
+   { "pcfs",      PARTITION_PCFS,         NULL,                   TRUE        },
+   { "reiserfs",  PARTITION_REISERFS,     NULL,                   TRUE        },
+   { "ufs",       PARTITION_UFS,          NULL,                   TRUE        },
+   { "vfat",      PARTITION_FAT,          NULL,                   TRUE        },
+   { "zfs",       PARTITION_ZFS,          NULL,                   FALSE       },
+};
+
 static Bool initDone = FALSE;
 
 
 /* Local functions */
-static INLINE Bool WiperIsDiskDevice(MNTINFO *mnt, struct stat *s);
+static Bool WiperIsDiskDevice(MNTINFO *mnt, struct stat *s);
 static void WiperPartitionFilter(WiperPartition *item, MNTINFO *mnt);
 static unsigned char *WiperGetSpace(WiperState *state, uint64 *free, uint64 *total);
 static void WiperClean(WiperState *state);
+
+
+#if defined(__linux__)
+
+#define MAX_DISK_MAJORS       256   /* should be enough for now */
+#define NUM_PRESEEDED_MAJORS  5     /* must match the below */
+
+static unsigned int knownDiskMajor[MAX_DISK_MAJORS] = {
+   /*
+    * Pre-seed some major numbers we were comparing against before
+    * we started scanning /proc/devices.
+    */
+   3,    /* First MFM, RLL and IDE hard disk/CD-ROM interface.
+            Inside a VM, this is simply the First IDE hard
+            disk/CD-ROM interface because we don't support
+            others */
+   8,    /* SCSI disk devices */
+   22,   /* Second IDE hard disk/CD-ROM interface */
+   43,   /* Network block device */
+   259,  /* Disks in 2.6.27 */
+};
+
+static int numDiskMajors;
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * WiperCollectDiskMajors --
+ *
+ *      Collects major numbers of devices that we considering "disks" and
+ *      may try to shrink.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      Populates knownDiskMajor array and numDiskMajors counter for
+ *      subsequent use by linux version of WiperIsDiskDevice().
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+WiperCollectDiskMajors(void)
+{
+   const char diskDevNames[] = "|ide0|ide1|sd|md|nbd|device-mapper|blkext|";
+   const char blockSeparator[] = "Block devices:";
+   Bool seenBlockSeparator = FALSE;
+   char *buf;
+   int major;
+   char device[64];
+   FILE *f;
+
+   numDiskMajors = NUM_PRESEEDED_MAJORS;
+
+   f = Posix_Fopen("/proc/devices", "r");
+   if (!f) {
+      return;
+   }
+
+   while (StdIO_ReadNextLine(f, &buf, 0, NULL) == StdIO_Success) {
+
+      if (!seenBlockSeparator) {
+         if (!memcmp(buf, blockSeparator, sizeof(blockSeparator) - 1)) {
+            seenBlockSeparator = TRUE;
+         }
+      } else if (sscanf(buf, "%d %61s\n", &major, device + 1) == 2) {
+
+         device[0] = '|';
+         device[sizeof(device) - 2] = '\0';
+         Str_Strcat(device, "|", sizeof(device));
+
+         if (strstr(diskDevNames, device)) {
+            knownDiskMajor[numDiskMajors++] = major;
+         }
+      }
+
+      free(buf);
+
+      if (numDiskMajors >= MAX_DISK_MAJORS) {
+         break;
+      }
+   }
+
+   fclose(f);
+}
+
+#else
+
+static void
+WiperCollectDiskMajors(void)
+{
+}
+
+#endif
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -136,7 +269,7 @@ static void WiperClean(WiperState *state);
  */
 
 #if defined(sun) /* SunOS { */
-static INLINE Bool
+static Bool
 WiperIsDiskDevice(MNTINFO *mnt,         // IN: file system being considered
                   struct stat *s)       // IN: stat(2) info of fs source
 {
@@ -177,30 +310,25 @@ WiperIsDiskDevice(MNTINFO *mnt,         // IN: file system being considered
 
 #elif defined(__linux__) /* } linux { */
 
-static INLINE Bool
+static Bool
 WiperIsDiskDevice(MNTINFO *mnt,         // IN: file system being considered
                   struct stat *s)       // IN: stat(2) info of fs source
 {
-   int majorN;
+   int majorN = major(s->st_rdev);
+   int i;
 
-   majorN = major(s->st_rdev);
-   if (! (   (majorN == 3)  /* First MFM, RLL and IDE hard disk/CD-ROM
-                              interface. Inside a VM, this is simply the First
-                              IDE hard disk/CD-ROM interface because we don't
-                              support others */
-             || (majorN == 22) /* Second IDE hard disk/CD-ROM interface */
-             || (majorN == 8)  /* SCSI disk devices */
-             || (majorN == 43) /* Network block device */
-             || (majorN == 259) /* Disks in 2.6.27 */)) {
-      return FALSE;
+   for (i = 0; i < numDiskMajors; i++) {
+      if (majorN == knownDiskMajor[i]) {
+         return TRUE;
+      }
    }
 
-   return TRUE;
+   return FALSE;
 }
 
-#elif defined(__FreeBSD__) || defined(__APPLE__) /* } FreeBSD { */
+#elif defined(__FreeBSD__) /* } FreeBSD { */
 
-static INLINE Bool
+static Bool
 WiperIsDiskDevice(MNTINFO *mnt,         // IN: file system being considered
                   struct stat *s)       // IN: stat(2) info of fs source
 {
@@ -232,7 +360,7 @@ WiperIsDiskDevice(MNTINFO *mnt,         // IN: file system being considered
        (S_ISCHR(s->st_mode) && ((maj == 3) || (maj == 13)))) {
       retval = TRUE;
    }
-#else /* Also the Apple case */
+#else
    /*
     * Begin by testing whether file system source is really a character
     * device node.  (FreeBSD killed off block devices long ago.)  Next,
@@ -248,10 +376,27 @@ WiperIsDiskDevice(MNTINFO *mnt,         // IN: file system being considered
          retval = TRUE;
       }
    }
+#undef MASK_ATA_DISK
+#undef MASK_SCSI_DISK
 #endif /* __FreeBSD_version */
 
    return retval;
 }
+
+#elif defined(__APPLE__) /* } { */
+
+static Bool
+WiperIsDiskDevice(MNTINFO *mnt,     // IN
+                  struct stat *s)   // IN
+{
+   /*
+    * Differently from FreeBSD, Mac OS still lists disks as block devices,
+    * it seems. Disks devices also seem to start with "/dev/disk".
+    */
+   return S_ISBLK(s->st_mode) &&
+          StrUtil_StartsWith(MNTINFO_NAME(mnt), "/dev/disk");
+}
+
 #endif /* } */
 
 /*
@@ -276,73 +421,48 @@ WiperPartitionFilter(WiperPartition *item,         // IN/OUT
 {
    struct stat s;
    const char *comment = NULL;
+   const char *fsname = MNTINFO_FSTYPE(mnt);
+   const PartitionInfo *info;
+   size_t i;
 
    item->type = PARTITION_UNSUPPORTED;
 
-   /*
-    * Let's ignore remote filesystems before we do a stat(2) on the actual
-    * mountpoint. This should prevent a deadlock in guestd for guests that
-    * still use an HGFS pserver (Solaris).
-    */
-   if (strcmp(MNTINFO_FSTYPE(mnt), "autofs") == 0) {
-      /* XXX Should we look at autofs' config files? --hpreg */
-      comment = "Not implemented. Contact VMware";
+   for (i = 0; i < ARRAYSIZE(gKnownPartitions); i++) {
+      info = &gKnownPartitions[i];
+      if (strcmp(info->name, fsname) == 0) {
+         item->type = info->type;
+         comment = info->comment;
+         break;
+      }
+   }
 
-   } else if (strcmp(MNTINFO_FSTYPE(mnt), "vmhgfs") == 0) {
-      comment = "Remote partition";
+   if (i == ARRAYSIZE(gKnownPartitions)) {
+      comment = "Unknown filesystem. Contact VMware.";
+   } else if (item->type != PARTITION_UNSUPPORTED) {
+      /*
+       * If the partition is supported by the wiper library, do some other
+       * checks before declaring it shrinkable.
+       */
 
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "nfs") == 0) {
-      comment = "Remote filesystem";
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "smbfs") == 0) {
-      comment = "Remote filesystem";
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "swap") == 0) {
-      comment = "Swap partition";
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), PROCFS) == 0) {
-      comment = "Proc partition";
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "devpts") == 0) {
-      comment = "Devpts partition";
-
-   } if (Posix_Stat(MNTINFO_NAME(mnt), &s) < 0) {
-      comment = "Unknown device";
-
+      if (info->diskBacked) {
+         if (Posix_Stat(MNTINFO_NAME(mnt), &s) < 0) {
+            comment = "Unknown device.";
 #if defined(sun) || defined(__linux__)
-   } else if (! S_ISBLK(s.st_mode)) {
-      comment = "Not a block device";
+         } else if (!S_ISBLK(s.st_mode)) {
+            comment = "Not a block device.";
 #endif
+         } else if (!WiperIsDiskDevice(mnt, &s)) {
+            comment = "Not a disk device.";
+         } else if (MNTINFO_MNT_IS_RO(mnt)) {
+            comment = "Not writable.";
+         }
+      } else if (Posix_Access(MNTINFO_MNTPT(mnt), W_OK) != 0) {
+         comment = "Mount point not writable.";
+      }
 
-   } else if (!WiperIsDiskDevice(mnt, &s)) {
-      comment = "Not a disk device";
-
-   } if (MNTINFO_MNT_IS_RO(mnt)) {
-      comment = "Not writable";
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "ext2") == 0) {
-      item->type = PARTITION_EXT2;
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "ext3") == 0) {
-      item->type = PARTITION_EXT3;
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "reiserfs") == 0) {
-      item->type = PARTITION_REISERFS;
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "ntfs") == 0) {
-      item->type = PARTITION_NTFS;
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "vfat") == 0) {
-      item->type = PARTITION_FAT;
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "ufs") == 0) {
-      item->type = PARTITION_UFS;
-
-   } if (strcmp(MNTINFO_FSTYPE(mnt), "pcfs") == 0) {
-      item->type = PARTITION_PCFS;
-
-   } else {
-      comment = "Unknown filesystem. Contact VMware";
+      if (comment != NULL) {
+         item->type = PARTITION_UNSUPPORTED;
+      }
    }
 
    if (item->type == PARTITION_UNSUPPORTED) {
@@ -411,6 +531,7 @@ WiperSinglePartition_Open(const char *mountPoint)      // IN
             WiperSinglePartition_Close(p);
             p = NULL;
          } else {
+            WiperCollectDiskMajors();
             WiperPartitionFilter(p, mnt);
          }
 
@@ -453,6 +574,8 @@ WiperSinglePartition_GetSpace(const WiperPartition *p,  // IN
 #else
    struct statfs statfsbuf;
 #endif
+   uint64 blockSize;
+
    ASSERT(p);
 
 #ifdef sun
@@ -463,12 +586,18 @@ WiperSinglePartition_GetSpace(const WiperPartition *p,  // IN
       return "Unable to statfs() the mount point";
    }
 
+#ifdef sun
+   blockSize = statfsbuf.f_frsize;
+#else
+   blockSize = statfsbuf.f_bsize;
+#endif
+
    if (geteuid()== 0) {
-      *free = (uint64)statfsbuf.f_bfree * statfsbuf.f_bsize;
+      *free = (uint64)statfsbuf.f_bfree * blockSize;
    } else {
-      *free = (uint64)statfsbuf.f_bavail * statfsbuf.f_bsize;
+      *free = (uint64)statfsbuf.f_bavail * blockSize;
    }
-   *total = (uint64)statfsbuf.f_blocks * statfsbuf.f_bsize;
+   *total = (uint64)statfsbuf.f_blocks * blockSize;
 
    return "";
 }
@@ -508,6 +637,8 @@ WiperPartition_Open(WiperPartition_List *pl)
       return FALSE;
    }
 
+   WiperCollectDiskMajors();
+
    while (GETNEXT_MNTINFO(fp, mnt)) {
       WiperPartition *part = WiperSinglePartition_Allocate();
 
@@ -534,6 +665,29 @@ WiperPartition_Open(WiperPartition_List *pl)
 
    (void) CLOSE_MNTFILE(fp);
    return rc;
+}
+
+
+/*
+ *---------------------------------------------------------------------------
+ *
+ * Wiper_IsWipeSupported --
+ *
+ *      Query if wipe is supported on the specified wiper partition.
+ *
+ * Results:
+ *      FALSE always.
+ *
+ * Side Effects:
+ *      None
+ *
+ *---------------------------------------------------------------------------
+ */
+
+Bool
+Wiper_IsWipeSupported(const WiperPartition *part)
+{
+   return FALSE;
 }
 
 
@@ -842,8 +996,11 @@ Wiper_Cancel(Wiper_State **s)      // IN/OUT
  *
  * Wiper_Init --
  *
- *      On Linux and Solaris, this function is defined only to provide a
- *      uniform interface to the library.
+ *      On Solaris, this function is defined only to provide a uniform
+ *      interface to the library.  On Linux, the /proc/devices file is
+ *      read to initialize an array with device numbers that correspond
+ *      to the device-mapper devices.  This is to differentiate partitions
+ *      that use the device-mapper from other non-disk devices.
  *
  * Results:
  *      Always TRUE.
@@ -859,3 +1016,4 @@ Wiper_Init(WiperInitData *clientData)
 {
    return initDone = TRUE;
 }
+

@@ -26,13 +26,13 @@
 
 #include "vm_assert.h"
 #include "vm_basic_defs.h"
-#include "vmtoolsApp.h"
 
 #include "conf.h"
 #include "procMgr.h"
 #include "system.h"
-#include "vm_app.h"
-#include "vmtools.h"
+#include "vmware/guestrpc/powerops.h"
+#include "vmware/tools/plugin.h"
+#include "vmware/tools/utils.h"
 
 #if defined(G_PLATFORM_WIN32)
 #  define INVALID_PID NULL
@@ -231,7 +231,7 @@ PowerOpsScriptCallback(gpointer _state)
 {
    PowerOpState *state = _state;
 
-   g_assert(state->pid != INVALID_PID);
+   ASSERT(state->pid != INVALID_PID);
 
    if (!ProcMgr_IsAsyncProcRunning(state->pid)) {
       int exitcode;
@@ -307,7 +307,7 @@ PowerOpsRunScript(PowerOpState *state,
  * Callback for when the script process finishes on POSIX systems.
  *
  * @param[in]  pid         Child pid.
- * @param[in]  status      Exit status of script.
+ * @param[in]  exitcode    Exit status of script.
  * @param[in]  _state      Plugin state.
  *
  * @return FALSE.
@@ -315,14 +315,16 @@ PowerOpsRunScript(PowerOpState *state,
 
 static gboolean
 PowerOpsScriptCallback(GPid pid,
-                       gint status,
+                       gint exitcode,
                        gpointer _state)
 {
    PowerOpState *state = _state;
+   gboolean success = exitcode == 0;
 
-   g_assert(state->pid != INVALID_PID);
+   ASSERT(state->pid != INVALID_PID);
 
-   PowerOpsStateChangeDone(_state, status == 0);
+   g_debug("Script exit code: %d, success = %d\n", exitcode, success);
+   PowerOpsStateChangeDone(_state, success);
    g_spawn_close_pid(state->pid);
    state->pid = INVALID_PID;
    return FALSE;
@@ -349,9 +351,15 @@ PowerOpsRunScript(PowerOpState *state,
    GSource *watch;
    GError *err = NULL;
 
-   argv[0] = g_filename_from_utf8(script, -1, NULL, NULL, &err);
+   argv[0] = g_locale_from_utf8(script, -1, NULL, NULL, &err);
    if (err != NULL) {
-      g_error("Conversion error: %s\n", err->message);
+      g_debug("Conversion error: %s\n", err->message);
+      g_clear_error(&err);
+      /*
+       * If we could not convert to current locate let's hope that
+       * what we have is a useable script name and use it directly.
+       */
+      argv[0] = g_strdup(script);
    }
    argv[1] = NULL;
 
@@ -390,7 +398,7 @@ PowerOpsRunScript(PowerOpState *state,
  * @return TRUE on success.
  */
 
-static Bool
+static gboolean
 PowerOpsStateChange(RpcInData *data)
 {
    size_t i;
@@ -450,7 +458,7 @@ PowerOpsStateChange(RpcInData *data)
             char *tmp;
 
             dfltPath = GuestApp_GetInstallPath();
-            g_assert(dfltPath != NULL);
+            ASSERT(dfltPath != NULL);
 
             /*
              * Before the switch to vmtoolsd, the config file was saved with
@@ -481,7 +489,7 @@ PowerOpsStateChange(RpcInData *data)
          }
 
          g_free(script);
-         return RPCIN_SETRETVALS(data, result, ret);
+         return RPCIN_SETRETVALS(data, (char *) result, ret);
       }
    }
 

@@ -26,7 +26,7 @@
 #define _VIX_COMMANDS_H_
 
 #include "vm_version.h"
-#include "vix.h"
+#include "vixOpenSource.h"
 
 /*
  * These describe the format of the message objects.
@@ -59,6 +59,8 @@
 #define VIX_USER_CREDENTIAL_HOST_CONFIG_SECRET        6
 #define VIX_USER_CREDENTIAL_HOST_CONFIG_HASHED_SECRET 7
 #define VIX_USER_CREDENTIAL_NAMED_INTERACTIVE_USER    8
+#define VIX_USER_CREDENTIAL_TICKETED_SESSION          9
+#define VIX_USER_CREDENTIAL_SSPI                      10
 
 #define VIX_SHARED_SECRET_CONFIG_USER_NAME          "__VMware_Vix_Shared_Secret_1__"
 
@@ -78,7 +80,7 @@ enum VixCommonCommandOptionValues {
    VIX_COMMAND_FORWARD_TO_GUEST              = 0x04,
    VIX_COMMAND_GUEST_RETURNS_STRING          = 0x08,
    VIX_COMMAND_GUEST_RETURNS_INTEGER_STRING  = 0x10,
-   VIX_COMMAND_GUEST_RETURNS_ENCODED_STRING  = 0x20,
+   /* DEPRECATED VIX_COMMAND_GUEST_RETURNS_ENCODED_STRING  = 0x20, */
    VIX_COMMAND_GUEST_RETURNS_PROPERTY_LIST   = 0x40,
    VIX_COMMAND_GUEST_RETURNS_BINARY          = 0x80,
    // We cannot add more constants here. This is stored in a uint8,
@@ -95,6 +97,8 @@ enum {
    VIX_REQUESTMSG_RUN_IN_ANY_VMX_STATE                = 0x04,
    VIX_REQUESTMSG_REQUIRES_INTERACTIVE_ENVIRONMENT    = 0x08,
    VIX_REQUESTMSG_INCLUDES_AUTH_DATA_V1               = 0x10,
+   VIX_REQUESTMSG_REQUIRES_VMDB_NOTIFICATION          = 0x20,
+   VIX_REQUESTMSG_ESCAPE_XML_DATA                     = 0x40,
 };
 
 
@@ -102,9 +106,11 @@ enum {
  * These are the flags set in responseFlags.
  */
 enum VixResponseFlagsValues {
-   VIX_RESPONSE_SOFT_POWER_OP       = 0x0001,
-   VIX_RESPONSE_EXTENDED_RESULT_V1  = 0x0002,
-   VIX_RESPONSE_TRUNCATED           = 0x0004,
+   VIX_RESPONSE_SOFT_POWER_OP             = 0x0001,
+   VIX_RESPONSE_EXTENDED_RESULT_V1        = 0x0002,
+   VIX_RESPONSE_TRUNCATED                 = 0x0004,
+   VIX_RESPONSE_FSR                       = 0x0008,
+   VIX_RESPONSE_VMDB_NOTIFICATION_POSTED  = 0x0010,
 };
 
 
@@ -284,35 +290,29 @@ struct VixCommandNamePassword {
 #include "vmware_pack_end.h"
 VixCommandNamePassword;
 
+/*
+ * **********************************************************
+ * This is a ticketed session for authentication.
+ */
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandTicketedSession {
+   uint32    ticketLength;
+}
+#include "vmware_pack_end.h"
+VixCommandTicketedSession;
 
 /*
  * **********************************************************
- * Open VM Command
- *
+ * This is a SSPI token for acquiring credentials
  */
-
 typedef
 #include "vmware_pack_begin.h"
-struct VixMsgVMOpenRequest {
-   VixCommandRequestHeader header;
-   int32                   options; //options for VM_Open or CreateWorkingCopy
-   uint32                  xmlPathNameSize;
-   uint32                  vmxPathNameSize;
-   //this is followed by the xml pathname and the vmx pathname
+struct VixCommandSSPI {
+   uint32    tokenLength;
 }
 #include "vmware_pack_end.h"
-VixMsgVMOpenRequest;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgVMOpenResponse {
-   VixCommandResponseHeader   header;
-   int32                      vmPowerState;
-   uint32                     vmxPathNameSize;
-}
-#include "vmware_pack_end.h"
-VixMsgVMOpenResponse;
-
+VixCommandSSPI;
 
 
 /*
@@ -333,48 +333,6 @@ struct VixMsgPowerOpRequest {
 }
 #include "vmware_pack_end.h"
 VixMsgPowerOpRequest;
-
-
-
-/*
- * **********************************************************
- * Set NIC request. The response is just a generic
- * response header (it has no body).
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgNICBandwidth {
-   Bool        validNICNum;
-   int32       nicNum;
-   char        pvnGUID[64];
-
-   uint32      totalBandwidth;
-   uint32      maxSendBandwidth;
-   uint32      maxReceiveBandwidth;
-
-   uint32      packetLossPattern;
-   uint32      packetLossRate;
-   uint32      packetLossMinBurstDuration;
-   uint32      packetLossMaxBurstDuration;
-
-   uint32      minLatency;
-   uint32      maxLatency;
-
-   uint32      options;
-}
-#include "vmware_pack_end.h"
-VixMsgNICBandwidth;
-   
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgSetNICBandwidthRequest {
-   VixCommandRequestHeader header;
-   VixMsgNICBandwidth      nicSettings;
-}
-#include "vmware_pack_end.h"
-VixMsgSetNICBandwidthRequest;
-
 
 
 /*
@@ -448,6 +406,29 @@ struct VixMsgConfigurationObjectType {
 #include "vmware_pack_end.h"
 VixMsgConfigurationObjectType;
 
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgNICBandwidth {
+   Bool        validNICNum;
+   int32       nicNum;
+   char        pvnGUID[64];
+
+   uint32      totalBandwidth;
+   uint32      maxSendBandwidth;
+   uint32      maxReceiveBandwidth;
+
+   uint32      packetLossPattern;
+   uint32      packetLossRate;
+   uint32      packetLossMinBurstDuration;
+   uint32      packetLossMaxBurstDuration;
+
+   uint32      minLatency;
+   uint32      maxLatency;
+
+   uint32      options;
+}
+#include "vmware_pack_end.h"
+VixMsgNICBandwidth;
 
 typedef
 #include "vmware_pack_begin.h"
@@ -473,30 +454,6 @@ enum VixMsgPacketLossType {
 enum VixMsgConfigObjectType {
    VIX_LAN_SEGMENT_SETTING_CONFIG   = 1,
 };
-
-/*
- * Commands related to Record|Replay State.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgRecordReplayStateCommandRequest {
-   VixCommandRequestHeader   header;
-   
-   int32                     options;
-   uint32                    propertyListBufferSize;
-}
-#include "vmware_pack_end.h"
-VixMsgRecordReplayStateCommandRequest;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgRecordReplayStateCommandResponse {
-   VixCommandResponseHeader header;
-   uint32   propertyListBufferSize;
-}
-#include "vmware_pack_end.h"
-VixMsgRecordReplayStateCommandResponse;
-
 
 /*
  * **********************************************************
@@ -682,6 +639,20 @@ VixCommandRenameFileRequest;
 
 typedef
 #include "vmware_pack_begin.h"
+struct VixCommandRenameFileRequestEx {
+   VixCommandRequestHeader header;
+
+   int32                   copyFileOptions;
+   uint32                  oldPathNameLength;
+   uint32                  newPathNameLength;
+   uint32                  filePropertiesLength;
+   Bool                    overwrite;
+}
+#include "vmware_pack_end.h"
+VixCommandRenameFileRequestEx;
+
+typedef
+#include "vmware_pack_begin.h"
 struct VixCommandHgfsSendPacket {
    VixCommandRequestHeader header;
 
@@ -690,6 +661,24 @@ struct VixCommandHgfsSendPacket {
 }
 #include "vmware_pack_end.h"
 VixCommandHgfsSendPacket;
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgSetGuestFileAttributesRequest {
+   VixCommandRequestHeader header;
+
+   int32                  fileOptions;
+   int64                  accessTime;
+   int64                  modificationTime;
+   int32                  ownerId;
+   int32                  groupId;
+   int32                  permissions;
+   Bool                   hidden;
+   Bool                   readOnly;
+   uint32                 guestPathNameLength;
+}
+#include "vmware_pack_end.h"
+VixMsgSetGuestFileAttributesRequest;
 
 
 /*
@@ -724,6 +713,34 @@ enum VixListDirectoryOptions {
    VIX_LIST_DIRECTORY_USE_OFFSET = 0x01
 };
 
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgListFilesRequest {
+   VixCommandRequestHeader header;
+
+   int32                   fileOptions;
+   uint32                  guestPathNameLength;
+   uint32                  patternLength;
+   int32                   index;
+   int32                   maxResults;
+   uint64                  offset;
+}
+#include "vmware_pack_end.h"
+VixMsgListFilesRequest;
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandInitiateFileTransferToGuestRequest {
+   VixCommandRequestHeader header;
+
+   int32                   options;
+   uint32                  guestPathNameLength;
+   Bool                    overwrite;
+}
+#include "vmware_pack_end.h"
+VixCommandInitiateFileTransferToGuestRequest;
+
+
 /*
  * This is used to reply to several operations, like testing whether
  * a file or registry key exists on the client.
@@ -756,26 +773,18 @@ struct VixMsgCreateFileRequest {
 #include "vmware_pack_end.h"
 VixMsgCreateFileRequest;
 
-
-/*
- * **********************************************************
- * Hot add and remove a disk in a running VM.
- */
 typedef
 #include "vmware_pack_begin.h"
-struct VixMsgHotDiskRequest {
+struct VixMsgCreateFileRequestEx {
    VixCommandRequestHeader header;
-   int32                    hotDiskOptions;
-   uint32                   adapterTypeLength;
-   uint32                   typeLength;
-   uint32                   nameLength;
-   uint32                   modeLength;
-   uint32                   deviceTypeLength;
-   int32                    adapterNum;
-   int32                    targetNum;
+
+   int32                   fileOptions;
+   uint32                  guestPathNameLength;
+   uint32                  filePropertiesLength;
+   Bool                    createParentDirectories;
 }
 #include "vmware_pack_end.h"
-VixMsgHotDiskRequest;
+VixMsgCreateFileRequestEx;
 
 
 /*
@@ -864,6 +873,20 @@ struct VixMsgHotRemoveDeviceRequest {
 }
 #include "vmware_pack_end.h"
 VixMsgHotRemoveDeviceRequest;
+
+
+/*
+ * **********************************************************
+ * Change monitor type of a running VM.
+ */
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgHotChangeMonitorTypeRequest {
+   VixCommandRequestHeader header;
+   int32                   monitorType;
+}
+#include "vmware_pack_end.h"
+VixMsgHotChangeMonitorTypeRequest;
 
 
 /*
@@ -1071,125 +1094,6 @@ struct VixMsgRemoveBulkSnapshotRequest {
 VixMsgRemoveBulkSnapshotRequest;
 
 /*
- * Rolling Tier operations.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgAddRollingTierRequest {
-   VixCommandRequestHeader    header;
-   int32                      options;
-   uint32                     interval;
-   int                        maximum;
-   uint32                     clientFlags;
-   uint32                     propertyListLength;
-   /*
-    * Followed by:
-    *   serialized property list.
-    */
-}
-#include "vmware_pack_end.h"  
-VixMsgAddRollingTierRequest;
-   
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgAddRollingTierResponse {
-   VixCommandResponseHeader  header;
-   uint32                     tierUid;
-   uint32                     propertyListLength;
-   /*
-    * Followed by:
-    *   serialized property list.
-    */
-}
-#include "vmware_pack_end.h"  
-VixMsgAddRollingTierResponse;
-   
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgRemoveRollingTierRequest {
-   VixCommandRequestHeader    header;
-
-   int32                      options;
-   int32                      tierUid;
-   uint32                     propertyListLength;
-   /*
-    * Followed by:
-    *   serialized property list.
-    */
-}  
-#include "vmware_pack_end.h"
-VixMsgRemoveRollingTierRequest;
-   
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgRemoveRollingTierResponse {
-   VixCommandResponseHeader  header;
-   uint32                     propertyListLength;
-   /*
-    * Followed by:
-    *   serialized property list.
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgRemoveRollingTierResponse;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgListRollingTierRequest {
-   VixCommandRequestHeader    header;
-
-   int32                      options;
-   uint32                     propertyListLength;
-   /*
-    * Followed by:
-    *   serialized property list.
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgListRollingTierRequest;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgListRollingTierResponse {
-   VixCommandResponseHeader  header;
-   uint32                     propertyListLength;
-   /*
-    * Followed by:
-    *   serialized property list.
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgListRollingTierResponse;
-
-
-/*
- * Fork a running VM.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgVMForkRequest {
-   VixCommandRequestHeader    header;
-
-   int32                      options;
-   Bool                       disconnectRemovable;
-
-   uint32                     cfgFileNameLen;
-   uint32                     displayNameLen;
-}
-#include "vmware_pack_end.h"
-VixMsgVMForkRequest;
-
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgVMForkResponse {
-   VixCommandResponseHeader  header;
-}
-#include "vmware_pack_end.h"
-VixMsgVMForkResponse;
-
-
-/*
  * Stop recording or playback of a snapshot event log.
  */
 typedef
@@ -1215,15 +1119,6 @@ VixMsgRecordReplayEvent;
 
 typedef
 #include "vmware_pack_begin.h"
-struct VixMsgTimeMarkerEncounteredEvent {
-   VixMsgEventHeader        eventHeader;      
-   uint32                   propertyListSize;
-}
-#include "vmware_pack_end.h"
-VixMsgTimeMarkerEncounteredEvent;
-
-typedef
-#include "vmware_pack_begin.h"
 struct VixMsgDebuggerEvent {
    VixMsgEventHeader          eventHeader;
 
@@ -1234,51 +1129,6 @@ struct VixMsgDebuggerEvent {
 }
 #include "vmware_pack_end.h"
 VixMsgDebuggerEvent;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgGetRecordReplayInfoResponse {
-   VixCommandResponseHeader header;
-   uint32                   propertyListSize;
-}
-#include "vmware_pack_end.h"
-VixMsgGetRecordReplayInfoResponse;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgVMSnapshotSetReplaySpeedRequest {
-   VixCommandRequestHeader    header;
-
-   int32                      options;
-   int32                      timeType;
-   int64                      timeValue;
-}
-#include "vmware_pack_end.h"
-VixMsgVMSnapshotSetReplaySpeedRequest;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgVMAddTimeMarkerRequest {
-   VixCommandRequestHeader    header;
-   uint32                     options;
-   uint32                     action;
-   uint32                     propertyListSize;
-}
-#include "vmware_pack_end.h"
-VixMsgVMAddTimeMarkerRequest;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgVMGetTimeMarkerRequest {
-   VixCommandRequestHeader    header;
-   uint32                     options;
-   uint32                     whence;
-   uint32                     index;
-   uint32                     propertyListSize;
-}
-#include "vmware_pack_end.h"
-VixMsgVMGetTimeMarkerRequest;
-
 
 /*
  * Fault Tolerance Automation
@@ -1296,6 +1146,15 @@ struct VixMsgFaultToleranceControlRequest {
 #include "vmware_pack_end.h"
 VixMsgFaultToleranceControlRequest;
 
+typedef
+#include "vmware_pack_begin.h"
+struct VixFaultToleranceControlResponse {
+   VixCommandResponseHeader header;
+   uint32 propertyListBufferSize;
+   // Followed by a serialized property list containing error context.
+}
+#include "vmware_pack_end.h"
+VixFaultToleranceControlResponse;
 
 
 /*
@@ -1353,51 +1212,6 @@ struct VixMsgSetSharedFolderRequest {
 }
 #include "vmware_pack_end.h"
 VixMsgSetSharedFolderRequest;
-
-
-
-/*
- * **********************************************************
- * Get properties of a disk.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgGetDiskPropertiesRequest {
-   VixCommandRequestHeader   header;
-
-   int32                     options;
-   uint32                    diskPathNameLength;
-}
-#include "vmware_pack_end.h"
-VixMsgGetDiskPropertiesRequest;
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgGetDiskPropertiesResponse {
-   VixCommandResponseHeader  header;
-
-   int64                     capacity;
-   int64                     spaceUsed;
-   int32                     diskLibDiskType;
-   uint32                    physicalPathLength;
-}
-#include "vmware_pack_end.h"
-VixMsgGetDiskPropertiesResponse;
-
-/*
- * **********************************************************
- * Open a URL in the guest.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgOpenUrlRequest {
-   VixCommandRequestHeader  header;
-
-   int32                    windowState;
-   uint64                   urlLength;
-}
-#include "vmware_pack_end.h"
-VixMsgOpenUrlRequest;
 
 
 /*
@@ -1600,6 +1414,34 @@ struct VixMsgCreateTempFileRequest {
 VixMsgCreateTempFileRequest;
 
 
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgCreateTempFileRequestEx {
+   VixCommandRequestHeader header;
+
+   int32                   options;
+   uint32                  filePrefixLength;
+   uint32                  fileSuffixLength;
+   uint32                  directoryPathLength;
+   uint32                  propertyListLength;
+}
+#include "vmware_pack_end.h"
+VixMsgCreateTempFileRequestEx;
+
+
+typedef
+#include "vmware_pack_begin.h"
+struct {
+   VixCommandRequestHeader header;
+
+   int32                   fileOptions;
+   uint32                  guestPathNameLength;
+   uint32                  filePropertiesLength;
+   Bool                    recursive;
+}
+#include "vmware_pack_end.h"
+VixMsgDeleteDirectoryRequest;
+
 /*
  * **********************************************************
  * Connect/Disconnect device request. The response is just a generic
@@ -1638,7 +1480,7 @@ VixMsgGetVProbesResponse;
 typedef
 #include "vmware_pack_begin.h"
 struct VixMsgVProbeLoadRequest {
-   VixCommandResponseHeader header;
+   VixCommandRequestHeader header;
    char   string[1];             /* variable length */
 } 
 #include "vmware_pack_end.h"
@@ -1730,29 +1572,6 @@ VixMsgMountHGFSRequest;
 
 
 /*
- * **********************************************************
- * Get the state of all USB devices.
- */
-
-
-/*
- * This is used to reply to VixMsgGetUSBDeviceListRequest operations.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgGetUSBDeviceListResponse {
-   VixCommandResponseHeader   header;
-
-   int32                      numRunningDevices;
-   uint32                     runningDeviceListLength;
-
-   uint32                     patternListLength;
-}
-#include "vmware_pack_end.h"
-VixMsgGetUSBDeviceListResponse;
-
-
-/*
  * Get guest networking config
  */
 typedef
@@ -1810,6 +1629,59 @@ VixMsgGetPerformanceDataResponse;
 
 
 /*
+ * Run a program in guest with (VI version with more args)
+ */
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgStartProgramRequest {
+   VixCommandRequestHeader   header;
+
+   Bool   startMinimized;
+   uint32 programPathLength;
+   uint32 argumentsLength;
+   uint32 workingDirLength;
+   uint32 numEnvVars;
+   uint32 envVarLength;
+
+   // This is followed by the buffer of the args
+}
+#include "vmware_pack_end.h"
+VixMsgStartProgramRequest;
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgListProcessesExRequest {
+   VixCommandRequestHeader   header;
+
+   // if we need to make multiple trips, this is the key used to identify
+   // the result being processed
+   uint32 key;
+
+   // if we need to make multiple trips, this is the offset in the reply
+   // from which to send the next chunk
+   uint32 offset;
+   uint32 numPids;
+
+   // This is followed by the list of uint64s
+}
+#include "vmware_pack_end.h"
+VixMsgListProcessesExRequest;
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixMsgReadEnvironmentVariablesRequest {
+   VixCommandRequestHeader   header;
+
+   uint32 numNames;
+   uint32 namesLength;
+
+   // This is followed by the list of NUL-terminated names
+}
+#include "vmware_pack_end.h"
+VixMsgReadEnvironmentVariablesRequest;
+
+
+/*
  * HOWTO: Adding a new Vix Command. Step 3.
  *
  * Add a new struct to pass over the control socket into the VMX.
@@ -1852,175 +1724,6 @@ struct VixMsgSampleCommandResponse {
 VixMsgSampleCommandResponse;
 
 // End of "HOWTO: Adding a new Vix Command. Step 3."
-
-
-
-/*
- * **********************************************************
- * Report and manage the state of a Msg_Post dialogs.
- */
-
-/*
- * This is used to report a MsgPost is opening.
- * This is the non-localized version. It passes the original format string
- * and a list of vararg-style parameters.
- *
- * See VixMsgOpenMsgPostEventLocalized for the localized version.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgOpenMsgPostEvent {
-   VixMsgEventHeader          eventHeader;
-
-   int32                      dialogType;
-   uint64                     dialogCookie;
-   int32                      dialogOptions;
-
-   int32                      severity;
-   int32                      defaultAnswer;
-   int32                      percent;
-   int32                      cancelButton;
-   int32                      hintOptions;
-
-   uint32                     localeStrLength;
-   int32                      numMessages;
-   int32                      numButtons;
-
-   /*
-    * Followed by:
-    *       A locale string (a null-terminated string)
-    *       A list of messages, each is stored in one VixMsgDialogStr.
-    *       A list of button strings (each is a null-terminated string.
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgOpenMsgPostEvent;
-
-/*
- * These are the flags set in the dialogOptions field.
- */
-enum VixMsgPostStateValues {
-   VIX_COMMAND_DIALOG_OPTIONS_VMX_IS_BLOCKED       = 0x01,
-};
-
-
-/*
- * This is one string in the message. It corresponds to a
- * single Msg_List object.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgDialogStr {
-   uint32         idLength;
-   uint32         formatLength;
-   int32          numArgs;
-   /*
-    * Followed by:
-    *       The ID string (with NULL terminator)
-    *       The format string (with NULL terminator)
-    *       A list of arguments, each is one VixMsgDialogStrArg.
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgDialogStr;
-
-
-/*
- * This is one argument to the message. It corresponds to a
- * single MsgFmt_Arg object.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgDialogStrArg {
-   int32          argType;
-   uint32         argSize;
-   /*
-    * Followed by the actual argument data.
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgDialogStrArg;
-
-
-/*
- * This is used to report a MsgPost is closing.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgCloseUIDialogEvent {
-   VixMsgEventHeader          eventHeader;
-
-   uint64                     dialogCookie;
-   int32                      numMessages;
-
-   /*
-    * Followed by:
-    *       A list of strings, each is one MsgPost Id.
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgCloseUIDialogEvent;
-
-
-/*
- * Answer a Msg_Post post/hint/question
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgAnswerMsgPost {
-   VixCommandRequestHeader   header;
-
-   uint64                    dialogCookie;
-
-   int32                     options;
-
-   int32                     answer;
-   void                      *progressState;
-
-   uint32                    idStrSize;
-   uint32                    propertyListBufferSize;
-
-   /*
-    * Followed by:
-    *       msgIdStr.
-    *       The serialized properties
-    */
-}
-#include "vmware_pack_end.h"
-VixMsgAnswerMsgPost;
-
-
-
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgSetLocaleRequest {
-   VixCommandRequestHeader header;
-
-   int32                   localeOptions;
-   
-   uint32                  localeStrLength;
-   char                    localeStr[1];
-   // This is followed by the country code string.
-}
-#include "vmware_pack_end.h"
-VixMsgSetLocaleRequest;
-
-
-
-/*
- * This is used to report progress.
- */
-typedef
-#include "vmware_pack_begin.h"
-struct VixMsgLazyProgressEvent {
-   VixMsgEventHeader          eventHeader;
-
-   uint64                     dialogCookie;
-   int32                      percent;
-}
-#include "vmware_pack_end.h"
-VixMsgLazyProgressEvent;
-
 
 
 /*
@@ -2118,7 +1821,7 @@ VixMsgPauseStateChangedEvent;
 typedef
 #include "vmware_pack_begin.h"
 struct VixMsgWaitForUserActionRequest {
-   VixCommandResponseHeader   header;
+   VixCommandRequestHeader    header;
 
    int32                      userType;
    int32                      userAction;
@@ -2151,6 +1854,54 @@ struct VixMsgWaitForUserActionResponse {
 VixMsgWaitForUserActionResponse;
 
 
+/*
+ * **********************************************************
+ * List filesystems
+ */
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandListFileSystemsRequest {
+   VixCommandRequestHeader    header;
+
+   uint32                     options;
+   uint32                     propertyListSize;
+}
+#include "vmware_pack_end.h"
+VixCommandListFileSystemsRequest;
+
+/*
+ * **********************************************************
+ * Acquire Credentials.
+ */
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandAcquireCredentialsRequest {
+   VixCommandRequestHeader    header;
+
+   int64                      sessionID;
+}
+#include "vmware_pack_end.h"
+VixCommandAcquireCredentialsRequest;
+
+/*
+ * **********************************************************
+ * A simple request packet that contains an options field and a
+ * property list.
+ */
+
+typedef
+#include "vmware_pack_begin.h"
+struct VixCommandGenericRequest {
+   VixCommandRequestHeader    header;
+
+   uint32                     options;
+   uint32                     propertyListSize;
+   // This is followed by the buffer of serialized properties
+}
+#include "vmware_pack_end.h"
+VixCommandGenericRequest;
 
 
 /*
@@ -2182,6 +1933,14 @@ typedef enum VixCommandSecurityCategory {
     * commands.
     */
    VIX_COMMAND_CATEGORY_PRIVILEGED,
+
+   /*
+    * A command that may or may not be privileged. Usually, extra inspection
+    * of the payload is required to make the determination. This should be
+    * used sparingly, since must always be accompanied by "deep packet
+    * inspection" code in the VMX (mainDispatch.c).
+    */
+   VIX_COMMAND_CATEGORY_MIXED,
 } VixCommandSecurityCategory;
 
 /*
@@ -2203,8 +1962,8 @@ enum {
    VIX_COMMAND_VM_RESET                         = 2,
    VIX_COMMAND_VM_SUSPEND                       = 3,
    VIX_COMMAND_RUN_PROGRAM                      = 4,
-   VIX_COMMAND_GET_PROPERTY                     = 5,
-   VIX_COMMAND_SET_PROPERTY                     = 6,
+   /* DEPRECATED VIX_COMMAND_GET_PROPERTY                     = 5, */
+   /* DEPRECATED VIX_COMMAND_SET_PROPERTY                     = 6, */
    VIX_COMMAND_KEYSTROKES                       = 7,
    VIX_COMMAND_READ_REGISTRY                    = 8,
    VIX_COMMAND_WRITE_REGISTRY                   = 10,
@@ -2225,15 +1984,15 @@ enum {
    VIX_COMMAND_CANCEL_INSTALL_TOOLS             = 26,
    VIX_COMMAND_UPGRADE_VIRTUAL_HARDWARE         = 27,
    VIX_COMMAND_SET_NIC_BANDWIDTH                = 28,
-   VIX_COMMAND_CREATE_DISK                      = 29,
-   VIX_COMMAND_CREATE_FLOPPY                    = 30,
+   /* DEPRECATED VIX_COMMAND_CREATE_DISK                      = 29, */
+   /* DEPRECATED VIX_COMMAND_CREATE_FLOPPY                    = 30, */
    VIX_COMMAND_RELOAD_VM                        = 31,
    VIX_COMMAND_DELETE_VM                        = 32,
-   VIX_COMMAND_SYNCDRIVER_FREEZE                = 33,
-   VIX_COMMAND_SYNCDRIVER_THAW                  = 34,
-   VIX_COMMAND_HOT_ADD_DISK                     = 35,
-   VIX_COMMAND_HOT_REMOVE_DISK                  = 36,
-   VIX_COMMAND_SET_GUEST_PRINTER                = 37,
+   /* DEPRECATED VIX_COMMAND_SYNCDRIVER_FREEZE                = 33, */
+   /* DEPRECATED VIX_COMMAND_SYNCDRIVER_THAW                  = 34, */
+   /* DEPRECATED VIX_COMMAND_HOT_ADD_DISK                     = 35, */
+   /* DEPRECATED VIX_COMMAND_HOT_REMOVE_DISK                  = 36, */
+   /* DEPRECATED VIX_COMMAND_SET_GUEST_PRINTER                = 37, */
    VIX_COMMAND_WAIT_FOR_TOOLS                   = 38,
    VIX_COMMAND_CREATE_RUNNING_VM_SNAPSHOT       = 39,
    VIX_COMMAND_CONSOLIDATE_RUNNING_VM_SNAPSHOT  = 40,
@@ -2244,17 +2003,17 @@ enum {
    VIX_COMMAND_ADD_SHARED_FOLDER                = 45,
    VIX_COMMAND_RUN_SCRIPT_IN_GUEST              = 46,
    VIX_COMMAND_OPEN_VM                          = 47,
-   VIX_COMMAND_GET_DISK_PROPERTIES              = 48,
-   VIX_COMMAND_OPEN_URL                         = 49,
+   /* DEPRECATED VIX_COMMAND_GET_DISK_PROPERTIES              = 48, */
+   /* DEPRECATED VIX_COMMAND_OPEN_URL                         = 49, */
    VIX_COMMAND_GET_HANDLE_STATE                 = 50,
-   VIX_COMMAND_SET_HANDLE_STATE                 = 51,
+   /* DEPRECATED VIX_COMMAND_SET_HANDLE_STATE                 = 51, */
    VIX_COMMAND_CREATE_WORKING_COPY              = 55, // DELETE this when we switch remote foundry to VIM
    VIX_COMMAND_DISCARD_WORKING_COPY             = 56, // DELETE this when we switch remote foundry to VIM
    VIX_COMMAND_SAVE_WORKING_COPY                = 57, // DELETE this when we switch remote foundry to VIM
    VIX_COMMAND_CAPTURE_SCREEN                   = 58,
-   VIX_COMMAND_GET_VMDB_VALUES                  = 59,
-   VIX_COMMAND_SET_VMDB_VALUES                  = 60,
-   VIX_COMMAND_READ_XML_FILE                    = 61,
+   /* DEPRECATED VIX_COMMAND_GET_VMDB_VALUES                  = 59, */
+   /* DEPRECATED VIX_COMMAND_SET_VMDB_VALUES                  = 60, */
+   /* DEPRECATED VIX_COMMAND_READ_XML_FILE                    = 61, */
    VIX_COMMAND_GET_TOOLS_STATE                  = 62,
    VIX_COMMAND_CHANGE_SCREEN_RESOLUTION         = 69,
    VIX_COMMAND_DIRECTORY_EXISTS                 = 70,
@@ -2272,7 +2031,7 @@ enum {
    VIX_CREATE_SESSION_KEY_COMMAND               = 83,
    VMXI_HGFS_SEND_PACKET_COMMAND                = 84,
    VIX_COMMAND_KILL_PROCESS                     = 85,
-   VIX_VM_FORK_COMMAND                          = 86,
+   /* DEPRECATED VIX_VM_FORK_COMMAND                          = 86, */
    VIX_COMMAND_LOGOUT_IN_GUEST                  = 87,
    VIX_COMMAND_READ_VARIABLE                    = 88,
    VIX_COMMAND_WRITE_VARIABLE                   = 89,
@@ -2294,7 +2053,7 @@ enum {
    VIX_COMMAND_VPROBE_LOAD                      = 107,
    VIX_COMMAND_VPROBE_RESET                     = 108,
 
-   VIX_COMMAND_LIST_USB_DEVICES                 = 109,
+   /* DEPRECATED VIX_COMMAND_LIST_USB_DEVICES                 = 109, */
    VIX_COMMAND_CONNECT_HOST                     = 110,
 
    VIX_COMMAND_CREATE_LINKED_CLONE              = 112,
@@ -2315,22 +2074,22 @@ enum {
 
    VIX_COMMAND_VM_PAUSE                         = 122,
    VIX_COMMAND_VM_UNPAUSE                       = 123,
-   VIX_COMMAND_GET_SNAPSHOT_LOG_INFO            = 124,
-   VIX_COMMAND_SET_REPLAY_SPEED                 = 125,
+   /* DEPRECATED VIX_COMMAND_GET_SNAPSHOT_LOG_INFO            = 124, */
+   /* DEPRECATED VIX_COMMAND_SET_REPLAY_SPEED                 = 125, */
 
-   VIX_COMMAND_ANSWER_USER_MESSAGE              = 126,
-   VIX_COMMAND_SET_CLIENT_LOCALE                = 127,
+   /* DEPRECATED VIX_COMMAND_ANSWER_USER_MESSAGE              = 126, */
+   /* DEPRECATED VIX_COMMAND_SET_CLIENT_LOCALE                = 127, */
 
    VIX_COMMAND_GET_PERFORMANCE_DATA             = 128,
 
-   VIX_COMMAND_REFRESH_RUNTIME_PROPERTIES       = 129,
+   /* DEPRECATED VIX_COMMAND_REFRESH_RUNTIME_PROPERTIES       = 129, */
 
    VIX_COMMAND_GET_SNAPSHOT_SCREENSHOT          = 130,
-   VIX_COMMAND_ADD_TIMEMARKER                   = 131,
+   /* DEPRECATED VIX_COMMAND_ADD_TIMEMARKER                   = 131, */
 
    VIX_COMMAND_WAIT_FOR_USER_ACTION_IN_GUEST    = 132,
-   VIX_COMMAND_VMDB_END_TRANSACTION             = 133,
-   VIX_COMMAND_VMDB_SET                         = 134,
+   /* DEPRECATED VIX_COMMAND_VMDB_END_TRANSACTION             = 133, */
+   /* DEPRECATED VIX_COMMAND_VMDB_SET                         = 134, */
 
    VIX_COMMAND_CHANGE_VIRTUAL_HARDWARE          = 135,
 
@@ -2343,20 +2102,20 @@ enum {
    VIX_COMMAND_DEBUGGER_DETACH                  = 141,
    VIX_COMMAND_DEBUGGER_SEND_COMMAND            = 142,
 
-   VIX_COMMAND_GET_RECORD_STATE                 = 143,
-   VIX_COMMAND_SET_RECORD_STATE                 = 144,
-   VIX_COMMAND_REMOVE_RECORD_STATE              = 145,
-   VIX_COMMAND_GET_REPLAY_STATE                 = 146,
-   VIX_COMMAND_SET_REPLAY_STATE                 = 147,
-   VIX_COMMAND_REMOVE_REPLAY_STATE              = 148,
+   /* DEPRECATED VIX_COMMAND_GET_RECORD_STATE                 = 143, */
+   /* DEPRECATED VIX_COMMAND_SET_RECORD_STATE                 = 144, */
+   /* DEPRECATEDVIX_COMMAND_REMOVE_RECORD_STATE              = 145, */
+   /* VIX_COMMAND_GET_REPLAY_STATE                 = 146, */
+   /* VIX_COMMAND_SET_REPLAY_STATE                 = 147, */
+   /* VIX_COMMAND_REMOVE_REPLAY_STATE              = 148, */
 
-   VIX_COMMAND_CANCEL_USER_PROGRESS_MESSAGE     = 150,
+   /* DEPRECATED VIX_COMMAND_CANCEL_USER_PROGRESS_MESSAGE     = 150, */
    
    VIX_COMMAND_GET_VMX_DEVICE_STATE             = 151,
 
-   VIX_COMMAND_GET_NUM_TIMEMARKERS              = 152,
-   VIX_COMMAND_GET_TIMEMARKER                   = 153,
-   VIX_COMMAND_REMOVE_TIMEMARKER                = 154,
+   /* DEPRECATED VIX_COMMAND_GET_NUM_TIMEMARKERS              = 152, */
+   /* DEPRECATED VIX_COMMAND_GET_TIMEMARKER                   = 153, */
+   /* DEPRECATED VIX_COMMAND_REMOVE_TIMEMARKER                = 154, */
 
    VIX_COMMAND_SET_SNAPSHOT_INFO                = 155,
    VIX_COMMAND_SNAPSHOT_SET_MRU                 = 156,
@@ -2370,13 +2129,13 @@ enum {
    VIX_COMMAND_TRANSFER_REQUEST                 = 161,
    VIX_COMMAND_TRANSFER_FINAL_DATA              = 162,
 
-   VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER        = 163,
-   VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER     = 164,
-   VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER       = 165,
+   /* DEPRECATED VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER        = 163,    */
+   /* DEPRECATED VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER     = 164,    */
+   /* DEPRECATED VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER       = 165,    */
 
-   VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER_VMX    = 166,
-   VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER_VMX = 167,
-   VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER_VMX   = 168,
+   /* DEPRECATED VIX_COMMAND_ADD_ROLLING_SNAPSHOT_TIER_VMX    = 166,    */
+   /* DEPRECATED VIX_COMMAND_REMOVE_ROLLING_SNAPSHOT_TIER_VMX = 167,    */
+   /* DEPRECATED VIX_COMMAND_LIST_ROLLING_SNAPSHOT_TIER_VMX   = 168,    */
 
    VIX_COMMAND_LIST_FILESYSTEMS                 = 169,
 
@@ -2385,10 +2144,47 @@ enum {
    VIX_COMMAND_SUSPEND_AND_RESUME               = 171,
 
    VIX_COMMAND_REMOVE_BULK_SNAPSHOT             = 172,
+
    VIX_COMMAND_COPY_FILE_FROM_READER_TO_GUEST   = 173,
+
    VIX_COMMAND_GENERATE_NONCE                   = 174,
 
    VIX_COMMAND_CHANGE_DISPLAY_TOPOLOGY_MODES    = 175,
+
+   VIX_COMMAND_QUERY_CHILDREN                   = 176,
+
+   VIX_COMMAND_LIST_FILES                       = 177,
+
+   VIX_COMMAND_CREATE_DIRECTORY_EX              = 178,
+
+   VIX_COMMAND_MOVE_GUEST_FILE_EX               = 179,
+
+   VIX_COMMAND_MOVE_GUEST_DIRECTORY             = 180,
+
+   VIX_COMMAND_CREATE_TEMPORARY_FILE_EX         = 181,
+
+   VIX_COMMAND_CREATE_TEMPORARY_DIRECTORY       = 182,
+
+   VIX_COMMAND_SET_GUEST_FILE_ATTRIBUTES        = 183,
+
+   VIX_COMMAND_COPY_FILE_FROM_GUEST_TO_READER   = 184,
+
+   VIX_COMMAND_START_PROGRAM                    = 185,
+
+   VIX_COMMAND_LIST_PROCESSES_EX                = 186,
+
+   VIX_COMMAND_READ_ENV_VARIABLES               = 187,
+
+   VIX_COMMAND_INITIATE_FILE_TRANSFER_FROM_GUEST   = 188,
+   VIX_COMMAND_INITIATE_FILE_TRANSFER_TO_GUEST     = 189,
+
+   VIX_COMMAND_ACQUIRE_CREDENTIALS              = 190,
+   VIX_COMMAND_RELEASE_CREDENTIALS              = 191,
+   VIX_COMMAND_VALIDATE_CREDENTIALS             = 192,
+   VIX_COMMAND_TERMINATE_PROCESS                = 193,
+   VIX_COMMAND_DELETE_GUEST_FILE_EX             = 194,
+   VIX_COMMAND_DELETE_GUEST_DIRECTORY_EX        = 195,
+   VIX_COMMAND_HOT_CHANGE_MONITOR_TYPE          = 196,
 
    /*
     * HOWTO: Adding a new Vix Command. Step 2a.
@@ -2398,22 +2194,13 @@ enum {
     * When people add new command id's in different tree, they may collide and use
     * the same ID values. This can merge without conflicts, and cause runtime bugs.
     * Once a new command is added here, a command info field needs to be added
-    * in bora/lib/foundryMsg. as well.
+    * in bora/lib/foundryMsg/foundryMsg.c as well.
     */
-   VIX_COMMAND_LAST_NORMAL_COMMAND              = 176,
+   VIX_COMMAND_LAST_NORMAL_COMMAND              = 197,
 
    VIX_TEST_UNSUPPORTED_TOOLS_OPCODE_COMMAND    = 998,
    VIX_TEST_UNSUPPORTED_VMX_OPCODE_COMMAND      = 999,
 };
-
-   
-
-/*
- * These are the command names that are passed through VMDB. These correspond
- * to the TestCommandType values.
- */
-#define VIX_VMDBCOMMAND_SET_GUEST_PRINTER       "SetGuestPrinter"
-#define VIX_VMDBCOMMAND_OPEN_URL                "OpenUrl"
 
 
 /*
@@ -2422,12 +2209,9 @@ enum {
  */
 #define VIX_BACKDOOR_COMMAND_VERSION               "Vix_1_"
 #define VIX_BACKDOORCOMMAND_RUN_PROGRAM            VIX_BACKDOOR_COMMAND_VERSION"Run_Program"
-#define VIX_BACKDOORCOMMAND_SET_GUEST_PRINTER      VIX_BACKDOOR_COMMAND_VERSION"Printer_Set"
 #define VIX_BACKDOORCOMMAND_SYNCDRIVER_FREEZE      VIX_BACKDOOR_COMMAND_VERSION"SyncDriver_Freeze"
 #define VIX_BACKDOORCOMMAND_SYNCDRIVER_THAW        VIX_BACKDOOR_COMMAND_VERSION"SyncDriver_Thaw"
-#define VIX_BACKDOORCOMMAND_OPEN_URL               VIX_BACKDOOR_COMMAND_VERSION"Open_Url"
 #define VIX_BACKDOORCOMMAND_GET_PROPERTIES         VIX_BACKDOOR_COMMAND_VERSION"Get_ToolsProperties"
-#define VIX_BACKDOORCOMMAND_CHECK_USER_ACCOUNT     VIX_BACKDOOR_COMMAND_VERSION"Check_User_Account"
 #define VIX_BACKDOORCOMMAND_SEND_HGFS_PACKET       VIX_BACKDOOR_COMMAND_VERSION"Send_Hgfs_Packet"
 #define VIX_BACKDOORCOMMAND_UNRECOGNIZED_COMMAND   VIX_BACKDOOR_COMMAND_VERSION"Unrecognized_Command"
 #define VIX_BACKDOORCOMMAND_COMMAND                VIX_BACKDOOR_COMMAND_VERSION"Relayed_Command"
@@ -2440,7 +2224,7 @@ enum {
  */
 enum VixToolsFeatures {
    VIX_TOOLSFEATURE_SUPPORT_GET_HANDLE_STATE   = 0x0001,
-   VIX_TOOLSFEATURE_SUPPORT_OPEN_URL           = 0x0002,
+   /* VIX_TOOLSFEATURE_SUPPORT_OPEN_URL           = 0x0002, Removed in version 1.11*/
 };
 
 
@@ -2455,10 +2239,8 @@ enum  {
  * to the VMX.
  */
 #define VIX_BACKDOORCOMMAND_RUN_PROGRAM_DONE    "Run_Program_Done"
-#define VIX_BACKDOORCOMMAND_PROXY_MESSAGE       "VIX_Proxy_Msg"
 
 
-#define VIX_HOST_FOR_THIS_GUEST_OS "self"
 #define VIX_FEATURE_UNKNOWN_VALUE "Unknown"
 
 
@@ -2482,6 +2264,35 @@ enum VixRunProgramResultValues {
 #define VIX_WINDOWSREGISTRY_VMWARE_KEY_RUNNING_VM_LIST VIX_WINDOWSREGISTRY_VMWARE_KEY "\\" VIX_WINDOWSREGISTRY_RUNNING_VM_LIST
 #endif
 
+
+/*
+ * This is used to denote that the contents of a VIX XML-like response
+ * string has been escaped. Old Tools did not escape the contents.
+ * This tag is only used for existing commands that did not originally perform
+ * escaping. Any new command must always escape any strings passed in XML.
+ * See ListProcessesInGuest as an example.
+ * The protocol works as follows:
+ * 1) A client library that internally knows how to handle escaped XML opts in
+ *    by including the VIX_REQUESTMSG_ESCAPE_XML_DATA in relevent requests.
+ * 2) Tools that understands the VIX_REQUESTMSG_ESCAPE_XML_DATA flag sees that
+ *    it is set in the request, and then escapes all string data within the
+ *    XML response. To indicate to the client that it has understood the
+ *    request, it include the VIX_XML_ESCAPED_TAG in the response (at the
+ *    begining of the response).
+ * 3) When the client library receives the response, it searches for the
+ *    VIX_XML_ESCAPED_TAG. If it is present, it then unescapes all string
+ *    data in the response. If the tag is not present, the client library
+ *    assumes that the Tools did not understand VIX_REQUESTMSG_ESCAPE_XML_DATA
+ *    and that the string data is not escaped.
+ * The following characters are escaped: '<', '>', and '%'.
+ * For new commands (starting with those released in M/N for the vSphere
+ * guest ops project), the escaping is exactly the same, but the
+ * VIX_REQUESTMSG_ESCAPE_XML_DATA flag and the VIX_XML_ESCAPED_TAG are not
+ * used, since both ends expect escaping.
+ */
+#define VIX_XML_ESCAPED_TAG   "<escaped/>"
+
+#define VIX_XML_ESCAPE_CHARACTER '%'
 
 
 /*
@@ -2527,16 +2338,17 @@ VixError VixMsg_ParseWriteVariableRequest(VixMsgWriteVariableRequest *msg,
                                           char **valueName,
                                           char **value);
 
-char *VixMsg_ObfuscateNamePassword(const char *userName,
-                                   const char *password);
+VixError VixMsg_ObfuscateNamePassword(const char *userName,
+                                      const char *password,
+                                      char **result);
 
-Bool VixMsg_DeObfuscateNamePassword(const char *packagedName,
-                                    char **userNameResult,
-                                    char **passwordResult);
+VixError VixMsg_DeObfuscateNamePassword(const char *packagedName,
+                                        char **userNameResult,
+                                        char **passwordResult);
 
-char *VixMsg_EncodeString(const char *str);
+VixError VixMsg_EncodeString(const char *str, char **result);
 
-char *VixMsg_DecodeString(const char *str);
+VixError VixMsg_DecodeString(const char *str, char **result);
 
 Bool VixMsg_ValidateCommandInfoTable(void);
 
@@ -2552,6 +2364,120 @@ VixCommandSecurityCategory VixMsg_GetCommandSecurityCategory(int opCode);
 enum {
    VIX_PROPERTY_VM_POWER_OFF_TO_SNAPSHOT_UID       = 5102,
 };
+
+VixError VixMsg_AllocGenericRequestMsg(int opCode,
+                                       uint64 cookie,
+                                       int credentialType,
+                                       const char *userNamePassword,
+                                       int options,
+                                       VixPropertyListImpl *propertyList,
+                                       VixCommandGenericRequest **request);
+
+VixError VixMsg_ParseGenericRequestMsg(const VixCommandGenericRequest *request,
+                                       int *options,
+                                       VixPropertyListImpl *propertyList);
+
+VixError
+VixMsg_ParseSimpleResponseWithString(const VixCommandResponseHeader *response,
+                                     const char **result);
+
+void *VixMsg_MallocClientData(size_t size);
+void *VixMsg_ReallocClientData(void *ptr, size_t size);
+char *VixMsg_StrdupClientData(const char *s, Bool *allocateFailed);
+
+/*
+ * Parser state used by VMAutomationMsgParser* group of functions.
+ */
+typedef struct {
+   const char *currentPtr;
+   const char *endPtr;
+} VMAutomationMsgParser;
+
+/* Keep the original type name around all the old code can stay the same. */
+typedef VMAutomationMsgParser VMAutomationRequestParser;
+
+
+#define VMAutomationRequestParserInit VMAutomationMsgParserInitRequest
+#define VMAutomationMsgParserInitRequest(state, msg, fixedLength) \
+   __VMAutomationMsgParserInitRequest(__FUNCTION__, __LINE__, state, msg, fixedLength)
+VixError
+__VMAutomationMsgParserInitRequest(const char *caller,
+                                   unsigned int line,
+                                   VMAutomationMsgParser *state,
+                                   const struct VixCommandRequestHeader *msg,
+                                   size_t fixedLength);
+
+#define VMAutomationMsgParserInitResponse(state, msg, fixedLength) \
+   __VMAutomationMsgParserInitResponse(__FUNCTION__, __LINE__, state, msg, fixedLength)
+VixError
+__VMAutomationMsgParserInitResponse(const char *caller,
+                                    unsigned int line,
+                                    VMAutomationMsgParser *state,
+                                    const struct VixCommandResponseHeader *msg,
+                                    size_t fixedLength);
+
+#define VMAutomationRequestParserGetRemainingData \
+   VMAutomationMsgParserGetRemainingData
+const void *
+VMAutomationMsgParserGetRemainingData(VMAutomationMsgParser *state,
+                                      size_t *length);
+
+#define VMAutomationRequestParserGetData VMAutomationMsgParserGetData
+#define VMAutomationMsgParserGetData(state, length, result) \
+   __VMAutomationMsgParserGetData(__FUNCTION__, __LINE__,               \
+                                  state, length, (const char **)result)
+VixError __VMAutomationMsgParserGetData(const char *caller,
+                                        unsigned int line,
+                                        VMAutomationMsgParser *state,
+                                        size_t length,
+                                        const char **result);
+
+#define VMAutomationRequestParserGetOptionalString \
+   VMAutomationMsgParserGetOptionalString
+#define VMAutomationMsgParserGetOptionalString(state, length, result) \
+   __VMAutomationMsgParserGetOptionalString(__FUNCTION__, __LINE__,     \
+                                            state, length, result)
+VixError __VMAutomationMsgParserGetOptionalString(const char *caller,
+                                                  unsigned int line,
+                                                  VMAutomationMsgParser *state,
+                                                  size_t length,
+                                                  const char **result);
+
+#define VMAutomationRequestParserGetOptionalStrings \
+   VMAutomationMsgParserGetOptionalStrings
+#define VMAutomationMsgParserGetOptionalStrings(state, count, length,     \
+           result)                                                            \
+   __VMAutomationMsgParserGetOptionalStrings(__FUNCTION__, __LINE__,      \
+                                             state, count, length, result)
+VixError __VMAutomationMsgParserGetOptionalStrings
+   (const char *caller,
+    unsigned int line,
+    VMAutomationMsgParser *state,
+    uint32 count,
+    size_t length,
+    const char **result);
+
+#define VMAutomationRequestParserGetString VMAutomationMsgParserGetString
+#define VMAutomationMsgParserGetString(state, length, result) \
+   __VMAutomationMsgParserGetString(__FUNCTION__, __LINE__,             \
+                                    state, length, result)
+VixError __VMAutomationMsgParserGetString(const char *caller,
+                                          unsigned int line,
+                                          VMAutomationMsgParser *state,
+                                          size_t length,
+                                          const char **result);
+
+#define VMAutomationRequestParserGetPropertyList \
+   VMAutomationMsgParserGetPropertyList
+#define VMAutomationMsgParserGetPropertyList(state, length, propList) \
+   __VMAutomationMsgParserGetPropertyList(__FUNCTION__, __LINE__,       \
+                                          state, length, propList)
+VixError
+__VMAutomationMsgParserGetPropertyList(const char *caller,
+                                       unsigned int line,
+                                       VMAutomationMsgParser *state,
+                                       size_t length,
+                                       VixPropertyListImpl *propList);
 
 #endif   // VIX_HIDE_FROM_JAVA
 

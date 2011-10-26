@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2003 VMware, Inc. All rights reserved.
+ * Copyright (C) 2003-2010 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -16,6 +16,48 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of VMware Inc. nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission of VMware Inc.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *********************************************************/
+
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * vm_basic_defs.h --
  *
@@ -26,10 +68,9 @@
 #define _VM_BASIC_DEFS_H_
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMMON
-#define INCLUDE_ALLOW_VMNIXMOD
 #define INCLUDE_ALLOW_VMKERNEL
 #define INCLUDE_ALLOW_VMKDRIVERS
 #define INCLUDE_ALLOW_VMK_MODULE
@@ -45,10 +86,11 @@
 
 #if defined _WIN32 && defined USERLEVEL
    #include <stddef.h>  /*
-                         * We re-define offsetof macro from stddef, make 
-                         * sure that its already defined before we do it
+                         * We redefine offsetof macro from stddef; make 
+                         * sure that it's already defined before we do that.
                          */
    #include <windows.h>	// for Sleep() and LOWORD() etc.
+   #undef GetFreeSpace  // Unpollute preprocessor namespace.
 #endif
 
 
@@ -116,7 +158,8 @@ Max(int a, int b)
  * argument. The range 0..31 is safe.
  */
 
-#define MASK(n)			((1 << (n)) - 1)	/* make an n-bit mask */
+#define MASK(n)		((1 << (n)) - 1)	    /* make an n-bit mask */
+#define MASK64(n)	((CONST64U(1) << (n)) - 1)  /* make an n-bit mask */
 
 #define DWORD_ALIGN(x)          ((((x) + 3) >> 2) << 2)
 #define QWORD_ALIGN(x)          ((((x) + 7) >> 3) << 3)
@@ -150,6 +193,14 @@ Max(int a, int b)
 #define XXCONC(x, y)            XCONC(x, y)
 #define MAKESTR(x)              #x
 #define XSTR(x)                 MAKESTR(x)
+
+
+/*
+ * Wide versions of string constants.
+ */
+
+#define WSTR_(X)     L ## X
+#define WSTR(X)      WSTR_(X)
 
 
 /*
@@ -196,11 +247,11 @@ Max(int a, int b)
 #endif
 
 #ifndef BYTES_2_PAGES
-#define BYTES_2_PAGES(_nbytes) ((_nbytes) >> PAGE_SHIFT)
+#define BYTES_2_PAGES(_nbytes)  ((_nbytes) >> PAGE_SHIFT)
 #endif
 
 #ifndef PAGES_2_BYTES
-#define PAGES_2_BYTES(_npages) (((uint64)(_npages)) << PAGE_SHIFT)
+#define PAGES_2_BYTES(_npages)  (((uint64)(_npages)) << PAGE_SHIFT)
 #endif
 
 #ifndef MBYTES_2_PAGES
@@ -209,6 +260,14 @@ Max(int a, int b)
 
 #ifndef PAGES_2_MBYTES
 #define PAGES_2_MBYTES(_npages) ((_npages) >> (20 - PAGE_SHIFT))
+#endif
+
+#ifndef BYTES_2_MBYTES
+#define BYTES_2_MBYTES(_nbytes) ((_nbytes) >> 20)
+#endif
+
+#ifndef MBYTES_2_BYTES
+#define MBYTES_2_BYTES(_nbytes) ((uint64)(_nbytes) << 20)
 #endif
 
 #ifndef VM_PAE_LARGE_PAGE_SHIFT
@@ -225,6 +284,10 @@ Max(int a, int b)
 
 #ifndef VM_PAE_LARGE_2_SMALL_PAGES
 #define VM_PAE_LARGE_2_SMALL_PAGES (BYTES_2_PAGES(VM_PAE_LARGE_PAGE_SIZE))
+#endif
+
+#ifndef NR_MPNS_PER_PAGE
+#define NR_MPNS_PER_PAGE (PAGE_SIZE / sizeof(MPN))
 #endif
 
 /*
@@ -281,38 +344,25 @@ void *_ReturnAddress(void);
 #ifdef __GNUC__
 #ifndef sun
 
-/*
- * Get the frame pointer. We use this assembly hack instead of
- * __builtin_frame_address() due to a bug introduced in gcc 4.1.1
- */
 static INLINE_SINGLE_CALLER uintptr_t
 GetFrameAddr(void)
 {
    uintptr_t bp;
-#if    __GNUC__ < 4 \
-    || (__GNUC__ == 4 && __GNUC_MINOR__ == 0) \
-    || (__GNUC__ == 4 && __GNUC_MINOR__ == 2 && __GNUC_PATCHLEVEL__ == 1)
+#if  !(__GNUC__ == 4 && (__GNUC_MINOR__ == 0 || __GNUC_MINOR__ == 1))
    bp = (uintptr_t)__builtin_frame_address(0);
-#elif __GNUC__ == 4 && __GNUC_MINOR__ == 1 && __GNUC_PATCHLEVEL__ <= 3
-#  if defined(VMM64) || defined(VM_X86_64)
-     __asm__ __volatile__("movq %%rbp, %0\n" : "=g" (bp));
-#  else
-     __asm__ __volatile__("movl %%ebp, %0\n" : "=g" (bp));
-#  endif
 #else
-   __asm__ __volatile__(
-#ifdef __linux__
-      ".print \"This newer version of GCC may or may not have the "
-               "__builtin_frame_address bug.  Need to update this. "
-               "See bug 147638.\"\n"
-      ".abort"
-#else /* MacOS */
-      ".abort \"This newer version of GCC may or may not have the "
-               "__builtin_frame_address bug.  Need to update this. "
-               "See bug 147638.\"\n"
-#endif
-      : "=g" (bp)
-   );
+   /*
+    * We use this assembly hack due to a bug discovered in gcc 4.1.1.
+    * The bug was fixed in 4.2.0; assume it originated with 4.0.
+    * PR147638, PR554369.
+    */
+     __asm__ __volatile__(
+#  if defined(VM_X86_64)
+                          "movq %%rbp, %0\n"
+#  else
+                          "movl %%ebp, %0\n"
+#  endif
+                          : "=g" (bp));
 #endif
    return bp;
 }
@@ -389,10 +439,12 @@ sleep(unsigned int sec)
    Sleep(sec * 1000);
 }
 
-static INLINE void
+static INLINE int
 usleep(unsigned long usec)
 {
    Sleep(CEILING(usec, 1000));
+
+   return 0;
 }
 
 typedef int pid_t;
@@ -472,23 +524,24 @@ typedef int pid_t;
 #endif
 #endif
 
-/* 
- * Convenience macro for COMMUNITY_SOURCE
- */
-#undef EXCLUDE_COMMUNITY_SOURCE
-#ifdef COMMUNITY_SOURCE
-   #define EXCLUDE_COMMUNITY_SOURCE(x) 
-#else
-   #define EXCLUDE_COMMUNITY_SOURCE(x) x
+#if defined __linux__ && !defined __KERNEL__ && !defined MODULE && \
+                         !defined VMM && !defined FROBOS && !defined __ANDROID__
+#include <features.h>
+#if __GLIBC_PREREQ(2, 1) && !defined GLIBC_VERSION_21
+#define GLIBC_VERSION_21
 #endif
-
-#undef COMMUNITY_SOURCE_INTEL_SECRET
-#if !defined(COMMUNITY_SOURCE) || defined(INTEL_SOURCE)
-/*
- * It's ok to include INTEL_SECRET source code for non-commsrc,
- * or for drops directed at Intel.
- */
-   #define COMMUNITY_SOURCE_INTEL_SECRET
+#if __GLIBC_PREREQ(2, 2) && !defined GLIBC_VERSION_22
+#define GLIBC_VERSION_22
+#endif
+#if __GLIBC_PREREQ(2, 3) && !defined GLIBC_VERSION_23
+#define GLIBC_VERSION_23
+#endif
+#if __GLIBC_PREREQ(2, 4) && !defined GLIBC_VERSION_24
+#define GLIBC_VERSION_24
+#endif
+#if __GLIBC_PREREQ(2, 5) && !defined GLIBC_VERSION_25
+#define GLIBC_VERSION_25
+#endif
 #endif
 
 /*
@@ -496,23 +549,12 @@ typedef int pid_t;
  */
 
 #undef DEBUG_ONLY
-#undef SL_DEBUG_ONLY
-#undef VMX86_SL_DEBUG
 #ifdef VMX86_DEBUG
 #define vmx86_debug      1
 #define DEBUG_ONLY(x)    x
-/*
- * Be very, very, very careful with SL_DEBUG. Pls ask ganesh or min before 
- * using it.
- */
-#define VMX86_SL_DEBUG
-#define vmx86_sl_debug   1
-#define SL_DEBUG_ONLY(x) x
 #else
 #define vmx86_debug      0
 #define DEBUG_ONLY(x)
-#define vmx86_sl_debug   0
-#define SL_DEBUG_ONLY(x)
 #endif
 
 #ifdef VMX86_STATS
@@ -539,12 +581,20 @@ typedef int pid_t;
 #define LOG_ONLY(x)
 #endif
 
-#ifdef VMX86_VMM_SERIAL_LOGGING
-#define vmx86_vmm_serial_log     1
-#define VMM_SERIAL_LOG_ONLY(x)   x
+#ifdef VMX86_BETA
+#define vmx86_beta     1
+#define BETA_ONLY(x)   x
 #else
-#define vmx86_vmm_serial_log     0
-#define VMM_SERIAL_LOG_ONLY(x)
+#define vmx86_beta     0
+#define BETA_ONLY(x)
+#endif
+
+#ifdef VMX86_RELEASE
+#define vmx86_release   1
+#define RELEASE_ONLY(x) x
+#else
+#define vmx86_release   0
+#define RELEASE_ONLY(x) 
 #endif
 
 #ifdef VMX86_SERVER
@@ -581,6 +631,20 @@ typedef int pid_t;
 #define POSIX_ONLY(x) x
 #endif
 
+#ifdef __linux__
+#define LINUX_ONLY(x) x
+#else
+#define LINUX_ONLY(x)
+#endif
+
+#ifdef __APPLE__
+#define vmx86_apple 1
+#define APPLE_ONLY(x) x
+#else
+#define vmx86_apple 0
+#define APPLE_ONLY(x) 
+#endif
+
 #ifdef VMM
 #define VMM_ONLY(x) x
 #define USER_ONLY(x)
@@ -603,7 +667,7 @@ typedef int pid_t;
 #ifdef _WIN32
 #define VMW_INVALID_HANDLE INVALID_HANDLE_VALUE
 #else
-#define VMW_INVALID_HANDLE (-1)
+#define VMW_INVALID_HANDLE (-1LL)
 #endif
 
 #ifdef _WIN32
@@ -627,5 +691,29 @@ typedef int pid_t;
 #endif
 #endif
 #endif // _WIN32
+
+#ifdef HOSTED_LG_PG
+#define hosted_lg_pg 1
+#else
+#define hosted_lg_pg 0
+#endif
+
+/*
+ * Use to initialize cbSize for this structure to preserve < Vista
+ * compatibility.
+ */
+#define NONCLIENTMETRICSINFO_V1_SIZE CCSIZEOF_STRUCT(NONCLIENTMETRICS, \
+                                                     lfMessageFont)
+
+/* This is not intended to be thread-safe. */
+#define DO_ONCE(code)                                                   \
+   do {                                                                 \
+      static Bool _doOnceDone = FALSE;                                  \
+      if (UNLIKELY(!_doOnceDone)) {                                     \
+         _doOnceDone = TRUE;                                            \
+         code;                                                          \
+      }                                                                 \
+   } while (0)
+
 
 #endif // ifndef _VM_BASIC_DEFS_H_

@@ -83,6 +83,10 @@
 #include "codesetOld.h"
 #include "str.h"
 #include "win32util.h"
+#if defined __APPLE__
+#   define LOCATION_WEAK
+#   include "location.h"
+#endif
 
 /*
  * Macros
@@ -90,10 +94,14 @@
 
 #define CODESET_CAN_FALLBACK_ON_NON_ICU TRUE
 
-#if defined(__APPLE__)
-#define POSIX_ICU_DIR DEFAULT_LIBDIRECTORY "/icu"
-#elif !defined(WIN32)
-#define POSIX_ICU_DIR "/etc/vmware/icu"
+#if defined __APPLE__
+#   define POSIX_ICU_DIR DEFAULT_LIBDIRECTORY
+#elif !defined _WIN32
+#   if defined(VMX86_TOOLS)
+#      define POSIX_ICU_DIR "/etc/vmware-tools"
+#   else
+#      define POSIX_ICU_DIR "/etc/vmware"
+#   endif
 #endif
 
 /*
@@ -101,21 +109,22 @@
  * but I don't have time to deal with bora-vmsoft.  -- edward
  */
 
-#define ICU_DATA_FILE "icudt38l.dat"
+#define ICU_DATA_FILE "icudt44l.dat"
 #ifdef _WIN32
-#define ICU_DATA_FILE_DIR "%TCROOT%/noarch/icu-data-3.8-2"
-#else
-#define ICU_DATA_FILE_DIR "/build/toolchain/noarch/icu-data-3.8-2"
+#define ICU_DATA_ITEM "icudt44l"
+#define ICU_DATA_FILE_W XCONC(L, ICU_DATA_FILE)
 #endif
 
+#ifdef VMX86_DEVEL
 #ifdef _WIN32
-#define ICU_DATA_FILE_W XCONC(L, ICU_DATA_FILE)
+#define ICU_DATA_FILE_DIR "%TCROOT%/noarch/icu-data-4.4-1"
 #define ICU_DATA_FILE_DIR_W XCONC(L, ICU_DATA_FILE_DIR)
 #define ICU_DATA_FILE_PATH ICU_DATA_FILE_DIR_W DIRSEPS_W ICU_DATA_FILE_W
 #else
+#define ICU_DATA_FILE_DIR "/build/toolchain/noarch/icu-data-4.4-1"
 #define ICU_DATA_FILE_PATH ICU_DATA_FILE_DIR DIRSEPS ICU_DATA_FILE
 #endif
-
+#endif
 
 /*
  * Variables
@@ -568,14 +577,40 @@ CodeSet_Init(const char *icuDataDir) // IN: ICU data file location in Current co
    }
 #endif // vmx86_devel
 
-   /*
-    * Data file is either in POSIX_ICU_DIR or user specified dir.
-    */
-   if (!icuDataDir) {
-      icuDataDir = POSIX_ICU_DIR;
+   if (icuDataDir) {
+      /* Use the caller-specified ICU data dir. */
+      if (!DynBuf_Append(&dbpath, icuDataDir, strlen(icuDataDir))) {
+         goto exit;
+      }
+   } else {
+      /* Use a default ICU data dir. */
+#   if defined __APPLE__
+      Location_GetLibrary_Type *Location_GetLibrary =
+         Location_GetLibrary_Addr();
+
+      if (Location_GetLibrary) {
+         char *libDir = Location_GetLibrary();
+         Bool success =    libDir
+                        && DynBuf_Append(&dbpath, libDir, strlen(libDir));
+
+         free(libDir);
+         if (!success) {
+            goto exit;
+         }
+      } else
+#   endif
+
+      {
+         if (!DynBuf_Append(&dbpath, POSIX_ICU_DIR, strlen(POSIX_ICU_DIR))) {
+            goto exit;
+         }
+      }
+
+      if (!DynBuf_Append(&dbpath, "/icu", strlen("/icu"))) {
+         goto exit;
+      }
    }
-   if (!DynBuf_Append(&dbpath, icuDataDir, strlen(icuDataDir)) ||
-       !DynBuf_Append(&dbpath, DIRSEPS, strlen(DIRSEPS)) ||
+   if (!DynBuf_Append(&dbpath, DIRSEPS, strlen(DIRSEPS)) ||
        !DynBuf_Append(&dbpath, ICU_DATA_FILE, strlen(ICU_DATA_FILE)) ||
        !DynBuf_Append(&dbpath, "\0", 1)) {
       goto exit;
@@ -604,6 +639,11 @@ found:
       ASSERT(memMappedData);
 
       udata_setCommonData(memMappedData, &uerr);
+      if (uerr != U_ZERO_ERROR) {
+         UnmapViewOfFile(memMappedData);
+         goto exit;
+      }
+      udata_setAppData(ICU_DATA_ITEM, memMappedData, &uerr);
       if (uerr != U_ZERO_ERROR) {
          UnmapViewOfFile(memMappedData);
          goto exit;
@@ -1581,6 +1621,7 @@ CodeSet_IsEncodingSupported(const char *name) // IN
    cv = ucnv_open(name, &uerr);
    if (cv) {
       ucnv_close(cv);
+
       return TRUE;
    }
 
@@ -1607,7 +1648,7 @@ CodeSet_IsEncodingSupported(const char *name) // IN
 
 Bool
 CodeSet_Validate(const char *buf,   // IN: the string
-                 size_t size,	   // IN: length of string
+                 size_t size,	    // IN: length of string
                  const char *code)  // IN: encoding
 {
    UConverter *cv;
@@ -1645,3 +1686,4 @@ CodeSet_Validate(const char *buf,   // IN: the string
 
    return uerr == U_BUFFER_OVERFLOW_ERROR;
 }
+

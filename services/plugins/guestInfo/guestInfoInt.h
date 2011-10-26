@@ -16,15 +16,24 @@
  *
  *********************************************************/
 
+#ifndef _GUESTINFOINT_H_
+#define _GUESTINFOINT_H_
+
 /**
  * @file guestInfoInt.h
  *
  * Declares internal functions of the guestInfo plugin.
  */
 
-#include "guestInfo.h"
 #define G_LOG_DOMAIN "guestinfo"
+#include <glib.h>
+
+#include "guestInfoLib.h"
+
+extern int guestInfoPollInterval;
 
 Bool
 GuestInfo_PerfMon(struct GuestMemInfo *vmStats);
+
+#endif /* _GUESTINFOINT_H_ */
 

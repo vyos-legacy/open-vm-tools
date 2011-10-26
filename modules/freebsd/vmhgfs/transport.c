@@ -73,9 +73,9 @@ HgfsSendOpenDirRequest(HgfsSuperInfo *sip,   // IN: Superinfo pointer
    uint32 reqBufferSize;
    int ret;
 
-   req = HgfsKReq_AllocateRequest(sip->reqs);
+   req = HgfsKReq_AllocateRequest(sip->reqs, &ret);
    if (!req) {
-      return ENOMEM;
+      return ret;
    }
 
    /* Set the correct header values */
@@ -90,7 +90,7 @@ HgfsSendOpenDirRequest(HgfsSuperInfo *sip,   // IN: Superinfo pointer
    request->reserved = 0;
 
    reqSize = HGFS_REQ_PAYLOAD_SIZE_V3(request);
-   reqBufferSize = HGFS_NAME_BUFFER_SIZET(reqSize);
+   reqBufferSize = HGFS_NAME_BUFFER_SIZET(HGFS_PACKET_MAX, reqSize);
 
    /*
     * Convert an input string to utf8 precomposed form, convert it to
@@ -174,10 +174,10 @@ HgfsSendOpenRequest(HgfsSuperInfo *sip,   // IN: Superinfo pointer
    uint32 reqBufferSize;
 
    DEBUG(VM_DEBUG_LOG, "Trace enter.\n");
-   req = HgfsKReq_AllocateRequest(sip->reqs);
+   req = HgfsKReq_AllocateRequest(sip->reqs, &ret);
    if (!req) {
       DEBUG(VM_DEBUG_FAIL, "HgfsKReq_AllocateRequest failed.\n");
-      return ENOMEM;
+      return ret;
    }
 
    requestHeader = (HgfsRequest *)HgfsKReq_GetPayload(req);
@@ -190,7 +190,7 @@ HgfsSendOpenRequest(HgfsSuperInfo *sip,   // IN: Superinfo pointer
    request->reserved2 = 0;
 
    reqSize = HGFS_REQ_PAYLOAD_SIZE_V3(request);
-   reqBufferSize = HGFS_NAME_BUFFER_SIZET(reqSize);
+   reqBufferSize = HGFS_NAME_BUFFER_SIZET(HGFS_PACKET_MAX, reqSize);
    request->mode = openMode;
    request->flags = openFlags;
    DEBUG(VM_DEBUG_COMM, "open flags are %x\n", request->flags);
@@ -276,9 +276,9 @@ HgfsCloseServerDirHandle(HgfsSuperInfo *sip,         // IN: Superinfo pointer
    uint32 repSize;
    int ret;
 
-   req = HgfsKReq_AllocateRequest(sip->reqs);
+   req = HgfsKReq_AllocateRequest(sip->reqs, &ret);
    if (!req) {
-      return ENOMEM;
+      return ret;
    }
 
    /*
@@ -347,9 +347,9 @@ HgfsCloseServerFileHandle(HgfsSuperInfo *sip,         // IN: Superinfo pointer
    uint32 repSize;
    int ret;
 
-   req = HgfsKReq_AllocateRequest(sip->reqs);
+   req = HgfsKReq_AllocateRequest(sip->reqs, &ret);
    if (!req) {
-      return ENOMEM;
+      return ret;
    }
 
    /*

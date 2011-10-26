@@ -32,10 +32,6 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-# We build this library in two flavors:  with X11 and without X11.  This is
-# because the X11 code supports only GuestApp_OpenUrl, and we'd like to not
-# force an X11 dependency on applications that don't need one (e.g., guestd).
-
 VPATH = @srcdir@
 pkgdatadir = $(datadir)/@PACKAGE@
 pkgincludedir = $(includedir)/@PACKAGE@
@@ -55,7 +51,6 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
-@HAVE_X11_TRUE@am__append_1 = libGuestAppX11.la
 subdir = lib/guestApp
 DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -70,17 +65,8 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libGuestApp_la_LIBADD =
-am_libGuestApp_la_OBJECTS = guestApp.lo guestAppPosix.lo
+am_libGuestApp_la_OBJECTS = guestApp.lo
 libGuestApp_la_OBJECTS = $(am_libGuestApp_la_OBJECTS)
-libGuestAppX11_la_LIBADD =
-am__libGuestAppX11_la_SOURCES_DIST = guestApp.c guestAppPosix.c \
-	guestAppPosixX11.c
-am__objects_1 = libGuestAppX11_la-guestApp.lo \
-	libGuestAppX11_la-guestAppPosix.lo
-@HAVE_X11_TRUE@am_libGuestAppX11_la_OBJECTS = $(am__objects_1) \
-@HAVE_X11_TRUE@	libGuestAppX11_la-guestAppPosixX11.lo
-libGuestAppX11_la_OBJECTS = $(am_libGuestAppX11_la_OBJECTS)
-@HAVE_X11_TRUE@am_libGuestAppX11_la_rpath =
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -94,9 +80,8 @@ CCLD = $(CC)
 LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-SOURCES = $(libGuestApp_la_SOURCES) $(libGuestAppX11_la_SOURCES)
-DIST_SOURCES = $(libGuestApp_la_SOURCES) \
-	$(am__libGuestAppX11_la_SOURCES_DIST)
+SOURCES = $(libGuestApp_la_SOURCES)
+DIST_SOURCES = $(libGuestApp_la_SOURCES)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -110,9 +95,12 @@ AWK = @AWK@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
+COMMON_PLUGIN_INSTALLDIR = @COMMON_PLUGIN_INSTALLDIR@
 COMMON_XLIBS = @COMMON_XLIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+CUNIT_CPPFLAGS = @CUNIT_CPPFLAGS@
+CUNIT_LIBS = @CUNIT_LIBS@
 CXX = @CXX@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
@@ -148,6 +136,7 @@ GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
 HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
+HGFS_LIBS = @HGFS_LIBS@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -155,23 +144,18 @@ INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
+INSTVMSG = @INSTVMSG@
 KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
-LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
 LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
-LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
-LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
 LIB_IMPERSONATE_CPPFLAGS = @LIB_IMPERSONATE_CPPFLAGS@
-LIB_MISC_CPPFLAGS = @LIB_MISC_CPPFLAGS@
-LIB_PROC_MGR_CPPFLAGS = @LIB_PROC_MGR_CPPFLAGS@
-LIB_STRING_CPPFLAGS = @LIB_STRING_CPPFLAGS@
 LIB_USER_CPPFLAGS = @LIB_USER_CPPFLAGS@
+LINUXINCLUDE = @LINUXINCLUDE@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
@@ -195,6 +179,8 @@ PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_URL = @PACKAGE_URL@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
 PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
@@ -204,31 +190,29 @@ PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
 RPCGENFLAGS = @RPCGENFLAGS@
+RPCGEN_WRAPPER = @RPCGEN_WRAPPER@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
 SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
 TOOLS_VERSION = @TOOLS_VERSION@
-URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
-URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
 VIX_LIBADD = @VIX_LIBADD@
 VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
 VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
 VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
-VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
-VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XCOMPOSITE_LIBS = @XCOMPOSITE_LIBS@
 XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
+XSM_LIBS = @XSM_LIBS@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
 X_LIBS = @X_LIBS@
 X_PRE_LIBS = @X_PRE_LIBS@
-ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
-ZLIB_LIBS = @ZLIB_LIBS@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
@@ -286,12 +270,8 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-noinst_LTLIBRARIES = libGuestApp.la $(am__append_1)
-libGuestApp_la_SOURCES = guestApp.c guestAppPosix.c
-@HAVE_X11_TRUE@libGuestAppX11_la_SOURCES = $(libGuestApp_la_SOURCES) \
-@HAVE_X11_TRUE@	guestAppPosixX11.c
-@HAVE_X11_TRUE@libGuestAppX11_la_CPPFLAGS = -DGUESTAPP_HAS_X11 \
-@HAVE_X11_TRUE@	@GTK_CPPFLAGS@ $(am__empty)
+noinst_LTLIBRARIES = libGuestApp.la
+libGuestApp_la_SOURCES = guestApp.c
 all: all-am
 
 .SUFFIXES:
@@ -337,8 +317,6 @@ clean-noinstLTLIBRARIES:
 	done
 libGuestApp.la: $(libGuestApp_la_OBJECTS) $(libGuestApp_la_DEPENDENCIES) 
 	$(LINK)  $(libGuestApp_la_OBJECTS) $(libGuestApp_la_LIBADD) $(LIBS)
-libGuestAppX11.la: $(libGuestAppX11_la_OBJECTS) $(libGuestAppX11_la_DEPENDENCIES) 
-	$(LINK) $(am_libGuestAppX11_la_rpath) $(libGuestAppX11_la_OBJECTS) $(libGuestAppX11_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -347,10 +325,6 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestApp.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestAppPosix.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libGuestAppX11_la-guestApp.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libGuestAppX11_la-guestAppPosix.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libGuestAppX11_la-guestAppPosixX11.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -372,27 +346,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$<' object='$@' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(LTCOMPILE) -c -o $@ $<
-
-libGuestAppX11_la-guestApp.lo: guestApp.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libGuestAppX11_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libGuestAppX11_la-guestApp.lo -MD -MP -MF $(DEPDIR)/libGuestAppX11_la-guestApp.Tpo -c -o libGuestAppX11_la-guestApp.lo `test -f 'guestApp.c' || echo '$(srcdir)/'`guestApp.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/libGuestAppX11_la-guestApp.Tpo $(DEPDIR)/libGuestAppX11_la-guestApp.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='guestApp.c' object='libGuestAppX11_la-guestApp.lo' libtool=yes @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libGuestAppX11_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libGuestAppX11_la-guestApp.lo `test -f 'guestApp.c' || echo '$(srcdir)/'`guestApp.c
-
-libGuestAppX11_la-guestAppPosix.lo: guestAppPosix.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libGuestAppX11_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libGuestAppX11_la-guestAppPosix.lo -MD -MP -MF $(DEPDIR)/libGuestAppX11_la-guestAppPosix.Tpo -c -o libGuestAppX11_la-guestAppPosix.lo `test -f 'guestAppPosix.c' || echo '$(srcdir)/'`guestAppPosix.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/libGuestAppX11_la-guestAppPosix.Tpo $(DEPDIR)/libGuestAppX11_la-guestAppPosix.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='guestAppPosix.c' object='libGuestAppX11_la-guestAppPosix.lo' libtool=yes @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libGuestAppX11_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libGuestAppX11_la-guestAppPosix.lo `test -f 'guestAppPosix.c' || echo '$(srcdir)/'`guestAppPosix.c
-
-libGuestAppX11_la-guestAppPosixX11.lo: guestAppPosixX11.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libGuestAppX11_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libGuestAppX11_la-guestAppPosixX11.lo -MD -MP -MF $(DEPDIR)/libGuestAppX11_la-guestAppPosixX11.Tpo -c -o libGuestAppX11_la-guestAppPosixX11.lo `test -f 'guestAppPosixX11.c' || echo '$(srcdir)/'`guestAppPosixX11.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/libGuestAppX11_la-guestAppPosixX11.Tpo $(DEPDIR)/libGuestAppX11_la-guestAppPosixX11.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='guestAppPosixX11.c' object='libGuestAppX11_la-guestAppPosixX11.lo' libtool=yes @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libGuestAppX11_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libGuestAppX11_la-guestAppPosixX11.lo `test -f 'guestAppPosixX11.c' || echo '$(srcdir)/'`guestAppPosixX11.c
 
 mostlyclean-libtool:
 	-rm -f *.lo

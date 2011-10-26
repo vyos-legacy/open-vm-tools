@@ -390,7 +390,7 @@ static struct xRef {
     * Source: RFC-1468 (see also RFC-2237)
     *         Windows-50221 and 50222 are routed here
     */
-   { 39, 50220, STRING_ENCODING_ISO_2022_JP, IN_FULL_ICU, 0,
+   { 39, 50220, STRING_ENCODING_ISO_2022_JP, SUPPORTED, 0,
       { "ISO-2022-JP", "csISO2022JP", NULL }
    },
    /*
@@ -2256,7 +2256,7 @@ static struct xRef {
     *              Japanese (JIS-Allow 1 byte Kana)
     *              handled by ICU with ISO-2022-JP
     */
-   { MIBUNDEF, 50221, STRING_ENCODING_WINDOWS_50221, IN_FULL_ICU, 0,
+   { MIBUNDEF, 50221, STRING_ENCODING_WINDOWS_50221, SUPPORTED, 0,
       { "csISO2022JP", NULL }
    },
    /*
@@ -2580,6 +2580,9 @@ Unicode_EncodingEnumToName(StringEncoding encoding) // IN
 
    encoding = Unicode_ResolveEncoding(encoding);
 
+   /* If you hit this, you probably need to call Unicode_Init() */
+   ASSERT(encoding != STRING_ENCODING_UNKNOWN);
+
    /*
     * Look for a match in the xRef table. If found, return the
     * preferred MIME name. Whether ICU supports this encoding or
@@ -2633,7 +2636,7 @@ Unicode_EncodingNameToEnum(const char *encodingName) // IN
    if (xRef[idx].isSupported) {
       return xRef[idx].encoding;
    }
-#if defined(VMX86_TOOLS)
+#if defined(VMX86_TOOLS) && (!defined(OPEN_VM_TOOLS) || defined(USE_ICU))
    if (idx == UnicodeIANALookup(CodeSet_GetCurrentCodeSet())) {
       CodeSet_DontUseIcu();
       return xRef[idx].encoding;
@@ -2667,6 +2670,67 @@ UnicodeGetCurrentEncodingInternal(void)
       Unicode_EncodingNameToEnum(CodeSet_GetCurrentCodeSet());
 
    ASSERT(Unicode_IsEncodingValid(encoding));
+   return encoding;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Unicode_GetCurrentEncoding --
+ *
+ *      Return the current encoding (corresponding to
+ *      CodeSet_GetCurrentCodeSet()).
+ *
+ * Results:
+ *      The current encoding.
+ *
+ * Side effects:
+ *      Since the return value of CodeSet_GetCurrentCodeSet() and our
+ *      look-up table do not change, we memoize the value.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+StringEncoding
+Unicode_GetCurrentEncoding(void)
+{
+   static StringEncoding encoding = STRING_ENCODING_UNKNOWN;
+
+   if (UNLIKELY(encoding == STRING_ENCODING_UNKNOWN)) {
+      encoding = UnicodeGetCurrentEncodingInternal();
+   }
+
+   return encoding;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Unicode_ResolveEncoding --
+ *
+ *      Resolves a meta-encoding enum value (e.g. STRING_ENCODING_DEFAULT) to
+ *      a concrete one (e.g. STRING_ENCODING_UTF8).
+ *
+ * Results:
+ *      A StringEncoding enum value.  May return STRING_ENCODING_UNKNOWN.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+StringEncoding
+Unicode_ResolveEncoding(StringEncoding encoding)  // IN:
+{
+   if (encoding == STRING_ENCODING_DEFAULT) {
+      encoding = Unicode_GetCurrentEncoding();
+   }
+
+   ASSERT(Unicode_IsEncodingValid(encoding));
+
    return encoding;
 }
 
@@ -2728,6 +2792,7 @@ UnicodeInitInternal(int argc,               // IN
 #if !defined(__APPLE__) && !defined(VMX86_SERVER)
    char **list;
    StringEncoding encoding;
+   const char *currentCodeSetName;
 #endif
    Bool success = FALSE;
    char panicMsg[1024];
@@ -2741,7 +2806,7 @@ UnicodeInitInternal(int argc,               // IN
     * on lib/sync, so cheese it.
     */
    while (1 == Atomic_ReadIfEqualWrite(&locked, 0, 1)) {
-#if !defined(N_PLAT_NLM) && !defined(__FreeBSD__)
+#if !defined(__FreeBSD__)
       usleep(250 * 1000);
 #endif
    }
@@ -2755,39 +2820,32 @@ UnicodeInitInternal(int argc,               // IN
     * Always init the codeset module first.
     */
    if (!CodeSet_Init(icuDataDir)) {
-#ifndef N_PLAT_NLM
       snprintf(panicMsg, sizeof panicMsg, "Failed to initialize codeset.\n");
-#endif
       goto exit;
    }
 
    // UTF-8 native encoding for these two
 #if !defined(__APPLE__) && !defined(VMX86_SERVER)
-   encoding = Unicode_EncodingNameToEnum(CodeSet_GetCurrentCodeSet());
+   currentCodeSetName = CodeSet_GetCurrentCodeSet();
+   encoding = Unicode_EncodingNameToEnum(currentCodeSetName);
    if (!Unicode_IsEncodingValid(encoding)) {
-#ifndef N_PLAT_NLM
       snprintf(panicMsg, sizeof panicMsg,
-         "Unsupported local character encoding \"%s\".\n",
-         Unicode_EncodingEnumToName(STRING_ENCODING_DEFAULT));
-#endif
+              "Unsupported local character encoding \"%s\".\n",
+               currentCodeSetName);
       goto exit;
    }
 
    if (wargv) {
       list = Unicode_AllocList((char **)wargv, argc + 1, STRING_ENCODING_UTF16);
       if (!list) {
-#ifndef N_PLAT_NLM
          snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList1 failed.\n");
-#endif
          goto exit;
       }
       *argv = list;
    } else if (argv) {
       list = Unicode_AllocList(*argv, argc + 1, STRING_ENCODING_DEFAULT);
       if (!list) {
-#ifndef N_PLAT_NLM
          snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList2 failed.\n");
-#endif
          goto exit;
       }
       *argv = list;
@@ -2796,18 +2854,14 @@ UnicodeInitInternal(int argc,               // IN
    if (wenvp) {
       list = Unicode_AllocList((char **)wenvp, -1, STRING_ENCODING_UTF16);
       if (!list) {
-#ifndef N_PLAT_NLM
          snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList3 failed.\n");
-#endif
          goto exit;
       }
       *envp = list;
    } else if (envp) {
       list = Unicode_AllocList(*envp, -1, STRING_ENCODING_DEFAULT);
       if (!list) {
-#ifndef N_PLAT_NLM
          snprintf(panicMsg, sizeof panicMsg, "Unicode_AllocList4 failed.\n");
-#endif
          goto exit;
       }
       *envp = list;
@@ -2857,7 +2911,6 @@ Unicode_Init(int argc,        // IN
    UnicodeInitInternal(argc, NULL, NULL, NULL, argv, envp);
 }
 
-
 #ifdef TEST_CUSTOM_ICU_DATA_FILE
 /*
  *-----------------------------------------------------------------------------
@@ -2875,7 +2928,7 @@ Unicode_Init(int argc,        // IN
  *      To test custom ICU files, change the second arg in the call to
  *      UnicodeInitInternal() above to the *directory* containing the ICU
  *      data file, and add a call to this function.  Note that the name of
- *      the data file is hard coded to "icudt38l.dat" in lib/misc/codeset.c.
+ *      the data file is hard coded to "icudt44l.dat" in lib/misc/codeset.c.
  *      Also note that in devel builds, lib/misc/codeset.c will override the 
  *      icu directory argument with a path to the toolchain, so that may need 
  *      to be disabled, too.

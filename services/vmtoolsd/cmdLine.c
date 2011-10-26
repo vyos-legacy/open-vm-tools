@@ -33,11 +33,15 @@
 #endif
 #include <glib/gi18n.h>
 
+#include "vm_assert.h"
 #include "conf.h"
 #include "rpcout.h"
 #include "str.h"
-#include "vmtools.h"
+#include "vmcheck.h"
 #include "vmtoolsd_version.h"
+#include "vmware/tools/log.h"
+#include "vmware/tools/utils.h"
+#include "vmware/tools/i18n.h"
 
 
 /**
@@ -58,19 +62,27 @@ ToolsCoreRunCommand(const gchar *option,
                     gpointer data,
                     GError **error)
 {
-   char *result = NULL;
-   Bool status = FALSE;
+#if defined(_WIN32)
+   VMTools_AttachConsole();
+#endif
+   if (VmCheck_IsVirtualWorld()) {
+      char *result = NULL;
+      Bool status = FALSE;
 
-   status = RpcOut_sendOne(&result, NULL, "%s", value);
+      status = RpcOut_sendOne(&result, NULL, "%s", value);
 
-   if (!status) {
-      g_printerr("%s\n", result ? result : "NULL");
-   } else {
-      g_print("%s\n", result);
+      if (!status) {
+         g_printerr("%s\n", result ? result : "NULL");
+      } else {
+         g_print("%s\n", result);
+      }
+
+      vm_free(result);
+      exit(status ? 0 : 1);
    }
-
-   vm_free(result);
-   exit(status ? 0 : 1);
+   g_printerr("%s\n",
+              SU_(cmdline.rpcerror, "Unable to send command to VMware hypervisor."));
+   exit(1);
 }
 
 
@@ -98,7 +110,9 @@ ToolsCoreIgnoreArg(const gchar *option,
 
 
 /**
- * Signals a specific event in a running service instance.
+ * Signals a specific event in a running service instance. Since this function
+ * doesn't know whether the service is running through the SCM, it first tries
+ * to open a local event, and if that fails, tries a global event.
  *
  * @param[in]  svcname     Name of the service to be signaled.
  * @param[in]  evtFmt      Format string for the event name. It should expect
@@ -118,7 +132,19 @@ ToolsCoreSignalEvent(const gchar *svcname,
 
    ASSERT(svcname != NULL);
 
-   evt = Str_Aswprintf(NULL, evtFmt, svcname);
+   evt = Str_Aswprintf(NULL, evtFmt, L"Local", svcname);
+   if (evt == NULL) {
+      g_printerr("Out of memory!\n");
+      goto exit;
+   }
+
+   h = OpenEvent(EVENT_MODIFY_STATE, FALSE, evt);
+   if (h != NULL) {
+      goto dispatch;
+   }
+
+   vm_free(evt);
+   evt = Str_Aswprintf(NULL, evtFmt, L"Global", svcname);
    if (evt == NULL) {
       g_printerr("Out of memory!\n");
       goto exit;
@@ -129,6 +155,7 @@ ToolsCoreSignalEvent(const gchar *svcname,
       goto error;
    }
 
+dispatch:
    if (!SetEvent(h)) {
       goto error;
    }
@@ -148,6 +175,28 @@ exit:
 }
 
 #endif
+
+
+/**
+ * Error hook called when command line parsing fails. On Win32, make sure we
+ * have a terminal where to show the error message.
+ *
+ * @param[in] context    Unused.
+ * @param[in] group      Unused.
+ * @param[in] data       Unused.
+ * @param[in] error      Unused.
+ */
+
+static void
+ToolsCoreCmdLineError(GOptionContext *context,
+                      GOptionGroup *group,
+                      gpointer data,
+                      GError **error)
+{
+#if defined(_WIN32)
+   VMTools_AttachConsole();
+#endif
+}
 
 
 /**
@@ -172,38 +221,56 @@ ToolsCore_ParseCommandLine(ToolsServiceState *state,
    gboolean dumpState = FALSE;
    gboolean kill = FALSE;
 #endif
+   gboolean unused;
    GOptionEntry clOptions[] = {
       { "name", 'n', 0, G_OPTION_ARG_STRING, &state->name,
-         N_("Name of the service being started."), N_("svcname") },
+         SU_(cmdline.name, "Name of the service being started."),
+         SU_(cmdline.name.argument, "svcname") },
+      { "common-path", '\0', 0, G_OPTION_ARG_FILENAME, &state->commonPath,
+         SU_(cmdline.commonpath, "Path to the common plugin directory."),
+         SU_(cmdline.path, "path") },
       { "plugin-path", 'p', 0, G_OPTION_ARG_FILENAME, &state->pluginPath,
-         N_("Path to the plugin directory."), N_("path") },
+         SU_(cmdline.pluginpath, "Path to the plugin directory."),
+         SU_(cmdline.path, "path") },
       { "cmd", '\0', 0, G_OPTION_ARG_CALLBACK, ToolsCoreRunCommand,
-         N_("Sends an RPC command to the host and exits."), N_("command") },
+         SU_(cmdline.rpc, "Sends an RPC command to the host and exits."),
+         SU_(cmdline.rpc.command, "command") },
 #if defined(G_PLATFORM_WIN32)
       { "dump-state", 's', 0, G_OPTION_ARG_NONE, &dumpState,
-         N_("Dumps the internal state of a running service instance to the logs."), 0 },
+         SU_(cmdline.state, "Dumps the internal state of a running service instance to the logs."),
+         NULL },
       { "kill", 'k', 0, G_OPTION_ARG_NONE, &kill,
-         N_("Stops a running instance of a tools service."), 0 },
+         SU_(cmdline.kill, "Stops a running instance of a tools service."),
+         NULL },
       { "install", 'i', G_OPTION_FLAG_NO_ARG, G_OPTION_ARG_CALLBACK, ToolsCoreIgnoreArg,
-         N_("Installs the service with the Service Control Manager."), N_("args") },
+         SU_(cmdline.install, "Installs the service with the Service Control Manager."),
+         SU_(cmdline.install.args, "args") },
       { "uninstall", 'u', G_OPTION_FLAG_NO_ARG, G_OPTION_ARG_CALLBACK, ToolsCoreIgnoreArg,
-         N_("Uninstalls the service from the Service Control Manager."), NULL },
+         SU_(cmdline.uninstall, "Uninstalls the service from the Service Control Manager."),
+         NULL },
       { "displayname", 'd', 0, G_OPTION_ARG_STRING, &state->displayName,
-         N_("Service display name (only used with -i)."), N_("name") },
+         SU_(cmdline.displayname, "Service display name (only used with -i)."),
+         SU_(cmdline.displayname.argument, "name") },
 #else
       { "background", 'b', 0, G_OPTION_ARG_FILENAME, &state->pidFile,
-         N_("Runs in the background and creates a pid file."), N_("pidfile") },
+         SU_(cmdline.background, "Runs in the background and creates a pid file."),
+         SU_(cmdline.background.pidfile, "pidfile") },
       { "blockFd", '\0', 0, G_OPTION_ARG_INT, &state->ctx.blockFD,
-         N_("File descriptor for the VMware blocking fs."), N_("fd") },
+         SU_(cmdline.blockfd, "File descriptor for the VMware blocking fs."),
+         SU_(cmdline.blockfd.fd, "fd") },
 #endif
       { "config", 'c', 0, G_OPTION_ARG_FILENAME, &state->configFile,
-         N_("Uses the config file at the given path."), N_("path") },
+         SU_(cmdline.config, "Uses the config file at the given path."),
+         SU_(cmdline.path, "path") },
       { "debug", 'g', 0, G_OPTION_ARG_FILENAME, &state->debugPlugin,
-         N_("Runs in debug mode, using the given plugin."), N_("path") },
-      { "log", 'l', 0, G_OPTION_ARG_NONE, &state->log,
-         N_("Turns on logging. Overrides the config file."), NULL },
+         SU_(cmdline.debug, "Runs in debug mode, using the given plugin."),
+         SU_(cmdline.path, "path") },
+      { "log", 'l', 0, G_OPTION_ARG_NONE, &unused,
+         SU_(cmdline.log, "Ignored, kept for backwards compatibility."),
+         NULL },
       { "version", 'v', 0, G_OPTION_ARG_NONE, &version,
-         N_("Prints the daemon version and exits."), NULL },
+         SU_(cmdline.version, "Prints the daemon version and exits."),
+         NULL },
       { NULL }
    };
    GError *error = NULL;
@@ -214,13 +281,15 @@ ToolsCore_ParseCommandLine(ToolsServiceState *state,
 #endif
 
    context = g_option_context_new(NULL);
-#if GLIB_MAJOR_VERSION >= 2 && GLIB_MINOR_VERSION >= 12
+#if GLIB_CHECK_VERSION(2, 12, 0)
    g_option_context_set_summary(context, N_("Runs the VMware Tools daemon."));
 #endif
    g_option_context_add_main_entries(context, clOptions, NULL);
+   g_option_group_set_error_hook(g_option_context_get_main_group(context),
+                                 ToolsCoreCmdLineError);
 
    if (!g_option_context_parse(context, &argc, &argv, &error)) {
-      g_print("%s: %s\n", N_("Command line parsing failed"), error->message);
+      g_printerr("%s: %s\n", N_("Command line parsing failed"), error->message);
       goto exit;
    }
 
@@ -230,13 +299,18 @@ ToolsCore_ParseCommandLine(ToolsServiceState *state,
       exit(0);
    }
 
-   VMTools_EnableLogging(state->log);
    if (state->name == NULL) {
       state->name = VMTOOLS_GUEST_SERVICE;
       state->mainService = TRUE;
    } else {
+      if (strcmp(state->name, TOOLSCORE_COMMON) == 0) {
+         g_printerr("%s is an invalid container name.\n", state->name);
+         goto exit;
+      }
       state->mainService = (strcmp(state->name, VMTOOLS_GUEST_SERVICE) == 0);
    }
+
+   VMTools_ConfigLogging(state->name, NULL, TRUE, TRUE);
 
 #if defined(G_PLATFORM_WIN32)
    if (kill) {

@@ -17,7 +17,7 @@
  *********************************************************/
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_VMCORE
 #define INCLUDE_ALLOW_VMKERNEL
 #include "includeCheck.h"
@@ -42,14 +42,56 @@
  *
  *----------------------------------------------------------------------
  */
+
 Bool
-Util_Throttle(uint32 count)
+Util_Throttle(uint32 count)  // IN:
 {
    return count <     100                          ||
          (count <   10000 && count %     100 == 0) ||
          (count < 1000000 && count %   10000 == 0) ||
                              count % 1000000 == 0;
 }
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Util_FastRand --
+ *
+ *	Generates the next random number in the pseudo-random sequence 
+ *	defined by the multiplicative linear congruential generator 
+ *	S' = 16807 * S mod (2^31 - 1).
+ *	This is the ACM "minimal standard random number generator".  
+ *	Based on method described by D.G. Carta in CACM, January 1990. 
+ *	Usage: provide previous random number as the seed for next one.
+ *
+ * Precondition:
+ *      0 < seed && seed < UTIL_FASTRAND_SEED_MAX
+ *
+ * Results:
+ *	A random number.
+ *
+ * Side effects:
+ *	None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+#define UTIL_FASTRAND_SEED_MAX (0x7fffffff)
+
+uint32
+Util_FastRand(uint32 seed)
+{
+   uint64 product    = 33614 * (uint64)seed;
+   uint32 product_lo = (uint32)(product & 0xffffffff) >> 1;
+   uint32 product_hi = product >> 32;
+   int32  test       = product_lo + product_hi;
+
+   ASSERT(0 < seed && seed < UTIL_FASTRAND_SEED_MAX);
+
+   return (test > 0) ? test : (test & UTIL_FASTRAND_SEED_MAX) + 1;
+}
+
 
 #if defined(USERLEVEL) || defined(VMX86_DEBUG)
 static uint32 crcTable[256];
@@ -74,7 +116,9 @@ UtilCRCMakeTable(void)
 }
    
 static INLINE_SINGLE_CALLER uint32 
-UtilCRCUpdate(uint32 crc, const uint8 *buf, int len)
+UtilCRCUpdate(uint32 crc,
+              const uint8 *buf,
+              int len)
 {
    uint32 c = crc;
    int n;
@@ -82,14 +126,17 @@ UtilCRCUpdate(uint32 crc, const uint8 *buf, int len)
    
    if (!crcTableComputed) {
       UtilCRCMakeTable();
+
       crcTableComputed = 1;
   }
     
    for (n = 0; n < len; n++) {
       c = crcTable[(c ^ buf[n]) & 0xff] ^ (c >> 8);
    }
+
    return c;
 }
+
    
 /*
  *----------------------------------------------------------------------
@@ -107,8 +154,10 @@ UtilCRCUpdate(uint32 crc, const uint8 *buf, int len)
  *
  *----------------------------------------------------------------------
  */
+
 uint32 
-CRC_Compute(const uint8 *buf, int len)
+CRC_Compute(const uint8 *buf,
+            int len)
 {
    return UtilCRCUpdate(0xffffffffL, buf, len) ^ 0xffffffffL;
 }

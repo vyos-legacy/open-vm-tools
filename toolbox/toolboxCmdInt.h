@@ -24,8 +24,13 @@
 #ifndef _TOOLBOX_CMD_INT_H_
 #define _TOOLBOX_CMD_INT_H_
 
+#define G_LOG_MAIN "toolboxcmd"
+#define VMW_TEXT_DOMAIN G_LOG_MAIN
+
+#include <glib.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #ifdef _WIN32
 #   include "getoptwin32.h"
 #else
@@ -34,7 +39,6 @@
 #   include <unistd.h>
 #endif
 
-#include "toolboxInt.h"
 #include "vmGuestLib.h"
 
 /*
@@ -73,53 +77,59 @@
 #   define toolbox_strcmp  strcmp
 #endif
 
-
 /*
- * Devices Operations
+ * Common functions.
  */
 
-int Devices_ListDevices(void);
-int Devices_DeviceStatus(char*);
-int Devices_EnableDevice(char*, int);
-int Devices_DisableDevice(char*, int);
+void
+ToolsCmd_MissingEntityError(const char *name,
+                            const char *entity);
+
+void
+ToolsCmd_UnknownEntityError(const char *name,
+                            const char *entity,
+                            const char *str);
+
+void
+ToolsCmd_Print(const char *fmt,
+               ...) PRINTF_DECL(1, 2);
+
+void
+ToolsCmd_PrintErr(const char *fmt,
+                  ...) PRINTF_DECL(1, 2);
+
+gboolean
+ToolsCmd_SendRPC(const char *rpc,
+                 size_t rpcLen,
+                 char **result,
+                 size_t *resultLen);
 
 /*
- * TimeSync Operations
- */
-int TimeSync_Enable(int);
-int TimeSync_Disable(int);
-int TimeSync_Status(void);
-
-/*
- * Script Operations
+ * Command declarations.
  */
 
-int Script_GetDefault(const char *);
-int Script_GetCurrent(const char *);
-int Script_Enable(const char *, int);
-int Script_Disable(const char *, int);
-int Script_Set(const char *, const char *, int);
-Bool Script_CheckName(const char *);
-
-/*
- * Disk Shrink Operations
+/**
+ * A shorthand macro for declaring a command entry. This just declares
+ * two functions ("foo_Command" and "foo_Help" for a command "foo").
+ * The command implementation should provide those functions, which will
+ * be used by the main dispatch table when executing commands.
  */
 
-int Shrink_List(void);
-int Shrink_DoShrink(char*, int);
+#define DECLARE_COMMAND(name)             \
+   int name##_Command(char **argv,        \
+                      int argc,           \
+                      gboolean quiet);    \
+   void name##_Help(const char *progName, \
+                    const char *cmd);
 
-/*
- * Stat commands
- */
+DECLARE_COMMAND(Device);
+DECLARE_COMMAND(Disk);
+DECLARE_COMMAND(Script);
+DECLARE_COMMAND(Stat);
+DECLARE_COMMAND(TimeSync);
 
-int Stat_HostTime(void);
-int Stat_ProcessorSpeed(void);
-int Stat_GetSessionID(void);
-int Stat_GetCpuLimit(void);
-int Stat_GetCpuReservation(void);
-int Stat_GetMemoryBallooned(void);
-int Stat_GetMemorySwapped(void);
-int Stat_GetMemoryLimit(void);
-int Stat_GetMemoryReservation(void);
+#if defined(_WIN32) || (defined(linux) && !defined(OPEN_VM_TOOLS))
+DECLARE_COMMAND(Upgrade);
+#endif
 
 #endif /*_TOOLBOX_CMD_H_*/

@@ -27,7 +27,8 @@
  *    used for reliable event delivery.
  */
 
-#include "vmtools.h"
+#include "vm_assert.h"
+#include "vmware/tools/utils.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -41,7 +42,7 @@ typedef enum {
 
 /* Use NSIG if it's defined, otherwise use a hardcoded limit. */
 #if defined(NSIG)
-#  define MAX_SIGNALS   (NSIG - 1)
+#  define MAX_SIGNALS   NSIG
 #else
 #  define MAX_SIGNALS   64
 #endif
@@ -82,7 +83,7 @@ SignalSourceReadSigInfo(void)
          return;
       } else {
          /* XXX: Maybe we should handle this in some other way? */
-         g_assert(nbytes == sizeof info);
+         ASSERT(nbytes == sizeof info);
       }
       memcpy(&gHandler.currSignal, &info, sizeof info);
       gHandler.signals[info.si_signo] = SIG_SRC_SIGNALED;
@@ -133,7 +134,7 @@ SignalSourceSigHandler(int signum,
           * have to be created...
           */
          g_warning("Too many signals queued, this shouldn't happen.\n");
-         g_assert(FALSE);
+         ASSERT(FALSE);
       } else {
          g_warning("Could not queue signal %d (error %d: %s)\n",
                    signum, errno, strerror(errno));
@@ -264,8 +265,8 @@ VMTools_NewSignalSource(int signum)
    };
    SignalSource *ret;
 
-   g_assert(signum < MAX_SIGNALS);
-   g_assert(signum != SIGKILL && signum != SIGSTOP);
+   ASSERT(signum < MAX_SIGNALS);
+   ASSERT(signum != SIGKILL && signum != SIGSTOP);
 
    G_LOCK(gLock);
    if (!gHandler.initialized) {
@@ -273,7 +274,7 @@ VMTools_NewSignalSource(int signum)
       if (pipe(gHandler.wakeupPipe) == -1 ||
           fcntl(gHandler.wakeupPipe[0], F_SETFL, O_RDONLY | O_NONBLOCK) < 0 ||
           fcntl(gHandler.wakeupPipe[1], F_SETFL, O_WRONLY | O_NONBLOCK) < 0) {
-         g_assert(FALSE);
+         ASSERT(FALSE);
       }
       gHandler.wakeupFd.fd = gHandler.wakeupPipe[0];
       gHandler.wakeupFd.events = G_IO_IN | G_IO_ERR;

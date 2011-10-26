@@ -65,11 +65,7 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libGuestRpc_la_LIBADD =
-am_libGuestRpc_la_OBJECTS = cpFileContents_xdr.lo \
-	ghiGetBinaryHandlers_xdr.lo ghiGetExecInfoHash_xdr.lo \
-	ghiProtocolHandler_xdr.lo ghiStartMenu_xdr.lo \
-	guestlibV3_xdr.lo nicinfo_xdr.lo unityActive_xdr.lo \
-	unity_xdr.lo
+am_libGuestRpc_la_OBJECTS = nicinfo_xdr.lo
 libGuestRpc_la_OBJECTS = $(am_libGuestRpc_la_OBJECTS)
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
@@ -103,9 +99,12 @@ CCDEPMODE = @CCDEPMODE@
 # Problem is, $(CFLAGS) is appended to the compiler command line after AM_CFLAGS
 # and after libGuestRpc_la_CFLAGS, so "-Wall -Werror" will override this flag.
 CFLAGS = @CFLAGS@ -Wno-unused
+COMMON_PLUGIN_INSTALLDIR = @COMMON_PLUGIN_INSTALLDIR@
 COMMON_XLIBS = @COMMON_XLIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+CUNIT_CPPFLAGS = @CUNIT_CPPFLAGS@
+CUNIT_LIBS = @CUNIT_LIBS@
 CXX = @CXX@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
@@ -141,6 +140,7 @@ GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
 HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
+HGFS_LIBS = @HGFS_LIBS@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -148,23 +148,18 @@ INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
+INSTVMSG = @INSTVMSG@
 KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
-LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
 LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
-LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
-LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
 LIB_IMPERSONATE_CPPFLAGS = @LIB_IMPERSONATE_CPPFLAGS@
-LIB_MISC_CPPFLAGS = @LIB_MISC_CPPFLAGS@
-LIB_PROC_MGR_CPPFLAGS = @LIB_PROC_MGR_CPPFLAGS@
-LIB_STRING_CPPFLAGS = @LIB_STRING_CPPFLAGS@
 LIB_USER_CPPFLAGS = @LIB_USER_CPPFLAGS@
+LINUXINCLUDE = @LINUXINCLUDE@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
@@ -188,6 +183,8 @@ PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_URL = @PACKAGE_URL@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
 PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
@@ -197,31 +194,29 @@ PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
 RPCGENFLAGS = @RPCGENFLAGS@
+RPCGEN_WRAPPER = @RPCGEN_WRAPPER@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
 SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
 TOOLS_VERSION = @TOOLS_VERSION@
-URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
-URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
 VIX_LIBADD = @VIX_LIBADD@
 VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
 VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
 VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
-VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
-VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XCOMPOSITE_LIBS = @XCOMPOSITE_LIBS@
 XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
+XSM_LIBS = @XSM_LIBS@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
 X_LIBS = @X_LIBS@
 X_PRE_LIBS = @X_PRE_LIBS@
-ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
-ZLIB_LIBS = @ZLIB_LIBS@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
@@ -280,20 +275,9 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 noinst_LTLIBRARIES = libGuestRpc.la
-libGuestRpc_la_SOURCES = cpFileContents_xdr.c \
-	ghiGetBinaryHandlers_xdr.c ghiGetExecInfoHash_xdr.c \
-	ghiProtocolHandler_xdr.c ghiStartMenu_xdr.c guestlibV3_xdr.c \
-	nicinfo_xdr.c unityActive_xdr.c unity_xdr.c
-CLEANFILES = cpFileContents.h cpFileContents_xdr.c \
-	ghiGetBinaryHandlers.h ghiGetBinaryHandlers_xdr.c \
-	ghiGetExecInfoHash.h ghiGetExecInfoHash_xdr.c \
-	ghiProtocolHandler.h ghiProtocolHandler_xdr.c ghiStartMenu.h \
-	ghiStartMenu_xdr.c guestlibV3.h guestlibV3_xdr.c nicinfo.h \
-	nicinfo_xdr.c unityActive.h unityActive_xdr.c unity.h \
-	unity_xdr.c
-EXTRA_DIST = cpFileContents.x ghiGetBinaryHandlers.x \
-	ghiGetExecInfoHash.x ghiProtocolHandler.x ghiStartMenu.x \
-	guestlibV3.x nicinfo.x unityActive.x unity.x
+libGuestRpc_la_SOURCES = nicinfo_xdr.c
+CLEANFILES = nicinfo.h nicinfo_xdr.c
+EXTRA_DIST = nicinfo.x
 all: all-am
 
 .SUFFIXES:
@@ -346,15 +330,7 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpFileContents_xdr.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ghiGetBinaryHandlers_xdr.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ghiGetExecInfoHash_xdr.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ghiProtocolHandler_xdr.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ghiStartMenu_xdr.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/guestlibV3_xdr.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nicinfo_xdr.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/unityActive_xdr.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/unity_xdr.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -497,8 +473,8 @@ maintainer-clean-generic:
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-generic clean-libtool clean-local \
-	clean-noinstLTLIBRARIES mostlyclean-am
+clean-am: clean-generic clean-libtool clean-noinstLTLIBRARIES \
+	mostlyclean-am
 
 distclean: distclean-am
 	-rm -rf ./$(DEPDIR)
@@ -569,148 +545,28 @@ uninstall-am:
 .MAKE: install-am install-strip
 
 .PHONY: CTAGS GTAGS all all-am check check-am clean clean-generic \
-	clean-libtool clean-local clean-noinstLTLIBRARIES ctags \
-	distclean distclean-compile distclean-generic \
-	distclean-libtool distclean-tags distdir dvi dvi-am html \
-	html-am info info-am install install-am install-data \
-	install-data-am install-dvi install-dvi-am install-exec \
-	install-exec-am install-html install-html-am install-info \
-	install-info-am install-man install-pdf install-pdf-am \
-	install-ps install-ps-am install-strip installcheck \
-	installcheck-am installdirs maintainer-clean \
-	maintainer-clean-generic mostlyclean mostlyclean-compile \
-	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
-	tags uninstall uninstall-am
+	clean-libtool clean-noinstLTLIBRARIES ctags distclean \
+	distclean-compile distclean-generic distclean-libtool \
+	distclean-tags distdir dvi dvi-am html html-am info info-am \
+	install install-am install-data install-data-am install-dvi \
+	install-dvi-am install-exec install-exec-am install-html \
+	install-html-am install-info install-info-am install-man \
+	install-pdf install-pdf-am install-ps install-ps-am \
+	install-strip installcheck installcheck-am installdirs \
+	maintainer-clean maintainer-clean-generic mostlyclean \
+	mostlyclean-compile mostlyclean-generic mostlyclean-libtool \
+	pdf pdf-am ps ps-am tags uninstall uninstall-am
 
-
-clean-local:
-	rm -rf $(top_builddir)/lib/include/guestrpc
-	if [ $(top_builddir) != $(top_srcdir) ]; then	\
-	   rm -f *.x;												\
-	fi
 
 # Rules to invoke rpcgen. rpcgen will generate funny paths in the generated
 # files if not invoked in the same directory as the source file, so we need
 # to copy the sources to the build dir before compiling them.
 
-cpFileContents.h: cpFileContents.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/cpFileContents.x $(builddir); \
-	fi
-	rm -f cpFileContents.h
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/cpFileContents.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-cpFileContents_xdr.c: cpFileContents.x cpFileContents.h
-	rm -f cpFileContents_xdr.c
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/cpFileContents.x
-
-ghiGetBinaryHandlers.h: ghiGetBinaryHandlers.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiGetBinaryHandlers.x $(builddir); \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiGetBinaryHandlers.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-ghiGetBinaryHandlers_xdr.c: ghiGetBinaryHandlers.x ghiGetBinaryHandlers.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/ghiGetBinaryHandlers.x
-
-ghiGetExecInfoHash.h: ghiGetExecInfoHash.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiGetExecInfoHash.x $(builddir); \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiGetExecInfoHash.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-ghiGetExecInfoHash_xdr.c: ghiGetExecInfoHash.x ghiGetExecInfoHash.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/ghiGetExecInfoHash.x
-
-ghiProtocolHandler.h: ghiProtocolHandler.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiProtocolHandler.x $(builddir);   \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiProtocolHandler.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-ghiProtocolHandler_xdr.c: ghiProtocolHandler.x ghiProtocolHandler.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/ghiProtocolHandler.x
-
-ghiStartMenu.h: ghiStartMenu.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                           \
-	   cp -f $(top_srcdir)/lib/guestRpc/ghiStartMenu.x $(builddir); \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/ghiStartMenu.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-ghiStartMenu_xdr.c: ghiStartMenu.x ghiStartMenu.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/ghiStartMenu.x
-
 nicinfo.h: nicinfo.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then               \
-	   cp -f $(top_srcdir)/lib/guestRpc/nicinfo.x $(builddir);  \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/nicinfo.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
+	@RPCGEN_WRAPPER@ lib/guestRpc/nicinfo.x $@
 
 nicinfo_xdr.c: nicinfo.x nicinfo.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/nicinfo.x
-
-guestlibV3.h: guestlibV3.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                  \
-	   cp -f $(top_srcdir)/lib/guestRpc/guestlibV3.x $(builddir);  \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/guestlibV3.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-guestlibV3_xdr.c: guestlibV3.x guestlibV3.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/guestlibV3.x
-
-unityActive.h: unityActive.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                  \
-	   cp -f $(top_srcdir)/lib/guestRpc/unityActive.x $(builddir); \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/unityActive.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-unityActive_xdr.c: unityActive.x unityActive.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/unityActive.x
-
-unity.h: unity.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                  \
-	   cp -f $(top_srcdir)/lib/guestRpc/unity.x $(builddir); \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/unity.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
-	$(MKDIR_P) $(top_builddir)/lib/include/guestrpc
-	cp $@ $(top_builddir)/lib/include/guestrpc
-
-unity_xdr.c: unity.x unity.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/unity.x
+	@RPCGEN_WRAPPER@ lib/guestRpc/nicinfo.x $@
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

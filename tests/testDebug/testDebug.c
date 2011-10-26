@@ -26,17 +26,22 @@
 
 #define G_LOG_DOMAIN "testDebug"
 #include <glib-object.h>
+#include <CUnit/CUnit.h>
+
 #include "util.h"
-#include "vm_app.h"
-#include "vmrpcdbg.h"
-#include "vmtools.h"
-#include "guestrpc/ghiGetBinaryHandlers.h"
+#include "testData.h"
+#include "xdrutil.h"
+#include "vmware/guestrpc/tclodefs.h"
+#include "vmware/tools/rpcdebug.h"
 
 static gboolean
-TestDebugValidateReset(RpcInData *data, Bool ret);
+TestDebugValidateReset(RpcInData *data, gboolean ret);
 
 static gboolean
-TestDebugValidateUnknown(RpcInData *data, Bool ret);
+TestDebugValidateUnknown(RpcInData *data, gboolean ret);
+
+static gboolean
+TestDebugValidateRpc3(RpcInData *data, gboolean ret);
 
 #define SET_OPTION_TEST ("Set_Option " TOOLSOPTION_BROADCASTIP " 1")
 
@@ -49,7 +54,7 @@ static RpcDebugMsgMapping gRpcMessages[] = {
    /* This one is initialized manually, since it contains dynamic data. */
    { NULL, 0, NULL, TRUE },
    { "test.rpcin.msg2", sizeof "test.rpcin.msg2", NULL, FALSE },
-   { "test.rpcin.msg3", sizeof "test.rpcin.msg3", NULL, FALSE },
+   { "test.rpcin.msg3", sizeof "test.rpcin.msg3", TestDebugValidateRpc3, FALSE },
    { SET_OPTION_TEST, sizeof SET_OPTION_TEST, NULL, FALSE },
    { "Capabilities_Register", sizeof "Capabilities_Register", NULL, FALSE },
    /* NULL terminator. */
@@ -89,25 +94,10 @@ TestDebugHandleSignal(gpointer src,
 
 static gboolean
 TestDebugValidateReset(RpcInData *data,
-                       Bool ret)
+                       gboolean ret)
 {
-   ToolsAppCtx *ctx = data->appCtx;
-   g_assert(data->result != NULL);
-   if (strcmp(data->result, "ATR debug") != 0) {
-      g_error("Unexpected response to reset: %s\n", data->result);
-   }
-
-   /*
-    * If reset was successful, connect the "test-signal" signal so we
-    * test custom registration of signals. The test plugin will emit
-    * this signal after it sends an "test.rpcout.msg1" RPC as part of
-    * handling a "test.rpcin.msg1" RPC.
-    */
-   g_signal_connect(ctx->serviceObj,
-                    "test-signal",
-                    G_CALLBACK(TestDebugHandleSignal),
-                    NULL);
-
+   RPCDEBUG_ASSERT(data->result != NULL, FALSE);
+   CU_ASSERT_STRING_EQUAL(data->result, "ATR debug");
    return (gboolean) ret;
 }
 
@@ -115,7 +105,7 @@ TestDebugValidateReset(RpcInData *data,
 /**
  * Validates a "test.rpcout.msg1" message sent by the test plugin. This message
  * is sent when the plugin receives a "test.rpcin.msg1" RPC, and contains an
- * XDR-encoded GHIBinaryHandlersIconDetails struct.
+ * XDR-encoded TestPluginData struct.
  *
  * @param[in]  data        Incoming data.
  * @param[in]  dataLen     Size of incoming data.
@@ -131,15 +121,41 @@ TestDebugReceiveRpc1(char *data,
                      char **result,
                      size_t *resultLen)
 {
-   GHIBinaryHandlersIconDetails *details = (GHIBinaryHandlersIconDetails *) data;
+   TestPluginData *details = (TestPluginData *) data;
 
-   g_assert(gSignalReceived);
-   g_assert(details->width == 100);
-   g_assert(details->height == 200);
-   g_assert(strcmp(details->identifier, "rpc1test") == 0);
+   CU_ASSERT(gSignalReceived);
+   CU_ASSERT_STRING_EQUAL(details->data, "rpc1test");
+   CU_ASSERT_EQUAL(details->f_int, 1357);
+   CU_ASSERT(details->f_bool);
 
-   g_debug("Successfully validated rpc1!\n");
    return TRUE;
+}
+
+
+/**
+ * Validates the response of the "msg3" RPC.
+ *
+ * @param[in] data   RPC data.
+ * @param[in] ret    RPC result.
+ *
+ * @return Whether the RPC succeded.
+ */
+
+static gboolean
+TestDebugValidateRpc3(RpcInData *data,
+                      gboolean ret)
+{
+   TestPluginData pdata = { NULL, };
+
+   CU_ASSERT(XdrUtil_Deserialize(data->result, data->resultLen,
+                                 xdr_TestPluginData, &pdata));
+
+   CU_ASSERT_STRING_EQUAL(pdata.data, "Hello World!");
+   CU_ASSERT_EQUAL(pdata.f_int, 8642);
+   CU_ASSERT(pdata.f_bool);
+
+   VMX_XDR_FREE(xdr_TestPluginData, &pdata);
+   return ret;
 }
 
 
@@ -162,7 +178,7 @@ TestDebugReceiveVersion(char *data,
                         size_t *resultLen)
 {
    g_debug("Received tools version message: %s\n", data);
-   RPCDEBUG_SET_RESULT("", result, resultLen);
+   RpcDebug_SetResult("", result, resultLen);
    return TRUE;
 }
 
@@ -178,9 +194,9 @@ TestDebugReceiveVersion(char *data,
 
 static gboolean
 TestDebugValidateUnknown(RpcInData *data,
-                         Bool ret)
+                         gboolean ret)
 {
-   g_assert(strcmp(data->result, "Unknown Command") == 0);
+   CU_ASSERT_STRING_EQUAL(data->result, "Unknown Command");
    return !ret;
 }
 
@@ -235,28 +251,50 @@ RpcDebugOnLoad(ToolsAppCtx *ctx)
    static RpcDebugRecvMapping recvFns[] = {
       { "tools.set.version", TestDebugReceiveVersion, NULL, 0 },
       { "test.rpcout.msg1", TestDebugReceiveRpc1,
-        xdr_GHIBinaryHandlersIconDetails, sizeof (GHIBinaryHandlersIconDetails) },
+        xdr_TestPluginData, sizeof (TestPluginData) },
       { NULL, NULL }
+   };
+   static ToolsPluginData pluginData = {
+      "testDebug",
+      NULL,
+      NULL,
+      NULL,
    };
    static RpcDebugPlugin regData = {
       recvFns,
       NULL,
       TestDebugSendNext,
-      NULL
+      NULL,
+      &pluginData,
    };
 
-   GHIBinaryHandlersIconDetails details;
-   details.width = 100;
-   details.height = 200;
-   details.identifier = "rpc1test";
+   /* Standard plugin interface, used to listen for signals. */
+   {
+      ToolsPluginSignalCb sigs[] = {
+         { "test-signal", TestDebugHandleSignal, NULL },
+      };
+      ToolsAppReg regs[] = {
+         { TOOLS_APP_SIGNALS, VMTOOLS_WRAP_ARRAY(sigs) },
+      };
 
-   /* Build the command for the "test.rpcin.msg1" RPC. */
-   if (!RpcChannel_BuildXdrCommand("test.rpcin.msg1",
-                                   xdr_GHIBinaryHandlersIconDetails,
-                                   &details,
-                                   &gRpcMessages[4].message,
-                                   &gRpcMessages[4].messageLen)) {
-      g_error("Failed to create test.rpcin.msg1 command.\n");
+      pluginData.regs = VMTOOLS_WRAP_ARRAY(regs);
+   }
+
+   /* Initialize the paylod of the "test.rpcin.msg1" RPC. */
+   {
+      TestPluginData testdata;
+      testdata.data = "rpc1test";
+      testdata.f_int = 1357;
+      testdata.f_bool = TRUE;
+
+      /* Build the command for the "test.rpcin.msg1" RPC. */
+      if (!RpcChannel_BuildXdrCommand("test.rpcin.msg1",
+                                      xdr_TestPluginData,
+                                      &testdata,
+                                      &gRpcMessages[4].message,
+                                      &gRpcMessages[4].messageLen)) {
+         g_error("Failed to create test.rpcin.msg1 command.\n");
+      }
    }
 
    gCtx = ctx;

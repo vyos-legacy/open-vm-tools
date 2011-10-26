@@ -43,21 +43,9 @@
    #include <sys/types.h>
 #endif
 
-#ifdef __APPLE__
-   #include <IOKit/IOTypes.h>
-   #include <CoreFoundation/CFData.h>
-   #include <CoreFoundation/CFNumber.h>
-   #include <CoreFoundation/CFDictionary.h>
-   #include <CoreFoundation/CFArray.h>
-   #include <CoreFoundation/CFString.h>
-#endif
-
 #include "vm_assert.h"
 #include "unicodeTypes.h"
 
-#ifdef __APPLE__
-   #define SYSTEM_VOL_DIR "/Volumes"
-#endif
 
 /*
  * Define the Util_ThreadID type.
@@ -72,63 +60,12 @@ typedef DWORD Util_ThreadID;
 typedef pid_t Util_ThreadID;
 #endif
 
-#ifdef __APPLE__
-EXTERN char *Util_CFStringToUTF8CString(CFStringRef s);
-EXTERN char *Util_IORegCopyStringProperty(io_object_t entry, CFStringRef property);
-EXTERN Bool Util_IORegGetNumberProperty(io_object_t entry, CFStringRef property,
-                                        CFNumberType type, void *val);
-EXTERN Bool Util_IORegGetBooleanProperty(io_object_t entry, CFStringRef property,
-                                         Bool *boolVal);
-EXTERN CFDataRef Util_IORegCopyDataProperty(io_object_t entry, CFStringRef property);
-EXTERN CFDictionaryRef Util_IORegCopyDictionaryProperty(io_object_t entry,
-                                                        CFStringRef property);
-EXTERN CFMutableDictionaryRef UtilMacos_CreateCFDictionary(
-   unsigned int numPairs, ...);
-EXTERN io_service_t Util_IORegGetDeviceObjectByName(const char *deviceName);
-EXTERN char *Util_GetBSDName(const char *deviceName);
-EXTERN char *Util_IORegGetDriveType(const char *deviceName);
-EXTERN uint64 Util_GetPartitionOffset(const char *bsdDev);
-EXTERN char *Util_GetMacOSDefaultVMPath();
-
-/* 
- * Mac laptops without a cdrom drive (currently only the Air, but maybe
- * more in the future) provide a way to use a desktop's cdrom drive
- * remotely over the network.  These functions enumerate all such
- * remote disks currently mounted as volumes, and return a list of
- * volume to bsd name mappings.  The bsd device can be considered a
- * flat-file representation of the disk contents and can be connected
- * to our cdrom image backend.  We also include the size, since we must
- * get that from the IO registry as well, and it doesn't change while
- * the disk is mounted.
- * 
- * FYI, Apple calls this "Remote Disc" not "Remote Disk", so we follow
- * that convention here too.
- */
-typedef struct RemoteDiscList {
-   char                  *bsdName;
-   char                  *name;
-   uint64                 size; // In bytes
-   struct RemoteDiscList *next;
-} RemoteDiscList;
-
-EXTERN RemoteDiscList *Util_GetRemoteDiscList(void);
-EXTERN void Util_FreeRemoteDiscList(RemoteDiscList *list);
-
-/*
- * Additional keys for disk/partition device properties.
- */
-EXTERN const CFStringRef kUtilMacosDeviceSerialNumberKey;
-EXTERN const CFStringRef kUtilMacosVolumeOffsetKey;
-
-EXTERN CFDictionaryRef UtilMacos_CopyDiskDeviceProperties(const char *bsdDev);
-EXTERN CFArrayRef UtilMacos_CopyDiskDeviceBSDNames(const char *parentDisk);
-#endif // __APPLE__
-
 
 EXTERN uint32 CRC_Compute(const uint8 *buf, int len);
 EXTERN uint32 Util_Checksum32(const uint32 *buf, int len);
 EXTERN uint32 Util_Checksum(const uint8 *buf, int len);
 EXTERN uint32 Util_Checksumv(void *iov, int numEntries);
+EXTERN uint32 Util_HashString(const char *str);
 EXTERN Unicode Util_ExpandString(ConstUnicode fileName);
 EXTERN void Util_ExitThread(int);
 EXTERN NORETURN void Util_ExitProcessAbruptly(int);
@@ -158,10 +95,10 @@ EXTERN char *Util_DeriveFileName(const char *source,
 EXTERN char *Util_CombineStrings(char **sources, int count);
 EXTERN char **Util_SeparateStrings(char *source, int *count);
 
-EXTERN char *Util_GetSafeTmpDir(Bool useConf);
+typedef struct UtilSingleUseResource UtilSingleUseResource;
+UtilSingleUseResource *Util_SingleUseAcquire(const char *name);
+void Util_SingleUseRelease(UtilSingleUseResource *res);
 
-EXTERN int Util_MakeSafeTemp(ConstUnicode tag,
-                             Unicode *presult);
 
 #if defined(__linux__) || defined(__FreeBSD__) || defined(sun)
 EXTERN Bool Util_GetProcessName(pid_t pid, char *bufOut, size_t bufOutSize);
@@ -186,9 +123,19 @@ void Util_BacktraceToBuffer(uintptr_t *basePtr,
 
 int Util_CompareDotted(const char *s1, const char *s2);
 
-#if defined(__linux__)
-void Util_PrintLoadedObjects(void *addr_inside_exec);
-#endif
+/*
+ * This enum defines how Util_GetOpt should handle non-option arguments:
+ *
+ * UTIL_NONOPT_PERMUTE: Permute argv so that all non-options are at the end.
+ * UTIL_NONOPT_STOP:    Stop when first non-option argument is seen.
+ * UTIL_NONOPT_ALL:     Return each non-option argument as if it were
+ *                      an option with character code 1.
+ */
+typedef enum { UTIL_NONOPT_PERMUTE, UTIL_NONOPT_STOP, UTIL_NONOPT_ALL } Util_NonOptMode;
+struct option;
+int Util_GetOpt(int argc, char * const *argv, const struct option *opts,
+                Util_NonOptMode mode);
+
 
 #if defined(VMX86_STATS)
 Bool Util_QueryCStResidency(uint32 *numCpus, uint32 *numCStates,
@@ -200,18 +147,94 @@ Bool Util_QueryCStResidency(uint32 *numCpus, uint32 *numCStates,
  * In util_shared.h
  */
 EXTERN Bool Util_Throttle(uint32 count);
+EXTERN uint32 Util_FastRand(uint32 seed);
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Util_ValidateBytes --
+ *
+ *      Check that memory is filled with the specified value.
+ *
+ * Results:
+ *      NULL   No error
+ *      !NULL  First address that doesn't have the proper value
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static INLINE void *
+Util_ValidateBytes(const void *ptr,  // IN: ptr to check
+                   size_t size,      // IN: size of ptr
+                   uint8 byteValue)  // IN: memory must be filled with this
+{
+   uint8 *p;
+   uint8 *end;
+   uint64 bigValue;
+
+   ASSERT(ptr);
+
+   if (size == 0) {
+      return NULL;
+   }
+
+   p = (uint8 *) ptr;
+   end = p + size;
+
+   /* Compare bytes until a "nice" boundary is achieved. */
+   while ((uintptr_t) p % sizeof bigValue) {
+      if (*p != byteValue) {
+         return p;
+      }
+
+      p++;
+
+      if (p == end) {
+         return NULL;
+      }
+   }
+
+   /* Compare using a "nice sized" chunk for a long as possible. */
+   memset(&bigValue, (int) byteValue, sizeof bigValue);
+
+   while (p + sizeof bigValue <= end) {
+      if (*((uint64 *) p) != bigValue) {
+         /* That's not right... let the loop below report the exact address. */
+         break;
+      }
+
+      size -= sizeof bigValue;
+      p += sizeof bigValue;
+   }
+
+   /* Handle any trailing bytes. */
+   while (p < end) {
+      if (*p != byteValue) {
+         return p;
+      }
+
+      p++;
+   }
+
+   return NULL;
+}
+
 
 /*
  *----------------------------------------------------------------------
  *
  * Util_BufferIsEmpty --
  *
- *    Determine wether or not the buffer of 'len' bytes starting at 'base' is
- *    empty (i.e. full of zeroes)
+ *    Determine if the specified buffer of 'len' bytes starting at 'base'
+ *    is empty (i.e. full of zeroes).
  *
  * Results:
- *    TRUE if yes
- *    FALSE if no
+ *    TRUE  Yes
+ *    FALSE No
  *
  * Side effects:
  *    None
@@ -219,51 +242,18 @@ EXTERN Bool Util_Throttle(uint32 count);
  *----------------------------------------------------------------------
  */
 
-static INLINE Bool Util_BufferIsEmpty(void const *base, // IN
-                                      size_t len)       // IN
+static INLINE Bool
+Util_BufferIsEmpty(void const *base,  // IN:
+                   size_t len)        // IN:
 {
-   uint32 const *p32;
-   uint32 const *e32;
-   uint16 const *p16;
-
-   ASSERT_ON_COMPILE(sizeof(uint32) == 4);
-
-   p32 = (uint32 const *)base;
-   e32 = p32 + len / 4;
-   for (; p32 < e32; p32++) {
-      if (*p32) {
-         return FALSE;
-      }
-   }
-
-   len &= 0x3;
-   p16 = (uint16 const *)p32;
-
-   if (len & 0x2) {
-      if (*p16) {
-         return FALSE;
-      }
-
-      p16++;
-   }
-
-   if (   len & 0x1
-       && *(uint8 const *)p16) {
-      return FALSE;
-   }
-
-   return TRUE;
-};
+   return Util_ValidateBytes(base, len, '\0') == NULL;
+}
 
 
 EXTERN Bool Util_MakeSureDirExistsAndAccessible(char const *path,
-						unsigned int mode);
+                                                unsigned int mode);
 
-#ifdef N_PLAT_NLM
-#   define DIRSEPS	      "\\"
-#   define DIRSEPC	      '\\'
-#   define VALID_DIRSEPS      "\\/:"
-#elif _WIN32
+#if _WIN32
 #   define DIRSEPS	      "\\"
 #   define DIRSEPS_W	      L"\\"
 #   define DIRSEPC	      '\\'
@@ -273,6 +263,7 @@ EXTERN Bool Util_MakeSureDirExistsAndAccessible(char const *path,
 #else
 #   define DIRSEPS	      "/"
 #   define DIRSEPC	      '/'
+#   define VALID_DIRSEPS      DIRSEPS
 #endif
 
 
@@ -312,20 +303,19 @@ EXTERN Bool Util_MakeSureDirExistsAndAccessible(char const *path,
  */
 
 EXTERN void *Util_SafeInternalMalloc(int bugNumber, size_t size,
-                                     char const *file, int lineno);
+                                     const char *file, int lineno);
 
 EXTERN void *Util_SafeInternalRealloc(int bugNumber, void *ptr, size_t size,
-                                      char const *file, int lineno);
+                                      const char *file, int lineno);
 
 EXTERN void *Util_SafeInternalCalloc(int bugNumber, size_t nmemb,
-                                     size_t size, char const *file,
-                                     int lineno);
+                                     size_t size, const char *file, int lineno);
 
 EXTERN char *Util_SafeInternalStrdup(int bugNumber, const char *s,
-                                     char const *file, int lineno);
+                                     const char *file, int lineno);
 
 EXTERN char *Util_SafeInternalStrndup(int bugNumber, const char *s, size_t n,
-                                      char const *file, int lineno);
+                                      const char *file, int lineno);
 
 #define Util_SafeMalloc(_size) \
    Util_SafeInternalMalloc(-1, (_size), __FILE__, __LINE__)
@@ -376,10 +366,18 @@ EXTERN char *Util_SafeInternalStrndup(int bugNumber, const char *s, size_t n,
 
 static INLINE void
 Util_Zero(void *buf,       // OUT
-          size_t bufSize)  // IN 
+          size_t bufSize)  // IN
 {
    if (buf != NULL) {
+#if defined _WIN32 && defined USERLEVEL
+      /*
+       * Simple memset calls might be optimized out.  See CERT advisory
+       * MSC06-C.
+       */
+      SecureZeroMemory(buf, bufSize);
+#else
       memset(buf, 0, bufSize);
+#endif
    }
 }
 
@@ -401,10 +399,10 @@ Util_Zero(void *buf,       // OUT
  */
 
 static INLINE void
-Util_ZeroString(char *str)  // IN
+Util_ZeroString(char *str)  // IN/OUT
 {
    if (str != NULL) {
-      memset(str, 0, strlen(str));
+      Util_Zero(str, strlen(str));
    }
 }
 
@@ -428,11 +426,11 @@ Util_ZeroString(char *str)  // IN
 
 static INLINE void
 Util_ZeroFree(void *buf,       // OUT
-              size_t bufSize)  // IN 
+              size_t bufSize)  // IN
 {
    if (buf != NULL) {
-      memset(buf, 0, bufSize);
-      free(buf); 
+      Util_Zero(buf, bufSize);
+      free(buf);
    }
 }
 
@@ -458,8 +456,8 @@ static INLINE void
 Util_ZeroFreeString(char *str)  // IN
 {
    if (str != NULL) {
-      Util_Zero(str, strlen(str));
-      free(str); 
+      Util_ZeroString(str);
+      free(str);
    }
 }
 
@@ -486,8 +484,8 @@ static INLINE void
 Util_ZeroFreeStringW(wchar_t *str)  // IN
 {
    if (str != NULL) {
-      Util_Zero(str, wcslen(str) * sizeof(wchar_t));
-      free(str); 
+      Util_Zero(str, wcslen(str) * sizeof *str);
+      free(str);
    }
 }
 #endif // _WIN32
@@ -529,15 +527,15 @@ Util_FreeList(void **list,      // IN/OUT: the list to free
       ssize_t i;
 
       for (i = 0; i < length; i++) {
-	 free(list[i]);
-	 DEBUG_ONLY(list[i] = NULL);
+         free(list[i]);
+         DEBUG_ONLY(list[i] = NULL);
       }
    } else {
       void **s;
 
       for (s = list; *s != NULL; s++) {
-	 free(*s);
-	 DEBUG_ONLY(*s = NULL);
+         free(*s);
+         DEBUG_ONLY(*s = NULL);
       }
    }
    free(list);
@@ -549,5 +547,4 @@ Util_FreeStringList(char **list,      // IN/OUT: the list to free
 {
    Util_FreeList((void **) list, length);
 }
-
 #endif /* UTIL_H */

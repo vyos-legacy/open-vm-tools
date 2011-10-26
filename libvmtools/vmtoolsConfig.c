@@ -23,16 +23,20 @@
  *    automatically migrating from old-style tools configuration files.
  */
 
+#include "vmware/tools/utils.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <glib/gstdio.h>
-#include "vmtools.h"
+
+#include "vm_assert.h"
+#include "dictll.h"
 #include "conf.h"
-#include "file.h"
+#include "err.h"
 #include "guestApp.h"
 #include "str.h"
+#include "strutil.h"
 #include "util.h"
 
 /** Data types supported for translation. */
@@ -53,6 +57,92 @@ typedef struct ConfigEntry {
 } ConfigEntry;
 
 typedef void (*CfgCallback)(GKeyFile *cfg, const ConfigEntry *, const char *);
+
+
+/**
+ * Loads the legacy configuration file in the VMware dictionary format.
+ *
+ * @return A dictionary with the config data, NULL on error.
+ */
+
+static GHashTable *
+VMToolsConfigLoadLegacy(void)
+{
+   gchar *path;
+   gchar *localPath;
+   char *confPath = GuestApp_GetConfPath();
+   gboolean success = FALSE;
+   FILE *stream = NULL;
+   GHashTable *dict = NULL;
+
+   if (confPath == NULL) {
+      Panic("Could not get path to Tools configuration file.\n");
+   }
+
+   /* Load the data from the old config file. */
+   path = g_strdup_printf("%s%c%s", confPath, DIRSEPC, CONF_FILE);
+   localPath = VMTOOLS_GET_FILENAME_LOCAL(path, NULL);
+   if (localPath == NULL) {
+      g_warning("Error converting path to local encoding.");
+      goto exit;
+   }
+
+   stream = g_fopen(localPath, "r");
+   if (stream == NULL) {
+      goto exit;
+   }
+
+   dict = g_hash_table_new_full(g_str_hash, g_str_equal, free, free);
+
+   for (;;) {
+      char *name;
+      char *value;
+      char *line;
+      int status;
+
+      status = DictLL_ReadLine(stream, &line, &name, &value);
+      if (status == 0) {
+         g_warning("Unable to read a line from \"%s\": %s\n", path,
+                   Err_ErrString());
+         goto exit;
+      } else if (status == 1) {
+         break;
+      } else if (status != 2) {
+         NOT_IMPLEMENTED();
+      }
+
+      if (name && value) {
+         g_hash_table_insert(dict, name, value);
+      } else {
+         free(name);
+         free(value);
+      }
+
+      free(line);
+   }
+
+   success = TRUE;
+
+exit:
+   if (stream != NULL && fclose(stream)) {
+      g_warning("Unable to close \"%s\": %s\n", path, Err_ErrString());
+      success = FALSE;
+   }
+
+   VMTOOLS_RELEASE_FILENAME_LOCAL(localPath);
+   g_free(path);
+   free(confPath);
+
+   if (!success) {
+      if (dict != NULL) {
+         g_hash_table_destroy(dict);
+         dict = NULL;
+      }
+   }
+
+   return dict;
+}
+
 
 /**
  * Upgrade the logging configuration.
@@ -112,7 +202,7 @@ VMToolsConfigUpgradeLog(GKeyFile *cfg,
  */
 
 static void
-VMToolsConfigUpgrade(GuestApp_Dict *old,
+VMToolsConfigUpgrade(GHashTable *old,
                      GKeyFile *dst)
 {
    const ConfigEntry entries[] = {
@@ -125,30 +215,31 @@ VMToolsConfigUpgrade(GuestApp_Dict *old,
       { CONFNAME_RESUMESCRIPT, "powerops", CONFNAME_RESUMESCRIPT, CFG_STRING, NULL },
       { CONFNAME_SUSPENDSCRIPT, "powerops", CONFNAME_SUSPENDSCRIPT, CFG_STRING, NULL },
       /* guestd options. */
-      { CONFNAME_MAX_WIPERSIZE, "vmsvc", CONFNAME_MAX_WIPERSIZE, CFG_INTEGER, NULL },
-      { CONFNAME_DISABLEQUERYDISKINFO, "guestinfo", CONFNAME_DISABLEQUERYDISKINFO, CFG_BOOLEAN, NULL },
+      { CONFNAME_GUESTINFO_DISABLEQUERYDISKINFO, "guestinfo", CONFNAME_GUESTINFO_DISABLEQUERYDISKINFO, CFG_BOOLEAN, NULL },
       { CONFNAME_DISABLETOOLSVERSION, "vmsvc", CONFNAME_DISABLETOOLSVERSION, CFG_BOOLEAN, NULL },
 #if defined(_WIN32)
-      /* Tray options. */
-      { CONFNAME_SHOW_WIRELESS_ICON, "vmtray", CONFNAME_SHOW_WIRELESS_ICON, CFG_BOOLEAN, NULL },
+      { CONFNAME_DISABLEPMTIMERWARNING, "desktopevents", CONFNAME_DISABLEPMTIMERWARNING, CFG_BOOLEAN, NULL },
 #endif
+      /* Unity options. */
+      { "unity.debug", CONFGROUPNAME_UNITY, CONFNAME_UNITY_ENABLEDEBUG, CFG_BOOLEAN, NULL },
+      { "unity.forceEnable", CONFGROUPNAME_UNITY, CONFNAME_UNITY_FORCEENABLE, CFG_BOOLEAN, NULL },
+      { "unity.desktop.backgroundColor", CONFGROUPNAME_UNITY, CONFNAME_UNITY_BACKGROUNDCOLOR, CFG_INTEGER, NULL },
       /* Null terminator. */
       { NULL, }
    };
    const ConfigEntry *entry;
 
    for (entry = entries; entry->key != NULL; entry++) {
-      const char *value = GuestApp_GetDictEntry(old, entry->key);
-      const char *dfltValue = GuestApp_GetDictEntryDefault(old, entry->key);
+      const char *value = g_hash_table_lookup(old, entry->key);
 
-      if (value == NULL || (dfltValue != NULL && strcmp(value, dfltValue) == 0)) {
+      if (value == NULL) {
          continue;
       }
 
       switch (entry->type) {
       case CFG_BOOLEAN:
          {
-            gboolean val = GuestApp_GetDictEntryBool(old, entry->key);
+            gboolean val = Str_Strcasecmp(value, "TRUE") == 0;
             g_key_file_set_boolean(dst, entry->destGroup, entry->destKey, val);
             break;
          }
@@ -156,7 +247,7 @@ VMToolsConfigUpgrade(GuestApp_Dict *old,
       case CFG_INTEGER:
          {
             gint val;
-            if (GuestApp_GetDictEntryInt(old, entry->key, &val)) {
+            if (StrUtil_StrToInt(&val, value)) {
                g_key_file_set_integer(dst, entry->destGroup, entry->destKey, val);
             }
             break;
@@ -172,7 +263,7 @@ VMToolsConfigUpgrade(GuestApp_Dict *old,
          break;
 
       default:
-         g_assert_not_reached();
+         NOT_REACHED();
       }
    }
 }
@@ -184,8 +275,8 @@ VMToolsConfigUpgrade(GuestApp_Dict *old,
  * @return String with the default config path (should be freed by caller).
  */
 
-gchar *
-VMTools_GetToolsConfFile(void)
+static gchar *
+VMToolsGetToolsConfFile(void)
 {
    char *confPath = GuestApp_GetConfPath();
    gchar *confFilePath;
@@ -200,9 +291,9 @@ VMTools_GetToolsConfFile(void)
     */
    if (confPath == NULL) {
       confPath = GuestApp_GetConfPath();
-      g_assert(confPath != NULL);
+      ASSERT(confPath != NULL);
    }
-   confFilePath = g_strdup_printf("%s%c%s", confPath, DIRSEPC, CONF_FILE);
+   confFilePath = g_build_filename(confPath, CONF_FILE, NULL);
    free(confPath);
 
    return confFilePath;
@@ -210,38 +301,79 @@ VMTools_GetToolsConfFile(void)
 
 
 /**
- * Loads the configuration file at the given path. If an old configuration
- * file is detected, the caller can request for it to be automatically upgraded
- * to the new configuration format (the old configuration file is saved with a
+ * Loads the configuration file at the given path.
+ *
+ * If an old configuration file is detected and the current process has write
+ * permission to the file, the configuration data will automatically upgraded to
+ * the new configuration format (the old configuration file is saved with a
  * ".old" extension).
  *
- * @param[in] path         Path to the configuration file.
- * @param[in] flags        Flags for opening the file.
- * @param[in] autoUpgrade  Whether to try to upgrade old tools configuration.
+ * @param[in]     path     Path to the configuration file, or NULL for default
+ *                         Tools config file.
+ * @param[in]     flags    Flags for opening the file.
+ * @param[in,out] config   Where to store the config dictionary; when reloading
+ *                         the file, the old config object will be destroyed.
+ * @param[in,out] mtime    Last known modification time of the config file.
+ *                         When the function succeeds, will contain the new
+ *                         modification time read from the file. If NULL (or 0),
+ *                         the config dictionary is always loaded.
  *
- * @return A configuration dictionary, or NULL on error.
+ * @return Whether a new config dictionary was loaded.
  */
 
-GKeyFile *
+gboolean
 VMTools_LoadConfig(const gchar *path,
                    GKeyFileFlags flags,
-                   gboolean autoUpgrade)
+                   GKeyFile **config,
+                   time_t *mtime)
 {
    gchar *backup = NULL;
-   gchar *localPath;
-   GuestApp_Dict *old = NULL;
+   gchar *defaultPath = NULL;
+   gchar *localPath = NULL;
+   struct stat confStat;
+   GHashTable *old = NULL;
    GError *err = NULL;
-   GKeyFile *cfg;
+   GKeyFile *cfg = NULL;
 
-   cfg = g_key_file_new();
+   g_return_val_if_fail(config != NULL, FALSE);
 
-   localPath = VMTOOLS_GET_FILENAME_LOCAL(path, &err);
+   if (path == NULL) {
+      defaultPath = VMToolsGetToolsConfFile();
+   }
+
+   localPath = VMTOOLS_GET_FILENAME_LOCAL((path != NULL) ? path : defaultPath, &err);
    if (err != NULL) {
       g_warning("Error converting to local encoding: %s\n", err->message);
       goto exit;
    }
 
-   if (!File_IsFile(path) || File_GetSizeByPath(path) == 0) {
+   if (g_stat(localPath, &confStat) == -1) {
+      /*
+       * If the file doesn't exist, it's not an error. Just return an
+       * empty dictionary in that case. The mtime will be set to 0 if
+       * the caller requested it.
+       */
+      memset(&confStat, 0, sizeof confStat);
+      if (errno != ENOENT) {
+         g_warning("Failed to stat conf file: %s\n", strerror(errno));
+         goto exit;
+      } else {
+         cfg = g_key_file_new();
+         goto exit;
+      }
+   }
+
+   /* Check if we really need to load the data. */
+   if (mtime != NULL && confStat.st_mtime <= *mtime) {
+      goto exit;
+   }
+
+   /* Need to load the configuration data. */
+
+   cfg = g_key_file_new();
+
+   /* Empty file: just return an empty dictionary. */
+   if (confStat.st_size == 0) {
       goto exit;
    }
 
@@ -255,33 +387,35 @@ VMTools_LoadConfig(const gchar *path,
       goto error;
    }
 
-   /* Failed to load the config file; try to upgrade if requested. */
-   if (!autoUpgrade) {
-      goto error;
-   }
-
-   old = Conf_Load();
-   if (old == NULL) {
-      g_warning("Error loading old tools config data, bailing out.\n");
-      goto error;
-   }
-
-   VMToolsConfigUpgrade(old, cfg);
-   backup = g_strdup_printf("%s.old", path);
-
-   if (!File_IsFile(backup)) {
-      if (!File_Rename(path, backup)) {
-         g_warning("Error creating backup of old config file.\n");
+   /*
+    * Failed to load the config file; try to upgrade if requested. But only do
+    * it if the user is using the default conf file path; the legacy API doesn't
+    * allow us to provide a custom config file path.
+    */
+   if (path == NULL) {
+      old = VMToolsConfigLoadLegacy();
+      if (old == NULL) {
+         g_warning("Error loading old tools config data, bailing out.\n");
          goto error;
       }
-   } else {
-      g_warning("Backup config exists, skipping backup.\n");
-   }
 
-   g_clear_error(&err);
+      VMToolsConfigUpgrade(old, cfg);
+      backup = g_strdup_printf("%s.old", localPath);
 
-   if (!VMTools_WriteConfig(path, cfg, NULL)) {
-      goto error;
+      if (!g_file_test(backup, G_FILE_TEST_IS_REGULAR)) {
+         if (g_rename(localPath, backup) == -1) {
+            g_warning("Error creating backup of old config file.\n");
+            goto error;
+         }
+      } else {
+         g_warning("Backup config exists, skipping backup.\n");
+      }
+
+      g_clear_error(&err);
+
+      if (!VMTools_WriteConfig((path != NULL) ? path : defaultPath, cfg, NULL)) {
+         goto error;
+      }
    }
 
    goto exit;
@@ -293,83 +427,21 @@ error:
 exit:
    g_clear_error(&err);
    if (old != NULL) {
-      GuestApp_FreeDict(old);
+      g_hash_table_destroy(old);
    }
-   g_free(backup);
-   VMTOOLS_RELEASE_FILENAME_LOCAL(localPath);
-   return cfg;
-}
-
-
-/**
- * Reloads the configuration file at the given path if it has changed since the
- * given timestamp. No translation (such as in VMTools_LoadConfig()) will be
- * performed.
- *
- * @param[in]     path     Path to the config file.
- * @param[in]     flags    Flags to use when opening the file.
- * @param[in,out] config   GKeyFile object; when reloading the file, the old
- *                         config object will be destroyed.
- * @param[in,out] mtime    Last known modification time of the config file.
- *                         When the function succeeds, will contain the new
- *                         modification time read from the file.
- *
- * @return Whether the file was reloaded.
- */
-
-gboolean
-VMTools_ReloadConfig(const gchar *path,
-                     GKeyFileFlags flags,
-                     GKeyFile **config,
-                     time_t *mtime)
-{
-   struct stat confStat;
-   gboolean ret = FALSE;
-   GKeyFile *newConfig = NULL;
-
-   g_assert(config != NULL);
-   g_assert(mtime != NULL);
-
-   if (g_stat(path, &confStat) == -1) {
-      g_warning("Failed to stat conf file: %s\n", strerror(errno));
-      goto exit;
-   }
-
-   if (*mtime == 0 || confStat.st_mtime > *mtime) {
-      GError *err = NULL;
-      gchar *localPath;
-
-      localPath = VMTOOLS_GET_FILENAME_LOCAL(path, &err);
-      if (err != NULL) {
-         g_warning("Error converting to local encoding: %s\n", err->message);
-         goto exit;
-      }
-
-      newConfig = g_key_file_new();
-      g_key_file_load_from_file(newConfig, localPath, flags, &err);
-
-      if (err != NULL) {
-         g_warning("Error loading conf file: %s\n", err->message);
-         g_clear_error(&err);
-         g_key_file_free(newConfig);
-         newConfig = NULL;
-      } else {
-         ret = TRUE;
-      }
-
-      VMTOOLS_RELEASE_FILENAME_LOCAL(localPath);
-   }
-
-   if (newConfig != NULL) {
+   if (cfg != NULL) {
       if (*config != NULL) {
          g_key_file_free(*config);
       }
-      *config = newConfig;
-      *mtime = confStat.st_mtime;
+      *config = cfg;
+      if (mtime != NULL) {
+         *mtime = confStat.st_mtime;
+      }
    }
-
-exit:
-   return ret;
+   g_free(backup);
+   g_free(defaultPath);
+   VMTOOLS_RELEASE_FILENAME_LOCAL(localPath);
+   return (cfg != NULL);
 }
 
 
@@ -390,14 +462,18 @@ VMTools_WriteConfig(const gchar *path,
 {
    gboolean ret = FALSE;
    gchar *data = NULL;
+   gchar *defaultPath = NULL;
    gchar *localPath = NULL;
    FILE *out = NULL;
    GError *lerr = NULL;
 
-   g_assert(path != NULL);
-   g_assert(config != NULL);
+   ASSERT(config != NULL);
 
-   localPath = VMTOOLS_GET_FILENAME_LOCAL(path, &lerr);
+   if (path == NULL) {
+      defaultPath = VMToolsGetToolsConfFile();
+   }
+
+   localPath = VMTOOLS_GET_FILENAME_LOCAL((path != NULL) ? path : defaultPath, &lerr);
    if (lerr != NULL) {
       g_warning("Error converting to local encoding: %s\n", lerr->message);
       goto exit;
@@ -437,6 +513,7 @@ exit:
       g_clear_error(&lerr);
    }
    g_free(data);
+   g_free(defaultPath);
    VMTOOLS_RELEASE_FILENAME_LOCAL(localPath);
    return ret;
 }

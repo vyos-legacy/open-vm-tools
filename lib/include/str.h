@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * str.h --
  *
@@ -30,7 +44,7 @@
 #define INCLUDE_ALLOW_VMCORE
 #include "includeCheck.h"
 
-#if defined(GLIBC_VERSION_22)
+#if defined(__linux__)
 #include <wchar.h>
 #elif defined(_WIN32)
 #include <tchar.h>
@@ -46,8 +60,8 @@
  * These platforms use bsd_vsnprintf().
  * This does not mean it has bsd_vsnwprintf().
  */
-#if defined _WIN32 && !defined STR_NO_WIN32_LIBS || \
-    defined __linux__ && !defined N_PLAT_NLM || defined __APPLE__
+#if (defined _WIN32 && !defined STR_NO_WIN32_LIBS) || \
+    defined __linux__ || defined __APPLE__
 #define HAS_BSD_PRINTF 1
 #endif
 
@@ -73,6 +87,11 @@
  * strings of "wchar_t" units, regardless of platform.
  */
 
+#ifdef HAS_BSD_PRINTF
+EXTERN int Str_Sprintf_C_Locale(char *buf, size_t max,
+                                const char *fmt, ...) PRINTF_DECL(3, 4);
+#endif
+
 EXTERN int Str_Sprintf(char *buf, size_t max,
                        const char *fmt, ...) PRINTF_DECL(3, 4);
 EXTERN int Str_Snprintf(char *buf, size_t len,
@@ -94,7 +113,7 @@ EXTERN char *Str_SafeAsprintf(size_t *length,
 EXTERN char *Str_SafeVasprintf(size_t *length, const char *format,
                                va_list arguments);
 
-#if defined(_WIN32) || defined(GLIBC_VERSION_22) // {
+#if defined(_WIN32) || defined(__linux__) // {
 
 /*
  * wchar_t versions
@@ -153,7 +172,7 @@ unsigned char *Str_Mbscat(char *buf, const char *src,
 #endif
 #endif
 
-#endif // } defined(_WIN32) || defined(GLIBC_VERSION_22)
+#endif // } defined(_WIN32) || defined(__linux__)
 
 
 /*
@@ -176,11 +195,6 @@ unsigned char *Str_Mbscat(char *buf, const char *src,
    #define Str_Strncasecmp(s1, s2, n) _strnicmp(s1, s2, n)
    #define Str_ToUpper(s) _strupr(s)
    #define Str_ToLower(s) _strlwr(s)
-#elif defined(N_PLAT_NLM)
-   #define Str_Strcasecmp(s1, s2) stricmp(s1, s2)
-   #define Str_Strncasecmp(s1, s2, n) strnicmp(s1, s2, n)
-   char *Str_ToUpper(char *string);
-   char *Str_ToLower(char *string);
 #else
    #define Str_Strcasecmp(s1, s2) strcasecmp(s1, s2)
    #define Str_Strncasecmp(s1, s2, n) strncasecmp(s1, s2, n)

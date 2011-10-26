@@ -22,17 +22,10 @@
 # that all of our macros are in the 'm4' subdirectory.
 ACLOCAL_AMFLAGS = -I m4
 
-# These subdirectories require X, and may be disabled using --without-x
-X11_SUBDIRS =
-X11_SUBDIRS += vmware-user
-X11_SUBDIRS += vmware-user-suid-wrapper
-
 SUBDIRS =
 SUBDIRS += lib
 SUBDIRS += libvmtools
-if HAVE_X11
-   SUBDIRS += $(X11_SUBDIRS)
-endif
+SUBDIRS += libhgfs
 SUBDIRS += hgfsclient
 if BUILD_HGFSMOUNTER
    SUBDIRS += hgfsmounter
@@ -43,11 +36,19 @@ SUBDIRS += rpctool
 SUBDIRS += scripts
 SUBDIRS += services
 SUBDIRS += toolbox
+if HAVE_X11
+   SUBDIRS += vmware-user-suid-wrapper
+endif
 if HAVE_FUSE
    SUBDIRS += vmblock-fuse
 endif
+if !LINUX
+   SUBDIRS += vmblockmounter
+endif
 SUBDIRS += xferlogs
-SUBDIRS += tests
+if ENABLE_TESTS
+   SUBDIRS += tests
+endif
 if WITH_KERNEL_MODULES
    SUBDIRS += modules
 endif

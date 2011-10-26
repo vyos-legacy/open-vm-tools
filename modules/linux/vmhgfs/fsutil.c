@@ -47,8 +47,6 @@
 #include "hgfsProto.h"
 #include "vm_basic_types.h"
 
-static struct inode *HgfsInodeLookup(struct super_block *sb,
-                                     ino_t ino);
 static void HgfsSetFileType(struct inode *inode,
                             HgfsAttrInfo const *attr);
 static int HgfsUnpackGetattrReply(HgfsReq *req,
@@ -63,90 +61,6 @@ static int HgfsPackGetattrRequest(HgfsReq *req,
 /*
  * Private function implementations.
  */
-
-/*
- *----------------------------------------------------------------------
- *
- * HgfsInodeLookup --
- *
- *    The equivalent of ilookup() in the Linux kernel. We have an HGFS
- *    specific implementation in order to hack around the lack of
- *    ilookup() on older kernels.
- *
- * Results:
- *    Pointer to the VFS inode using the current inode number if it
- *    already exists in the inode cache, NULL otherwise.
- *
- * Side effects:
- *    None
- *
- *----------------------------------------------------------------------
- */
-
-static struct inode *
-HgfsInodeLookup(struct super_block *sb,  // IN: Superblock of this fs
-                ino_t ino)               // IN: Inode number to look up
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 42)
-   return ilookup(sb, ino);
-#else
-   struct inode *inode;
-   HgfsInodeInfo *iinfo;
-
-   /*
-    * Note that returning NULL in both of these cases will make the
-    * caller think that no such inode exists, which is correct. In the first
-    * case, we failed to allocate an inode inside iget(), meaning the inode
-    * number didn't already exist in the inode cache. In the second case, the
-    * inode got marked bad inside read_inode, also indicative of a new inode
-    * allocation.
-    */
-   inode = HgfsGetInode(sb, ino);
-   if (inode == NULL) {
-      LOG(4, (KERN_DEBUG "VMware hgfs: HgfsInodeLookup: iget ran out of "
-              "memory and returned NULL\n"));
-      return NULL;
-   }
-   if (is_bad_inode(inode)) {
-      LOG(4, (KERN_DEBUG "VMware hgfs: HgfsInodeLookup: inode marked bad\n"));
-      goto iput_and_exit;
-   }
-
-   /*
-    * Our read_inode function should guarantee that if we're here, iinfo should
-    * have been allocated already.
-    */
-   iinfo = INODE_GET_II_P(inode);
-   ASSERT(iinfo);
-   if (iinfo == NULL) {
-      LOG(4, (KERN_DEBUG "VMware hgfs: HgfsInodeLookup: found corrupt inode, "
-              "bailing out\n"));
-      goto iput_and_exit;
-   }
-
-   /*
-    * It's HGFS's job to make sure this is set to TRUE in all inodes on which
-    * we hold a reference. If it is set to TRUE, we return the inode, just as
-    * ilookup() does.
-    *
-    * XXX: Note that there exists a race here and in HgfsIget (between the time
-    * that the inode is unlocked and isReferencedInode is set), but I'm hoping
-    * that it doesn't matter because anyone executing this code can't posibly
-    * be "CONFIG_PREEMPT=y".
-    */
-   if (iinfo->isReferencedInode) {
-      goto exit;
-   }
-
-  iput_and_exit:
-   iput(inode);
-   inode = NULL;
-
-  exit:
-   return inode;
-#endif
-}
-
 
 /*
  *----------------------------------------------------------------------
@@ -250,7 +164,7 @@ HgfsUnpackGetattrReply(HgfsReq *req,        // IN: Reply packet
       length = replyV3->symlinkTarget.length;
 
       /* Skip the symlinkTarget if it's too long. */
-      if (length > HGFS_NAME_BUFFER_SIZET(sizeof *replyV3 + sizeof(HgfsReply))) {
+      if (length > HGFS_NAME_BUFFER_SIZET(req->bufferSize, sizeof *replyV3 + sizeof(HgfsReply))) {
          LOG(4, (KERN_DEBUG "VMware hgfs: HgfsUnpackGetattrReply: symlink "
                  "target name too long, ignoring\n"));
          return -ENAMETOOLONG;
@@ -262,7 +176,7 @@ HgfsUnpackGetattrReply(HgfsReq *req,        // IN: Reply packet
       length = replyV2->symlinkTarget.length;
 
       /* Skip the symlinkTarget if it's too long. */
-      if (length > HGFS_NAME_BUFFER_SIZE(replyV2)) {
+      if (length > HGFS_NAME_BUFFER_SIZE(req->bufferSize, replyV2)) {
          LOG(4, (KERN_DEBUG "VMware hgfs: HgfsUnpackGetattrReply: symlink "
                  "target name too long, ignoring\n"));
          return -ENAMETOOLONG;
@@ -365,7 +279,7 @@ HgfsPackGetattrRequest(HgfsReq *req,            // IN/OUT: Request buffer
       }
       requestV3->reserved = 0;
       reqSize = HGFS_REQ_PAYLOAD_SIZE_V3(requestV3);
-      reqBufferSize = HGFS_NAME_BUFFER_SIZET(reqSize);
+      reqBufferSize = HGFS_NAME_BUFFER_SIZET(req->bufferSize, reqSize);
       break;
    }
 
@@ -394,7 +308,7 @@ HgfsPackGetattrRequest(HgfsReq *req,            // IN/OUT: Request buffer
          fileNameLength = &requestV2->fileName.length;
       }
       reqSize = sizeof *requestV2;
-      reqBufferSize = HGFS_NAME_BUFFER_SIZE(requestV2);
+      reqBufferSize = HGFS_NAME_BUFFER_SIZE(req->bufferSize, requestV2);
       break;
    }
 
@@ -408,7 +322,7 @@ HgfsPackGetattrRequest(HgfsReq *req,            // IN/OUT: Request buffer
       fileName = requestV1->fileName.name;
       fileNameLength = &requestV1->fileName.length;
       reqSize = sizeof *requestV1;
-      reqBufferSize = HGFS_NAME_BUFFER_SIZE(requestV1);
+      reqBufferSize = HGFS_NAME_BUFFER_SIZE(req->bufferSize, requestV1);
       break;
    }
 
@@ -813,19 +727,15 @@ HgfsPrivateGetattr(struct dentry *dentry,  // IN: Dentry containing name
                    HgfsAttrInfo *attr,     // OUT: Attr to copy into
                    char **fileName)        // OUT: pointer to allocated file name
 {
-   struct HgfsSuperInfo *si;
    HgfsReq *req;
    HgfsStatus replyStatus;
    HgfsOp opUsed;
    int result = 0;
-   HgfsRequest *requestHeader;
    Bool allowHandleReuse = TRUE;
 
    ASSERT(dentry);
    ASSERT(dentry->d_sb);
    ASSERT(attr);
-
-   si = HGFS_SB_TO_COMMON(dentry->d_sb);
 
    req = HgfsGetNewRequest();
    if (!req) {
@@ -834,7 +744,6 @@ HgfsPrivateGetattr(struct dentry *dentry,  // IN: Dentry containing name
       result = -ENOMEM;
       goto out;
    }
-   requestHeader = (HgfsRequest *)(HGFS_REQ_PAYLOAD(req));
 
   retry:
 
@@ -977,14 +886,14 @@ HgfsIget(struct super_block *sb,         // IN: Superblock of this fs
        * XXX: Is this worth the value? We're mixing server-provided inode
        * numbers with our own randomly chosen inode numbers.
        *
-       * XXX: This logic is also racy. After our call to HgfsInodeLookup(), it's
+       * XXX: This logic is also racy. After our call to ilookup(), it's
        * possible another caller came in and grabbed that inode number, which
        * will cause us to collide in iget() and step on their inode.
        */
       if (attr->mask & HGFS_ATTR_VALID_FILEID) {
          struct inode *oldInode;
 
-         oldInode = HgfsInodeLookup(sb, attr->hostFileId);
+         oldInode = ilookup(sb, attr->hostFileId);
          if (oldInode) {
             /*
              * If this inode's inode number was generated via iunique(), we
@@ -1160,21 +1069,19 @@ HgfsInstantiate(struct dentry *dentry,    // IN: Dentry to use
  */
 
 int
-HgfsBuildPath(unsigned char *buffer,  // IN/OUT: Buffer to write into
+HgfsBuildPath(char *buffer,           // IN/OUT: Buffer to write into
               size_t bufferLen,       // IN: Size of buffer
               struct dentry *dentry)  // IN: First dentry to walk
 {
    int retval = 0;
    size_t shortestNameLength;
    HgfsSuperInfo *si;
-   char *originalBuffer;
 
    ASSERT(buffer);
    ASSERT(dentry);
    ASSERT(dentry->d_sb);
 
    si = HGFS_SB_TO_COMMON(dentry->d_sb);
-   originalBuffer = buffer;
 
    /*
     * Buffer must hold at least the share name (which is already prefixed with
@@ -1242,8 +1149,7 @@ HgfsBuildPath(unsigned char *buffer,  // IN/OUT: Buffer to write into
 
    /* Don't forget the share name length (which also accounts for the nul). */
    retval += shortestNameLength;
-   LOG(4, (KERN_DEBUG "VMware hgfs: HgfsBuildPath: Built \"%s\"\n",
-   	   originalBuffer));
+   LOG(4, (KERN_DEBUG "VMware hgfs: HgfsBuildPath: Built \"%s\"\n", buffer));
 
    return retval;
 }
@@ -1722,11 +1628,9 @@ HgfsSetUidGid(struct inode *parent,     // IN: parent inode
  *
  * HgfsGetInode --
  *
- *    This function replaces iget() and should be called instead of it. In newer
- *    kernels that have removed the iget() interface,  GetInode() obtains an inode
- *    and if it is a new one, then initializes the inode by calling
- *    HgfsDoReadInode(). In older kernels that support the iget() interface,
- *    HgfsDoReadInode() is called by iget() internally.
+ *    This function replaces iget() and should be called instead of it.
+ *    HgfsGetInode() obtains an inode and, if it is a new one, initializes
+ *    it calling HgfsDoReadInode().
  *
  * Results:
  *    A new inode object on success, NULL on error.
@@ -1741,7 +1645,6 @@ struct inode *
 HgfsGetInode(struct super_block *sb, // IN: file system superblock object
 	     ino_t ino)              // IN: inode number to assign to new inode
 {
-#ifdef VMW_USE_IGET_LOCKED
    struct inode *inode;
 
    inode = iget_locked(sb, ino);
@@ -1750,9 +1653,6 @@ HgfsGetInode(struct super_block *sb, // IN: file system superblock object
       unlock_new_inode(inode);
    }
    return inode;
-#else
-   return iget(sb, ino);
-#endif
 }
 
 
@@ -1790,15 +1690,6 @@ HgfsDoReadInode(struct inode *inode)  // IN: Inode to initialize
     * allocation and mark the inode "bad" if the allocation fails. This'll
     * make all subsequent operations on the inode fail, which is what we want.
     */
-#ifndef VMW_EMBED_INODE
-   iinfo = kmem_cache_alloc(hgfsInodeCache, GFP_KERNEL);
-   if (!iinfo) {
-      LOG(4, (KERN_DEBUG "VMware hgfs: HgfsDoReadInode: no memory for "
-              "iinfo!\n"));
-      make_bad_inode(inode);
-      return;
-   }
-#endif
    INODE_SET_II_P(inode, iinfo);
    INIT_LIST_HEAD(&iinfo->files);
    iinfo->hostFileId = 0;

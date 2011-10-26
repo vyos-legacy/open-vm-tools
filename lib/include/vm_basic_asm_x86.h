@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * vm_basic_asm_x86.h
  *
@@ -26,10 +40,9 @@
 #define _VM_BASIC_ASM_X86_H_
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMMON
-#define INCLUDE_ALLOW_VMNIXMOD
 #define INCLUDE_ALLOW_VMK_MODULE
 #define INCLUDE_ALLOW_VMKERNEL
 #define INCLUDE_ALLOW_DISTRIBUTE
@@ -45,35 +58,6 @@
 #error "x86-64 not supported"
 #endif
 
-
-
-
-/*
- * from linux: usr/include/asm/io.h
- */
-#ifdef __GNUC__
-#ifndef __SLOW_DOWN_IO
-#ifdef SLOW_IO_BY_JUMPING
-#define __SLOW_DOWN_IO __asm__ __volatile__("jmp 1f\n1:\tjmp 1f\n1:")
-#else
-#define __SLOW_DOWN_IO __asm__ __volatile__("outb %al,$0x80")
-#endif
-#endif
-#elif defined _MSC_VER
-#ifdef SLOW_IO_BY_JUMPING
-#define __SLOW_DOWN_IO __asm jmp SHORT $+2 __asm  jmp SHORT $+2
-#else
-#define __SLOW_DOWN_IO __asm out 80h,al
-#endif
-#else
-#error
-#endif
-
-#ifdef REALLY_SLOW_IO
-#define SLOW_DOWN_IO { __SLOW_DOWN_IO; __SLOW_DOWN_IO; __SLOW_DOWN_IO; __SLOW_DOWN_IO; }
-#else
-#define SLOW_DOWN_IO __SLOW_DOWN_IO
-#endif
 
 /*
  * FXSAVE/FXRSTOR
@@ -98,22 +82,23 @@
  */
 #if defined(__GNUC__)
 static INLINE void 
-FXSAVE_ES1(uint8 *save)
+FXSAVE_ES1(void *save)
 {
-   __asm__ __volatile__ ("fxsave %0\n" : "=m" (*save) : : "memory");
+   __asm__ __volatile__ ("fxsave %0\n" : "=m" (*(uint8 *)save) : : "memory");
 }
 
 static INLINE void 
-FXRSTOR_ES1(const uint8 *load)
+FXRSTOR_ES1(const void *load)
 {
-   __asm__ __volatile__ ("fxrstor %0\n" : : "m" (*load) : "memory");
+   __asm__ __volatile__ ("fxrstor %0\n"
+                         : : "m" (*(const uint8 *)load) : "memory");
 }
 
 static INLINE void 
-FXRSTOR_AMD_ES0(const uint8 *load)
+FXRSTOR_AMD_ES0(const void *load)
 {
    uint64 dummy = 0;
-      
+
    __asm__ __volatile__ 
        ("fnstsw  %%ax    \n"     // Grab x87 ES bit
         "bt      $7,%%ax \n"     // Test ES bit
@@ -125,8 +110,95 @@ FXRSTOR_AMD_ES0(const uint8 *load)
                                  // x87 exception pointers.
         "fxrstor %1      \n"
         :  
-        : "m" (dummy), "m" (*load)
+        : "m" (dummy), "m" (*(const uint8 *)load)
         : "ax", "memory");
+}
+#endif /* __GNUC__ */
+
+/*
+ * XSAVE/XRSTOR
+ *     save/restore GSSE/SIMD/MMX fpu state
+ *
+ * The pointer passed in must be 64-byte aligned.
+ * See above comment for more information.
+ */
+#if defined(__GNUC__) && (defined(VMM) || defined(VMKERNEL) || defined(FROBOS))
+
+static INLINE void 
+XSAVE_ES1(void *save, uint64 mask)
+{
+#if __GNUC__ < 4 || __GNUC__ == 4 && __GNUC_MINOR__ == 1
+   __asm__ __volatile__ (
+        ".byte 0x0f, 0xae, 0x21 \n"
+        :
+        : "c" ((uint8 *)save), "a" ((uint32)mask), "d" ((uint32)(mask >> 32))
+        : "memory");
+#else
+   __asm__ __volatile__ (
+        "xsave %0 \n"
+        : "=m" (*(uint8 *)save)
+        : "a" ((uint32)mask), "d" ((uint32)(mask >> 32))
+        : "memory");
+#endif
+}
+
+static INLINE void 
+XSAVEOPT_ES1(void *save, uint64 mask)
+{
+   __asm__ __volatile__ (
+        ".byte 0x0f, 0xae, 0x31 \n"
+        :
+        : "c" ((uint8 *)save), "a" ((uint32)mask), "d" ((uint32)(mask >> 32))
+        : "memory");
+}
+
+static INLINE void 
+XRSTOR_ES1(const void *load, uint64 mask)
+{
+#if __GNUC__ < 4 || __GNUC__ == 4 && __GNUC_MINOR__ == 1
+   __asm__ __volatile__ (
+        ".byte 0x0f, 0xae, 0x29 \n"
+        :
+        : "c" ((const uint8 *)load),
+          "a" ((uint32)mask), "d" ((uint32)(mask >> 32))
+        : "memory");
+#else
+   __asm__ __volatile__ (
+        "xrstor %0 \n"
+        :
+        : "m" (*(const uint8 *)load),
+          "a" ((uint32)mask), "d" ((uint32)(mask >> 32))
+        : "memory");
+#endif
+}
+
+static INLINE void 
+XRSTOR_AMD_ES0(const void *load, uint64 mask)
+{
+   uint64 dummy = 0;
+
+   __asm__ __volatile__ 
+       ("fnstsw  %%ax    \n"     // Grab x87 ES bit
+        "bt      $7,%%ax \n"     // Test ES bit
+        "jnc     1f      \n"     // Jump if ES=0
+        "fnclex          \n"     // ES=1. Clear it so fild doesn't trap
+        "1:              \n"
+        "ffree   %%st(7) \n"     // Clear tag bit - avoid poss. stack overflow
+        "fildl   %0      \n"     // Dummy Load from "safe address" changes all
+                                 // x87 exception pointers.
+        "mov %%ebx, %%eax \n"
+#if __GNUC__ < 4 || __GNUC__ == 4 && __GNUC_MINOR__ == 1
+        ".byte 0x0f, 0xae, 0x29 \n"
+        :
+        : "m" (dummy), "c" ((const uint8 *)load),
+          "b" ((uint32)mask), "d" ((uint32)(mask >> 32))
+#else
+        "xrstor %1 \n"
+        :
+        : "m" (dummy), "m" (*(const uint8 *)load),
+          "b" ((uint32)mask), "d" ((uint32)(mask >> 32))
+#endif
+        : "eax", "memory");
 }
 #endif /* __GNUC__ */
 
@@ -444,7 +516,7 @@ Muls64x32s64(int64 multiplicand, uint32 multiplier, uint32 shift)
            "shrdl %%edx, %%eax\n\t"   // result = hi(p2):hi(p1):lo(p1) >> shift
            "shrdl %1, %%edx\n"
         "3:\n\t"
-           : "=A" (result), "=&r" (tmp1), "=&r" (tmp2)
+           : "=A" (result), "=&r" (tmp1), "=&rm" (tmp2)
            : "0" (multiplicand), "rm" (multiplier), "c" (shift)
            : "cc");
    return result;

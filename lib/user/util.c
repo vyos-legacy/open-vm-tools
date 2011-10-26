@@ -36,6 +36,7 @@
 # include <io.h>
 # include <process.h>
 # include "coreDump.h"
+# include "getoptWin32.h"
 #endif
 
 #include <fcntl.h>
@@ -46,8 +47,9 @@
 #include <errno.h>
 #include <ctype.h>
 
-#if !defined(_WIN32) && !defined(N_PLAT_NLM)
+#if !defined(_WIN32)
 #  include <unistd.h>
+#  include <getopt.h>
 #  include <pwd.h>
 #  include <dlfcn.h>
 #endif
@@ -85,10 +87,6 @@ struct UtilVector {
    int len;
 };
 
-#if defined(_WIN32)
-#include "win32util.h"
-static int UtilTokenHasGroup(HANDLE token, SID *group);
-#endif
 
 #ifdef VM_X86_64
 #   if defined(__GNUC__) && (!defined(USING_AUTOCONF) || defined(HAVE_UNWIND_H))
@@ -115,12 +113,6 @@ struct UtilBacktraceToBufferData {
    size_t           len;
 };
 #endif /* UTIL_BACKTRACE_USE_UNWIND */
-
-#if !defined(_WIN32) && !defined(N_PLAT_NLM)
-static Unicode GetHomeDirectory(ConstUnicode name);
-static Unicode GetLoginName(int uid);
-#endif
-static Bool IsAlphaOrNum(char ch);
 
 
 /*
@@ -255,6 +247,37 @@ Util_Checksumv(void *iov,      // IN
    }
 
    return checksum;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Util_HashString --
+ *
+ *      Get a hash of the given NUL terminated string using the djb2
+ *      hash algorithm.
+ *
+ * Results:
+ *      The hashed value.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+uint32
+Util_HashString(const char *str)  // IN:
+{
+   uint32 hash = 5381;
+   int c;
+
+   while ((c = *str++) != 0) {
+      hash = ((hash << 5) + hash) + c;
+   }
+
+   return hash;
 }
 
 
@@ -405,7 +428,7 @@ UtilBacktraceFromPointerCallback(struct _Unwind_Context *ctx, // IN: Unwind cont
    return _URC_END_OF_STACK;
 }
 
-#if !defined(_WIN32) && !defined(N_PLAT_NLM) && !defined(VMX86_TOOLS)
+#if !defined(_WIN32) && !defined(VMX86_TOOLS)
 /*
  *-----------------------------------------------------------------------------
  *
@@ -535,7 +558,7 @@ Util_BacktraceFromPointerWithFunc(uintptr_t *basePtr,
    data.skippedFrames = 0;
    _Unwind_Backtrace(UtilBacktraceFromPointerCallback, &data);
 
-#if !defined(_WIN32) && !defined(N_PLAT_NLM) && !defined(VMX86_TOOLS)
+#if !defined(_WIN32) && !defined(VMX86_TOOLS)
    /* 
     * We do a separate pass here that includes symbols in order to
     * make sure the base backtrace that does not call dladdr() etc.
@@ -552,7 +575,7 @@ Util_BacktraceFromPointerWithFunc(uintptr_t *basePtr,
 #elif !defined(VM_X86_64)
    uintptr_t *x = basePtr;
    int i;
-#if !defined(_WIN32) && !defined(N_PLAT_NLM) && !defined(VMX86_TOOLS)
+#if !defined(_WIN32) && !defined(VMX86_TOOLS)
    Dl_info dli;
 #endif
 
@@ -565,7 +588,7 @@ Util_BacktraceFromPointerWithFunc(uintptr_t *basePtr,
       x = (uintptr_t *) x[0];
    }
 
-#if !defined(_WIN32) && !defined(N_PLAT_NLM) && !defined(VMX86_TOOLS)
+#if !defined(_WIN32) && !defined(VMX86_TOOLS)
    /* 
     * We do a separate pass here that includes symbols in order to
     * make sure the base backtrace that does not call dladdr() etc.
@@ -748,302 +771,8 @@ Util_BacktraceWithFunc(int bugNr, Util_OutputFunc outFunc, void *outFuncData)
 }
 
 
-#if !defined(_WIN32) && !defined(N_PLAT_NLM)
-/*
- *----------------------------------------------------------------------
- *
- * UtilDoTildeSubst --
- *
- *	Given a string following a tilde, this routine returns the
- *	corresponding home directory.
- *
- * Results:
- *	The result is a pointer to a static string containing the home
- *	directory in native format.  The returned string is a newly
- *      allocated string which may/must be freed by the caller
- *
- * Side effects:
- *	Information may be left in resultPtr.
- *
- * Credit: derived from J.K.Ousterhout's Tcl
- *----------------------------------------------------------------------
- */
-
-static Unicode
-UtilDoTildeSubst(Unicode user)  // IN - name of user
-{
-   Unicode str = NULL;
-
-   if (*user == '\0') {
-      str = Unicode_Duplicate(Posix_Getenv("HOME"));
-      if (str == NULL) {
-         Log("Could not expand environment variable HOME.\n");
-      }
-   } else {
-      str = GetHomeDirectory(user);
-      if (str == NULL) {
-         Log("Could not get information for user '%s'.\n", user);
-      }
-   }
-   return str;
-}
-#endif
-
-
-#ifndef N_PLAT_NLM
-
-/*
- *----------------------------------------------------------------------
- *
- * Util_ExpandString --
- *
- *      converts the strings by expanding "~", "~user" and environment
- *      variables
- *
- * Results:
- *
- *	Return a newly allocated string.  The caller is responsible
- *	for deallocating it.
- *
- *      Return NULL in case of error.
- *
- * Side effects:
- *      memory allocation
- *
- * Bugs:
- *      the handling of enviroment variable references is very
- *	simplistic: there can be only one in a pathname segment
- *	and it must appear last in the string
- *
- *----------------------------------------------------------------------
- */
-
-#define UTIL_MAX_PATH_CHUNKS 100
-
-Unicode
-Util_ExpandString(ConstUnicode fileName) // IN  file path to expand
-{
-   Unicode copy = NULL;
-   Unicode result = NULL;
-   int nchunk = 0;
-   char *chunks[UTIL_MAX_PATH_CHUNKS];
-   int chunkSize[UTIL_MAX_PATH_CHUNKS];
-   Bool freeChunk[UTIL_MAX_PATH_CHUNKS];
-   char *cp;
-   int i;
-
-   ASSERT(fileName);
-
-   copy = Unicode_Duplicate(fileName);
-
-   /*
-    * quick exit
-    */
-   if (!Unicode_StartsWith(fileName, "~") && 
-       Unicode_Find(fileName, "$") == UNICODE_INDEX_NOT_FOUND) {
-      return copy;
-   }
-
-   /*
-    * XXX Because the rest part of code depends pretty heavily from character
-    *     pointer operations we want to leave it as-is and don't want to re-work
-    *     it with using unicode library. However it's acceptable only until our
-    *     Unicode type is utf-8 and until code below works correctly with utf-8.
-    */
-
-   /*
-    * Break string into nice chunks for separate expansion.
-    *
-    * The rule for terminating a ~ expansion is historical.  -- edward
-    */
-
-   nchunk = 0;
-   for (cp = copy; *cp;) {
-      size_t len;
-      if (*cp == '$') {
-	 char *p;
-	 for (p = cp + 1; IsAlphaOrNum(*p) || *p == '_'; p++) {
-	 }
-	 len = p - cp;
-#if !defined(_WIN32)
-      } else if (cp == copy && *cp == '~') {
-	 len = strcspn(cp, DIRSEPS);
-#endif
-      } else {
-	 len = strcspn(cp, "$");
-      }
-      if (nchunk >= UTIL_MAX_PATH_CHUNKS) {
-         Msg_Append(MSGID(util.expandStringTooManyChunks)
-		    "Filename \"%s\" has too many chunks.\n",
-		    UTF8(fileName));
-	 goto out;
-      }
-      chunks[nchunk] = cp;
-      chunkSize[nchunk] = len;
-      freeChunk[nchunk] = FALSE;
-      nchunk++;
-      cp += len;
-   }
-
-   /*
-    * Expand leanding ~
-    */
-
-#if !defined(_WIN32)
-   if (chunks[0][0] == '~') {
-      char save = (cp = chunks[0])[chunkSize[0]];
-      cp[chunkSize[0]] = 0;
-      ASSERT(!freeChunk[0]);
-      chunks[0] = UtilDoTildeSubst(chunks[0] + 1);
-      cp[chunkSize[0]] = save;
-      if (chunks[0] == NULL) {
-         /* It could not be expanded, therefore leave as original. */
-         chunks[0] = cp;
-      } else {
-         /* It was expanded, so adjust the chunks. */
-         chunkSize[0] = strlen(chunks[0]);
-         freeChunk[0] = TRUE;
-      }
-   }
-#endif
-
-   /*
-    * Expand $
-    */
-
-   for (i = 0; i < nchunk; i++) {
-      char save;
-      Unicode expand = NULL;
-      char buf[100];
-#if defined(_WIN32)
-      utf16_t bufW[100];
-#endif
-      cp = chunks[i];
-
-      if (*cp != '$' || chunkSize[i] == 1) {
-
-         /*
-          * Skip if the chuck has only the $ character.
-          * $ will be kept as a part of the pathname.
-          */
-
-	 continue;
-      }
-
-      save = cp[chunkSize[i]];
-      cp[chunkSize[i]] = 0;
-
-      /*
-       * $PID and $USER are interpreted specially.
-       * Others are just getenv().
-       */
-
-      expand = Unicode_Duplicate(Posix_Getenv(cp + 1));
-      if (expand != NULL) {
-      } else if (strcasecmp(cp + 1, "PID") == 0) {
-	 Str_Snprintf(buf, sizeof buf, "%"FMTPID, getpid());
-	 expand = Util_SafeStrdup(buf);
-      } else if (strcasecmp(cp + 1, "USER") == 0) {
-#if !defined(_WIN32)
-	 int uid = getuid();
-	 expand = GetLoginName(uid);
-#else
-	 DWORD n = ARRAYSIZE(bufW);
-	 if (GetUserNameW(bufW, &n)) {
-	    expand = Unicode_AllocWithUTF16(bufW);
-	 }
-#endif
-	 if (expand == NULL) {
-	    expand = Unicode_Duplicate("unknown");
-	 }
-      } else {
-	 Warning("Environment variable '%s' not defined in '%s'.\n",
-		 cp + 1, fileName);
-#if !defined(_WIN32)
-         /*
-          * Strip off the env variable string from the pathname.
-          */
-
-	 expand = Unicode_Duplicate("");
-
-#else    // _WIN32
-
-         /*
-          * The problem is we have really no way to distinguish the caller's
-          * intention is a dollar sign ($) is used as a part of the pathname
-          * or as an environment variable.
-          *
-          * If the token does not expand to an environment variable,
-          * then assume it is a part of the pathname. Do not strip it
-          * off like it is done in linux host (see above)
-          *
-          * XXX   We should also consider using %variable% convention instead
-          *       of $variable for Windows platform.
-          */
-
-         Str_Strcpy(buf, cp, 100);
-         expand = Unicode_AllocWithUTF8(buf);
-#endif
-      }
-
-      cp[chunkSize[i]] = save;
-
-      ASSERT(expand != NULL);
-      ASSERT(!freeChunk[i]);
-      chunks[i] = expand;
-      if (chunks[i] == NULL) {
-	 Msg_Append(MSGID(util.ExpandStringNoMemForChunk)
-		    "Cannot allocate memory to expand \"%s\" in \"%s\".\n",
-		    expand, UTF8(fileName));
-	 goto out;
-      }
-      chunkSize[i] = strlen(expand);
-      freeChunk[i] = TRUE;
-   }
-
-   /*
-    * Put all the chunks back together.
-    */
-
-   {
-      int size = 1;	// 1 for the terminating null
-      for (i = 0; i < nchunk; i++) {
-	 size += chunkSize[i];
-      }
-      result = malloc(size);
-   }
-   if (result == NULL) {
-      Msg_Append(MSGID(util.expandStringNoMemForResult)
-		 "Cannot allocate memory for the expansion of \"%s\".\n",
-		 UTF8(fileName));
-      goto out;
-   }
-   cp = result;
-   for (i = 0; i < nchunk; i++) {
-      memcpy(cp, chunks[i], chunkSize[i]);
-      cp += chunkSize[i];
-   }
-   *cp = 0;
-
-out:
-   /*
-    * Clean up and return.
-    */
-
-   for (i = 0; i < nchunk; i++) {
-      if (freeChunk[i]) {
-	 free(chunks[i]);
-      }
-   }
-   free(copy);
-
-   return result;
-}
-#endif /* !defined(N_PLAT_NLM) */
-
-
 /* XXX This should go in a separate utilPosix.c file --hpreg */
-#if !defined(_WIN32) && !defined(N_PLAT_NLM)
+#if !defined(_WIN32)
 /*
  *----------------------------------------------------------------------
  *
@@ -1112,7 +841,8 @@ Util_MakeSureDirExistsAndAccessible(char const *path,  // IN
  *
  *    On Win32, terminate the process and all of its threads, without
  *    calling any of the DLL termination handlers.
- *    On Linux, call exit().
+
+ *    On Linux, call _exit().
  *
  * Results:
  *    None
@@ -1127,9 +857,9 @@ void
 Util_ExitProcessAbruptly(int code) // IN
 {
 #if defined(_WIN32)
-   TerminateProcess(GetCurrentProcess(),code);
+   TerminateProcess(GetCurrentProcess(), code);
 #else
-   exit(code);
+   _exit(code);
 #endif
 }
 
@@ -1207,269 +937,141 @@ Util_CompareDotted(const char *s1, const char *s2)
 }
 
 
-#if defined(_WIN32)
 /*
  *-----------------------------------------------------------------------------
  *
- * UtilTokenHasGroup --
+ * Util_GetOpt --
  *
- *    Determine if the specified token has a particular group
+ *      A wrapper around getopt_long that avoids needing separate long and
+ *      short option lists.
+ *
+ *      To use this, the array of option structs must:
+ *      * Store the short option name in the 'val' member.
+ *      * Set the 'name' member to NULL if the option has a short name but no
+ *        long name.
+ *      * For options that have only a long name, 'val' should be set to a
+ *        unique value greater than UCHAR_MAX.
+ *      * Terminate the array with a sentinel value that zero-initializes both
+ *        'name' and 'val'.
  *
  * Results:
- *    1 if yes
- *    0 if no
- *    <0 on error
+ *      See getopt_long.
  *
  * Side effects:
- *    None
+ *      None
  *
  *-----------------------------------------------------------------------------
  */
 
-static int
-UtilTokenHasGroup(HANDLE token,
-		  SID *group)
+int
+Util_GetOpt(int argc,                  // IN
+            char * const *argv,        // IN
+            const struct option *opts, // IN
+            Util_NonOptMode mode)      // IN
 {
-   /*
-    * The code is from
-    * http://support.microsoft.com/support/kb/articles/Q118/6/26.ASP
-    * (HOWTO: Determine Whether a Thread Is Running in User Context of Local
-    * Administrator Account), modified as follows:
-    *
-    * . Removed the exception stuff
-    *
-    * . Fixed the token handle leak
-    *
-    * . Used DuplicateToken() which does just what we need instead of
-    *   ImpersonateSelf()/RevertToSelf() which does more, and which I believe
-    *   will not work if we are already impersonating ourselves
-    *
-    * . Allocated the SD on the stack
-    *
-    * . Got rid of the hardcoded DWORD in the computation of the ACL size
-    *
-    * . Used malloc()/free() instead of Local*()
-    *
-    * . Added comments
-    *
-    *  --hpreg
-    */
+   int ret = -1;
+
+   struct option *longOpts = NULL;
+   char *shortOptString = NULL;
 
    /*
-    * Make up private access rights --hpreg
+    * In the worst case, each character needs "::" to indicate that it takes
+    * an optional argument.
     */
-#define Util_HasAdminPriv_Read  (1 << 0)
-#define Util_HasAdminPriv_Write (1 << 1)
+   const size_t maxCharsPerShortOption = 3;
+   const size_t modePrefixSize = 1;
 
-   int ret;
-   HANDLE iToken;
-   SECURITY_DESCRIPTOR sd;
-   DWORD aclLen;
-   ACL *acl;
-   GENERIC_MAPPING gm;
-   PRIVILEGE_SET ps;
-   DWORD psLen;
-   DWORD granted;
-   BOOL status;
+   size_t n = 0;
+   size_t shortOptStringSize;
 
-   iToken = INVALID_HANDLE_VALUE;
-   acl = NULL;
-
-   /*
-    * Duplicate the token, because AccessCheck() requires an impersonation
-    * token --hpreg
-    */
-
-   if (DuplicateToken(token, SecurityImpersonation, &iToken) == 0) {
-      ret = -3;
-      goto end;
-   }
-
-   /*
-    * Construct a Security Descriptor with a Discretionary Access Control List
-    * that contains an Access Control Entry for the administrator group's
-    * Security IDentifier --hpreg
-    */
-
-   if (InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION) == 0) {
-      ret = -5;
-      goto end;
-   }
-
-   /*
-    * This magic formula comes from the documentation for
-    * InitializeAcl() --hpreg
-    */
-
-   aclLen  =    sizeof(ACL)
-             + (  sizeof(ACCESS_ALLOWED_ACE)
-                - sizeof(((ACCESS_ALLOWED_ACE *)0)->SidStart)
-                + GetLengthSid(group));
-   acl = malloc(aclLen);
-   if (acl == NULL) {
-      ret = -6;
-      goto end;
-   }
-
-   if (InitializeAcl(acl, aclLen, ACL_REVISION) == 0) {
-      ret = -7;
-      goto end;
-   }
-
-   if (AddAccessAllowedAce(acl, ACL_REVISION,
-          Util_HasAdminPriv_Read | Util_HasAdminPriv_Write, group) == 0) {
-      ret = -8;
-      goto end;
-   }
-
-   if (SetSecurityDescriptorDacl(&sd, TRUE, acl, FALSE) == 0) {
-      ret = -9;
-      goto end;
-   }
-
-   /*
-    * Set the owner and group of the SD, because AccessCheck() requires
-    * it --hpreg
-    */
-
-   if (SetSecurityDescriptorGroup(&sd, group, FALSE) == 0) {
-      ret = -10;
-      goto end;
-   }
-
-   if (SetSecurityDescriptorOwner(&sd, group, FALSE) == 0) {
-      ret = -11;
-      goto end;
-   }
-
-   /*
-    * Finally, check if the SD grants access to the calling thread --hpreg
-    */
-
-   gm.GenericRead    = Util_HasAdminPriv_Read;
-   gm.GenericWrite   = Util_HasAdminPriv_Write;
-   gm.GenericExecute = 0;
-   gm.GenericAll     = Util_HasAdminPriv_Read | Util_HasAdminPriv_Write;
-
-   psLen = sizeof(ps);
-   if (AccessCheck(&sd, iToken, Util_HasAdminPriv_Read, &gm, &ps, &psLen,
-          &granted, &status) == 0) {
-      ret = -12;
-      goto end;
-   }
-
-   ret = status ? 1 : 0;
-
-end:
-
-   if (iToken != INVALID_HANDLE_VALUE) {
-      if (CloseHandle(iToken) == 0 && ret >= 0) {
-         ret = -14;
+   while (!(opts[n].name == NULL && opts[n].val == 0)) {
+      if (UNLIKELY(n == SIZE_MAX)) {
+         /*
+          * Avoid integer overflow.  If you have this many options, you're
+          * doing something wrong.
+          */
+         ASSERT(FALSE);
+         goto exit;
       }
+      n++;
    }
 
-   free(acl);
-
-   return ret;
-
-#undef Util_HasAdminPriv_Read
-#undef Util_HasAdminPriv_Write
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * Util_TokenHasAdminPriv --
- *
- *    Determine if the specified token has administrator privileges
- *
- * Results:
- *    1 if yes
- *    0 if no
- *    <0 on error
- *
- * Side effects:
- *    None
- *
- *-----------------------------------------------------------------------------
- */
-
-int
-Util_TokenHasAdminPriv(HANDLE token)
-{
-   SID_IDENTIFIER_AUTHORITY sidIdentAuth = SECURITY_NT_AUTHORITY;
-   SID *adminGrp = NULL;
-   int ret;
-
-   /*
-    * Build the Security IDentifier of the administrator group --hpreg
-    */
-
-   if (AllocateAndInitializeSid(&sidIdentAuth, 2, SECURITY_BUILTIN_DOMAIN_RID,
-			        DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0,
-				&adminGrp) == 0) {
-      ret = -4;
-      goto end;
+   if (UNLIKELY(n > SIZE_MAX / sizeof *longOpts - 1)) {
+      /* Avoid integer overflow. */
+      ASSERT(FALSE);
+      goto exit;
+   }
+   longOpts = malloc((n + 1) * sizeof *longOpts);
+   if (longOpts == NULL) {
+      goto exit;
    }
 
-   ret = UtilTokenHasGroup(token, adminGrp);
-
-end:
-   if (adminGrp) {
-      FreeSid(adminGrp);
+   if (UNLIKELY(n > (SIZE_MAX - modePrefixSize - 1 /* NUL */) /
+                maxCharsPerShortOption)) {
+      /* Avoid integer overflow. */
+      ASSERT(FALSE);
+      goto exit;
    }
-   return ret;
-}
+   shortOptStringSize = n * maxCharsPerShortOption + modePrefixSize + 1 /* NUL */;
+   shortOptString = malloc(shortOptStringSize);
+   if (shortOptString == NULL) {
+      goto exit;
+   } else {
+      struct option empty = { 0 };
 
+      size_t i;
+      struct option *longOptOut = longOpts;
+      char *shortOptOut = shortOptString;
 
-/*
- *-----------------------------------------------------------------------------
- *
- * Util_TokenHasInteractPriv --
- *
- *    Determine if the specified token is logged in interactively.
- *    -- local logons and Remote Desktops logons
- *
- * Results:
- *    1 if yes
- *    0 if no
- *    <0 on error
- *
- * Side effects:
- *    None
- *
- *-----------------------------------------------------------------------------
- */
+      switch (mode) {
+         case UTIL_NONOPT_STOP:
+            *shortOptOut++ = '+';
+            break;
+         case UTIL_NONOPT_ALL:
+            *shortOptOut++ = '-';
+            break;
+         default:
+            break;
+      }
 
-int
-Util_TokenHasInteractPriv(HANDLE token)
-{
-   SID_IDENTIFIER_AUTHORITY sidIdentAuth = SECURITY_NT_AUTHORITY;
-   SID *interactiveGrp = NULL;
-   int ret;
+      for (i = 0; i < n; i++) {
+         int val = opts[i].val;
 
-   /*
-    * Build the Security IDentifier of the administrator group --hpreg
-    */
+         if (opts[i].name != NULL) {
+            *longOptOut++ = opts[i];
+         }
 
-   if (AllocateAndInitializeSid(&sidIdentAuth, 1, SECURITY_INTERACTIVE_RID,
-			        0, 0, 0, 0, 0, 0, 0,
-				&interactiveGrp) == 0) {
-      ret = -4;
-      goto end;
+         if (val > 0 && val <= UCHAR_MAX) {
+            int argSpec = opts[i].has_arg;
+
+            *shortOptOut++ = (char) val;
+
+            if (argSpec != no_argument) {
+               *shortOptOut++ = ':';
+
+               if (argSpec == optional_argument) {
+                  *shortOptOut++ = ':';
+               }
+            }
+         }
+      }
+
+      ASSERT(longOptOut - longOpts <= n);
+      *longOptOut = empty;
+
+      ASSERT(shortOptOut - shortOptString < shortOptStringSize);
+      *shortOptOut = '\0';
    }
 
-   ret = UtilTokenHasGroup(token, interactiveGrp);
+   ret = getopt_long(argc, argv, shortOptString, longOpts, NULL);
 
-end:
-   if (interactiveGrp) {
-      FreeSid(interactiveGrp);
-   }
+exit:
+   free(longOpts);
+   free(shortOptString);
    return ret;
 }
 
-#endif
+
 
 
 /*
@@ -1538,7 +1140,6 @@ end:
 #endif
 }
 
-#if !defined(N_PLAT_NLM)
 /*
  *-----------------------------------------------------------------------------
  *
@@ -1774,173 +1375,4 @@ Util_SeparateStrings(char *source,              // IN
    free(data);
 
    return stringVector;
-}
-
-#endif /* !defined(N_PLAT_NLM) */
-
-#if defined (__linux__) && !defined(VMX86_TOOLS)
-/*
- *-----------------------------------------------------------------------------
- *
- * UtilPrintLoadedObjectsCallback --
- *
- *       Callback from dl_iterate_phdr to add info for a single  
- *       loaded object to the log.
- *
- * Results:
- *       0: continue iterating/success 
- *       non-zero: stop iterating/error
- *
- * Side effects:
- *       None. 
- *
- *-----------------------------------------------------------------------------
- */
-
-static int
-UtilPrintLoadedObjectsCallback(struct dl_phdr_info *info,  //IN
-                                size_t size,               //IN
-                                void *data)                //IN
-{
-   /* Blank name means things like stack, which we don't care about */
-   if (strcmp(info->dlpi_name, "")) {
-      Log("Object %s loaded at %p\n", info->dlpi_name, 
-          (void *)info->dlpi_addr); 
-   }
-   return 0;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * Util_PrintLoadedObjects --
- *
- *      Print the list of loaded objects to the log.  Useful in
- *      parsing backtraces with ASLR.
- *
- * Results:
- *
- *      void
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------
- */
-
-void 
-Util_PrintLoadedObjects(void *addr_inside_exec) 
-{
-   Dl_info dli;
-
-   Log("Printing loaded objects\n"); 
-   if (dladdr(addr_inside_exec, &dli)) {
-      Log("Object %s loaded at %p\n", dli.dli_fname,
-          (void *)dli.dli_fbase);
-   }
-   dl_iterate_phdr(UtilPrintLoadedObjectsCallback, NULL);
-   Log("End printing loaded objects\n");
-}
-#endif
-
-#if !defined(_WIN32) && !defined(N_PLAT_NLM)
-
-/*
- *-----------------------------------------------------------------------------
- *
- * GetHomeDirectory --
- *
- *      Unicode wrapper for posix getpwnam call for working directory.
- *
- * Results:
- *      Returns initial working directory or NULL if it fails.
- *
- * Side effects:
- *	     None.
- *
- *-----------------------------------------------------------------------------
- */
-
-static Unicode
-GetHomeDirectory(ConstUnicode name) // IN: user name
-{
-   char *tmpname = NULL;
-   struct passwd *pw;
-   Unicode ret = NULL;
-
-   tmpname = Unicode_GetAllocBytes(name, STRING_ENCODING_DEFAULT);
-
-   pw = getpwnam(tmpname);
-   free(tmpname);
-
-   if (!pw || (pw && !pw->pw_dir)) {
-      endpwent();
-      return NULL;
-   }
-   ret =  Unicode_Alloc(pw->pw_dir, STRING_ENCODING_DEFAULT);
-   endpwent();
-   return ret;
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * GetLoginName --
- *
- *      Unicode wrapper for posix getpwnam call for working directory.
- *
- * Results:
- *      Returns user's login name or NULL if it fails.
- *
- * Side effects:
- *	     None.
- *
- *-----------------------------------------------------------------------------
- */
-
-static Unicode
-GetLoginName(int uid) //IN: user id
-{
-   struct passwd *pw = NULL;
-
-   pw = getpwuid(uid);
-
-   if (!pw || (pw && !pw->pw_name)) {
-      return NULL;
-   }
-   return Unicode_Alloc(pw->pw_name, STRING_ENCODING_DEFAULT);
-}
-
-#endif
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * IsAlphaOrNum --
- *
- *      Checks if character is a numeric digit or a letter of the 
- *      english alphabet.
- *
- * Results:
- *      Returns TRUE if character is a digit or a letter, FALSE otherwise.
- *
- * Side effects:
- *	     None.
- *
- *-----------------------------------------------------------------------------
- */
-
-static Bool
-IsAlphaOrNum(char ch) //IN
-{
-   if ((ch >= '0' && ch <= '9') ||
-       (ch >= 'a' && ch <= 'z') ||
-       (ch >= 'A' && ch <= 'Z')) {
-      return TRUE;
-   } else {
-      return FALSE;
-   }
 }

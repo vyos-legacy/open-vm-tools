@@ -36,10 +36,9 @@ extern "C"{
 
 #include "fileIO.h"
 #include "unicodeTypes.h"
+#include "err.h"
 
-#ifdef N_PLAT_NLM
-#define FILE_MAXPATH	256
-#elif defined(_WIN32)
+#if defined(_WIN32)
 #define FILE_MAXPATH	MAX_PATH
 #else
 # ifdef __FreeBSD__
@@ -47,9 +46,9 @@ extern "C"{
 # endif
 # if defined(__FreeBSD__)
 #  include <sys/syslimits.h>  // PATH_MAX
-# else 
+# else
 #  include <limits.h>  // PATH_MAX
-# endif 
+# endif
 #define FILE_MAXPATH	PATH_MAX
 #endif
 
@@ -63,6 +62,28 @@ extern "C"{
 typedef struct WalkDirContextImpl WalkDirContextImpl;
 typedef const WalkDirContextImpl *WalkDirContext;
 
+/*
+ * When File_MakeTempEx2 is called, it creates a temporary file or a directory
+ * in a specified directory. File_MakeTempEx2 calls a user-specified callback
+ * function to get the filename. Callback function should be of type
+ * File_MakeTempCreateNameFunc.
+ *
+ * 'num' specifies nth time this function is called.
+ *
+ * 'data' specifies the payload that the user specified when executing
+ * File_MakeTempEx2 function.
+ *
+ * If successful, this function should return a dynamically allocated string
+ * with the filename.
+ *
+ * File_MakeTempEx2 frees the pathName after a successful call to this
+ * function.
+ *
+ */
+
+typedef Unicode File_MakeTempCreateNameFunc(uint32 num,
+                                            void *data);
+
 #if defined(__APPLE__)
 typedef enum {
    FILEMACOS_UNMOUNT_SUCCESS,
@@ -70,176 +91,215 @@ typedef enum {
    FILEMACOS_UNMOUNT_ERROR,
 } FileMacosUnmountStatus;
 
-EXTERN FileMacosUnmountStatus FileMacos_UnmountDev(char const *bsdDev,
-                                                   Bool wholeDev,
-                                                   Bool eject,
-                                                   Bool su);
-
-EXTERN void FileMacos_MountDevAsyncNoResult(char const *bsdDev,
+FileMacosUnmountStatus FileMacos_UnmountDev(char const *bsdDev,
+                                            Bool wholeDev,
+                                            Bool eject,
                                             Bool su);
 
-EXTERN Bool FileMacos_IsOnExternalDevice(int fd);
-EXTERN Bool FileMacos_IsOnSparseDmg(int fd);
-EXTERN Bool FileMacos_IsSliceDevice(char const *bsdDev);
+void FileMacos_MountDevAsyncNoResult(char const *bsdDev,
+                                     Bool su);
 
-EXTERN char *FileMacos_DiskDevToUserFriendlyName(char const *bsdDiskDev);
+Bool FileMacos_IsOnExternalDevice(int fd);
+Bool FileMacos_IsOnSparseDmg(int fd);
+Bool FileMacos_IsSliceDevice(char const *bsdDev);
 
-EXTERN char *FileMacos_DiskDeviceToUniqueID(char const *bsdPath);
-EXTERN char *FileMacos_UniqueIDToDiskDevice(char const *identifier);
+char *FileMacos_DiskDevToUserFriendlyName(char const *bsdDiskDev);
+
+char *FileMacos_DiskDeviceToUniqueID(char const *bsdPath);
+char *FileMacos_UniqueIDToDiskDevice(char const *identifier);
+
 #elif defined VMX86_SERVER
-EXTERN int File_GetVMFSBlockSize(ConstUnicode pathName, uint32 *blockSize);
-EXTERN int File_GetVMFSfsType(ConstUnicode pathName, char **fsType);
+int File_GetVMFSVersion(ConstUnicode pathName,
+                        uint32 *versionNum);
+int File_GetVMFSBlockSize(ConstUnicode pathName,
+                          uint32 *blockSize);
+
+int File_GetVMFSMountInfo(ConstUnicode pathName,
+                          char **fsType,
+                          uint32 *version,
+                          char **remoteIP,
+                          char **remoteMountPoint,
+                          char **localMountPoint);
 #endif
 
-EXTERN Bool File_Exists(ConstUnicode pathName);
+Bool File_SupportsZeroedThick(ConstUnicode pathName);
 
-EXTERN int File_Unlink(ConstUnicode pathName);
+Bool File_SupportsMultiWriter(ConstUnicode pathName);
 
-EXTERN int File_UnlinkIfExists(ConstUnicode pathName);
+Bool File_Exists(ConstUnicode pathName);
 
-EXTERN int File_UnlinkDelayed(ConstUnicode pathName);
+int File_Unlink(ConstUnicode pathName);
 
-EXTERN int File_UnlinkNoFollow(ConstUnicode pathName);
+int File_UnlinkIfExists(ConstUnicode pathName);
 
-EXTERN void File_SplitName(ConstUnicode pathName,
-                           Unicode *volume, 
-                           Unicode *dir, 
-                           Unicode *base);
+int File_UnlinkDelayed(ConstUnicode pathName);
 
-EXTERN void File_GetPathName(ConstUnicode fullPath, 
-                             Unicode *pathName, 
-                             Unicode *base);
+int File_UnlinkNoFollow(ConstUnicode pathName);
 
-EXTERN Unicode File_StripSlashes(ConstUnicode path);
+void File_SplitName(ConstUnicode pathName,
+                    Unicode *volume,
+                    Unicode *dir,
+                    Unicode *base);
 
-EXTERN Unicode File_PathJoin(ConstUnicode dirName,
-                             ConstUnicode baseName);
+void File_GetPathName(ConstUnicode fullPath,
+                      Unicode *pathName,
+                      Unicode *base);
 
-EXTERN Bool File_CreateDirectory(ConstUnicode pathName);
-EXTERN Bool File_EnsureDirectory(ConstUnicode pathName);
+Unicode File_StripSlashes(ConstUnicode path);
 
-EXTERN Bool File_DeleteEmptyDirectory(ConstUnicode pathName);
+Unicode File_PathJoin(ConstUnicode dirName,
+                      ConstUnicode baseName);
 
-EXTERN Bool File_CreateDirectoryHierarchy(ConstUnicode pathName);
+Bool File_CreateDirectory(ConstUnicode pathName);
+Bool File_EnsureDirectory(ConstUnicode pathName);
 
-EXTERN Bool File_DeleteDirectoryTree(ConstUnicode pathName);
+Bool File_DeleteEmptyDirectory(ConstUnicode pathName);
 
-EXTERN int File_ListDirectory(ConstUnicode pathName,
-                              Unicode **ids);
+Bool File_CreateDirectoryHierarchy(ConstUnicode pathName);
+
+Bool File_DeleteDirectoryTree(ConstUnicode pathName);
+
+int File_ListDirectory(ConstUnicode pathName,
+                       Unicode **ids);
 
 /*
  * Simple file-system walk.
  */
 
-EXTERN WalkDirContext File_WalkDirectoryStart(ConstUnicode parentPath);
-EXTERN Bool File_WalkDirectoryNext(WalkDirContext context,
-                                   Unicode *path);
-EXTERN void File_WalkDirectoryEnd(WalkDirContext context);
+WalkDirContext File_WalkDirectoryStart(ConstUnicode parentPath);
 
-EXTERN Bool File_IsDirectory(ConstUnicode pathName);
+Bool File_WalkDirectoryNext(WalkDirContext context,
+                            Unicode *path);
 
-EXTERN Bool File_IsFile(ConstUnicode pathName);
+void File_WalkDirectoryEnd(WalkDirContext context);
 
-EXTERN Bool File_IsSymLink(ConstUnicode fileName);
+Bool File_IsDirectory(ConstUnicode pathName);
 
-EXTERN Bool File_IsCharDevice(ConstUnicode pathName);
+Bool File_IsFile(ConstUnicode pathName);
 
-EXTERN Bool File_IsRemote(ConstUnicode pathName);
+Bool File_IsSymLink(ConstUnicode pathName);
 
-EXTERN Bool File_IsEmptyDirectory(ConstUnicode pathName);
+Bool File_IsCharDevice(ConstUnicode pathName);
 
-EXTERN Unicode File_Cwd(ConstUnicode drive); // XXX belongs to `process' module
+Bool File_IsRemote(ConstUnicode pathName);
 
-EXTERN Unicode File_FullPath(ConstUnicode pathName);
+Bool File_IsEmptyDirectory(ConstUnicode pathName);
 
-EXTERN Bool File_IsFullPath(ConstUnicode pathName);
+Unicode File_Cwd(ConstUnicode drive); // XXX belongs to `process' module
 
-EXTERN uint64 File_GetFreeSpace(ConstUnicode pathName,
-                                Bool doNotAscend);
+Unicode File_FullPath(ConstUnicode pathName);
 
-EXTERN uint64 File_GetCapacity(ConstUnicode pathName);
+Bool File_IsFullPath(ConstUnicode pathName);
 
-/* Deprecated; use Util_GetSafeTmpDir if you can */
-EXTERN char *File_GetTmpDir(Bool useConf);
+uint64 File_GetFreeSpace(ConstUnicode pathName,
+                         Bool doNotAscend);
 
-/* Deprecated; use Util_MakeSafeTemp if you can */
-EXTERN int File_MakeTemp(ConstUnicode tag,
-                         Unicode *presult);
+uint64 File_GetCapacity(ConstUnicode pathName);
 
-EXTERN int File_MakeTempEx(ConstUnicode dir,
-                           ConstUnicode fileName,
-                           Unicode *presult);
+int File_MakeTempEx(ConstUnicode dir,
+                    ConstUnicode pathName,
+                    Unicode *presult);
 
-EXTERN int64 File_GetModTime(ConstUnicode pathName);
+int File_MakeTempEx2(ConstUnicode dir,
+                     Bool createTempFile,
+                     File_MakeTempCreateNameFunc *createNameFunc,
+                     void *createFuncData,
+                     Unicode *presult);
 
-EXTERN char *File_GetModTimeString(ConstUnicode pathName);
+int64 File_GetModTime(ConstUnicode pathName);
 
-EXTERN char *File_GetUniqueFileSystemID(const char *fileName);
+char *File_GetModTimeString(ConstUnicode pathName);
 
-EXTERN Bool File_GetTimes(ConstUnicode pathName,
-                          VmTimeType *createTime,
-                          VmTimeType *accessTime,
-                          VmTimeType *writeTime,
-                          VmTimeType *attrChangeTime);
+char *File_GetUniqueFileSystemID(const char *pathName);
 
-EXTERN Bool File_SetTimes(ConstUnicode pathName,
-                          VmTimeType createTime,
-                          VmTimeType accessTime,
-                          VmTimeType writeTime,
-                          VmTimeType attrChangeTime);
+Bool File_GetTimes(ConstUnicode pathName,
+                   VmTimeType *createTime,
+                   VmTimeType *accessTime,
+                   VmTimeType *writeTime,
+                   VmTimeType *attrChangeTime);
 
-EXTERN Bool File_GetFilePermissions(ConstUnicode pathName,
-                                   int *mode);
+Bool File_SetTimes(ConstUnicode pathName,
+                   VmTimeType createTime,
+                   VmTimeType accessTime,
+                   VmTimeType writeTime,
+                   VmTimeType attrChangeTime);
 
-EXTERN Bool File_SetFilePermissions(ConstUnicode pathName,
-                                    int mode);
+Bool File_GetFilePermissions(ConstUnicode pathName,
+                            int *mode);
 
-EXTERN Bool File_SupportsFileSize(ConstUnicode pathName,
-                                  uint64 fileSize);
+Bool File_SetFilePermissions(ConstUnicode pathName,
+                             int mode);
 
-EXTERN Bool File_SupportsLargeFiles(ConstUnicode pathName);
+Bool File_SupportsFileSize(ConstUnicode pathName,
+                           uint64 fileSize);
 
-EXTERN Bool File_CopyFromFdToFd(FileIODescriptor src, 
-                                FileIODescriptor dst);
+Bool File_SupportsLargeFiles(ConstUnicode pathName);
 
-EXTERN FileIOResult File_CreatePrompt(FileIODescriptor *file, 
-                                      ConstUnicode pathName, 
-                                      int access, 
-                                      int prompt);
+char *File_MapPathPrefix(const char *oldPath,
+                         const char **oldPrefixes,
+                         const char **newPrefixes,
+                         size_t numPrefixes);
 
-EXTERN Bool File_CopyFromFd(FileIODescriptor src, 
-                            ConstUnicode dstName, 
-                            Bool overwriteExisting);
+Bool File_CopyFromFdToFd(FileIODescriptor src,
+                         FileIODescriptor dst);
 
-EXTERN Bool File_Copy(ConstUnicode srcName, 
-                      ConstUnicode dstName, 
-                      Bool overwriteExisting);
+FileIOResult File_CreatePrompt(FileIODescriptor *file,
+                               ConstUnicode pathName,
+                               int access,
+                               int prompt);
 
-EXTERN Bool File_CopyFromFdToName(FileIODescriptor src, 
-                                  ConstUnicode dstName, 
-                                  int dstDispose);
+Bool File_CopyFromFd(FileIODescriptor src,
+                     ConstUnicode dstName,
+                     Bool overwriteExisting);
 
-EXTERN Bool File_CopyFromNameToName(ConstUnicode srcName, 
-                                    ConstUnicode dstName, 
-                                    int dstDispose);
+Bool File_Copy(ConstUnicode srcName,
+               ConstUnicode dstName,
+               Bool overwriteExisting);
 
-EXTERN Bool File_Replace(ConstUnicode oldFile, 
-                         ConstUnicode newFile);
+Bool File_CopyFromFdToName(FileIODescriptor src,
+                           ConstUnicode dstName,
+                           int dstDispose);
 
-EXTERN Bool File_Rename(ConstUnicode oldFile, 
-                        ConstUnicode newFile);
+Bool File_CopyFromNameToName(ConstUnicode srcName,
+                             ConstUnicode dstName,
+                             int dstDispose);
 
-EXTERN int64 File_GetSize(ConstUnicode pathName);
+Bool File_MoveTree(ConstUnicode srcName,
+                   ConstUnicode dstName,
+                   Bool overwriteExisting);
 
-EXTERN int64 File_GetSizeByPath(ConstUnicode pathName);
+Bool File_CopyTree(ConstUnicode srcName,
+                   ConstUnicode dstName,
+                   Bool overwriteExisting,
+                   Bool followSymlinks);
 
-EXTERN int64 File_GetSizeAlternate(ConstUnicode pathName);
+Bool File_Replace(ConstUnicode oldFile,
+                  ConstUnicode newFile);
+
+Bool File_Move(ConstUnicode oldFile,
+               ConstUnicode newFile,
+               Bool *asRename);
+
+void File_Rotate(const char *pathName,
+                 int n,
+                 Bool noRename,
+                 char **newFileName);
+
+/* Get size only for regular file. */
+int64 File_GetSize(ConstUnicode pathName);
+
+/* Get size for file or directory. */
+int64 File_GetSizeEx(ConstUnicode pathName);
+
+int64 File_GetSizeByPath(ConstUnicode pathName);
+
+int64 File_GetSizeAlternate(ConstUnicode pathName);
 
 /* file change notification module */
 typedef void (*CbFunction)(void *clientData);
 
-typedef void (*NotifyCallback)(ConstUnicode pathName, 
-                               int err, 
+typedef void (*NotifyCallback)(ConstUnicode pathName,
+                               int err,
                                void *data);
 
 typedef void (*PollTimeout) (CbFunction f,
@@ -249,50 +309,57 @@ typedef void (*PollTimeout) (CbFunction f,
 typedef void (*PollRemoveTimeout) (CbFunction f,
                                    void *clientData);
 
-EXTERN void File_PollInit(PollTimeout pt, 
-                          PollRemoveTimeout prt);
+void File_PollInit(PollTimeout pt,
+                   PollRemoveTimeout prt);
 
-EXTERN void File_PollExit(void);
+void File_PollExit(void);
 
-EXTERN void File_PollImpersonateOnCheck(Bool check);
+void File_PollImpersonateOnCheck(Bool check);
 
-EXTERN Bool File_PollAddFile(ConstUnicode pathName, 
-                             uint32 pollPeriod, 
-                             NotifyCallback callback, 
-                             void *data, 
-                             Bool fPeriodic);
+Bool File_PollAddFile(ConstUnicode pathName,
+                      uint32 pollPeriod,
+                      NotifyCallback callback,
+                      void *data,
+                      Bool fPeriodic);
 
-EXTERN Bool File_PollAddDirFile(ConstUnicode pathName,
-                                uint32 pollPeriod, 
-                                NotifyCallback callback,
-                                void *data, 
-                                Bool fPeriodic);
+Bool File_PollAddDirFile(ConstUnicode pathName,
+                         uint32 pollPeriod,
+                         NotifyCallback callback,
+                         void *data,
+                         Bool fPeriodic);
 
-EXTERN Bool File_PollRemoveFile(ConstUnicode pathName, 
-                                uint32 pollPeriod,
-                                NotifyCallback callback);
+Bool File_PollRemoveFile(ConstUnicode pathName,
+                         uint32 pollPeriod,
+                         NotifyCallback callback);
 
-EXTERN Bool File_IsSameFile(ConstUnicode path1,
-                            ConstUnicode path2);
+Bool File_IsSameFile(ConstUnicode path1,
+                     ConstUnicode path2);
 
-EXTERN char *File_PrependToPath(const char *searchPath,
-                                const char *elem);
+char *File_PrependToPath(const char *searchPath,
+                         const char *elem);
 
-EXTERN Bool File_FindFileInSearchPath(const char *file,
-                                      const char *searchPath,
-                                      const char *cwd,
-                                      char **result);
+Bool File_FindFileInSearchPath(const char *file,
+                               const char *searchPath,
+                               const char *cwd,
+                               char **result);
 
-EXTERN Unicode File_ReplaceExtension(ConstUnicode pathName,
-                                     ConstUnicode newExtension,
-                                     uint32 numExtensions,
-                                     ...);
+Unicode File_ReplaceExtension(ConstUnicode pathName,
+                              ConstUnicode newExtension,
+                              uint32 numExtensions,
+                              ...);
 
-EXTERN Bool File_OnVMFS(ConstUnicode pathName);
+Unicode File_RemoveExtension(ConstUnicode pathName);
 
-EXTERN Bool File_MakeCfgFileExecutable(ConstUnicode pathName);
+Bool File_MakeCfgFileExecutable(ConstUnicode pathName);
 
-EXTERN char *File_ExpandAndCheckDir(const char *dirName);
+char *File_ExpandAndCheckDir(const char *dirName);
+
+char *File_GetSafeTmpDir(Bool useConf);
+
+int File_MakeSafeTemp(ConstUnicode tag,
+                      Unicode *presult);
+
+Bool File_DoesVolumeSupportAcls(ConstUnicode pathName);
 
 #ifdef __cplusplus
 } // extern "C" {

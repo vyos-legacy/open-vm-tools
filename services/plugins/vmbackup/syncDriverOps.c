@@ -39,8 +39,34 @@ typedef struct VmBackupDriverOp {
    const char *volumes;
    Bool freeze;
    Bool canceled;
-   SyncDriverHandle syncHandle;
+   SyncDriverHandle *syncHandle;
 } VmBackupDriverOp;
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VmBackupDriverThaw --
+ *
+ *    Thaws the frozen filesystems, and cleans up internal state kept by the
+ *    code.
+ *
+ * Results:
+ *    Whether thawing was successful.
+ *
+ * Side effects:
+ *    None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+VmBackupDriverThaw(VmBackupDriverOp *op)
+{
+   Bool success = SyncDriver_Thaw(*op->syncHandle);
+   SyncDriver_CloseHandle(op->syncHandle);
+   return success;
+}
 
 
 /*
@@ -48,11 +74,14 @@ typedef struct VmBackupDriverOp {
  *
  *  VmBackupDriverOpQuery --
  *
- *    Checks the status of the app that is enabling or disabling the
+ *    Checks the status of the operation that is enabling or disabling the
  *    sync driver.
  *
  * Result
- *    None.
+ *    VMBACKUP_STATUS_PENDING:   still working.
+ *    VMBACKUP_STATUS_FINISHED:  done.
+ *    VMBACKUP_STATUS_CANCELED:  cancel request fulfilled.
+ *    VMBACKUP_STATUS_ERROR:     oops.
  *
  * Side effects:
  *    None.
@@ -66,26 +95,34 @@ VmBackupDriverOpQuery(VmBackupOp *_op) // IN
    VmBackupDriverOp *op = (VmBackupDriverOp *) _op;
    VmBackupOpStatus ret;
 
-   SyncDriverStatus st;
+   if (op->freeze) {
+      SyncDriverStatus st = SyncDriver_QueryStatus(*op->syncHandle, 0);
 
-   st = SyncDriver_QueryStatus(op->syncHandle, 0);
-   g_debug("SyncDriver status: %d\n", st);
+      g_debug("SyncDriver status: %d\n", st);
+      switch(st) {
+      case SYNCDRIVER_BUSY:
+         ret = VMBACKUP_STATUS_PENDING;
+         break;
 
-   switch(st) {
-   case SYNCDRIVER_BUSY:
-      ret = VMBACKUP_STATUS_PENDING;
-      break;
+      case SYNCDRIVER_IDLE:
+         if (op->canceled) {
+            VmBackupDriverThaw(op);
+         }
+         /*
+          * This prevents the release callback from freeing the handle, which
+          * will be used when thawing in the POSIX case.
+          */
+         op->syncHandle = NULL;
+         ret = (op->canceled) ? VMBACKUP_STATUS_CANCELED : VMBACKUP_STATUS_FINISHED;
+         break;
 
-   case SYNCDRIVER_IDLE:
-      if (op->freeze && op->canceled) {
-         SyncDriver_Thaw(op->syncHandle);
+      default:
+         VmBackupDriverThaw(op);
+         ret = VMBACKUP_STATUS_ERROR;
+         break;
       }
-      ret = (op->canceled) ? VMBACKUP_STATUS_CANCELED : VMBACKUP_STATUS_FINISHED;
-      break;
-
-   default:
-      ret = VMBACKUP_STATUS_ERROR;
-      break;
+   } else {
+      ret = VMBACKUP_STATUS_FINISHED;
    }
 
    return ret;
@@ -112,9 +149,7 @@ static void
 VmBackupDriverOpRelease(VmBackupOp *_op)  // IN
 {
    VmBackupDriverOp *op = (VmBackupDriverOp *) _op;
-   if (!op->freeze) {
-      SyncDriver_CloseHandle(&op->syncHandle);
-   }
+   free(op->syncHandle);
    free(op);
 }
 
@@ -165,11 +200,17 @@ VmBackupDriverOpCancel(VmBackupOp *_op)   // IN
  */
 
 static VmBackupDriverOp *
-VmBackupNewDriverOp(Bool freeze,             // IN
-                    SyncDriverHandle handle, // IN
-                    const char *volumes)     // IN
+VmBackupNewDriverOp(VmBackupState *state,       // IN
+                    Bool freeze,                // IN
+                    SyncDriverHandle *handle,   // IN
+                    const char *volumes)        // IN
 {
+   Bool success;
    VmBackupDriverOp *op = NULL;
+
+   g_return_val_if_fail((handle == NULL || *handle == SYNCDRIVER_INVALID_HANDLE) ||
+                        !freeze,
+                        NULL);
 
    op = Util_SafeMalloc(sizeof *op);
    memset(op, 0, sizeof *op);
@@ -180,16 +221,18 @@ VmBackupNewDriverOp(Bool freeze,             // IN
    op->freeze = freeze;
    op->volumes = volumes;
 
-   if (freeze && !SyncDriver_Freeze(op->volumes, &handle)) {
-      g_warning("Error freezing filesystems.\n");
-      free(op);
-      op = NULL;
-   } else if (!freeze && !SyncDriver_Thaw(handle)) {
-      g_warning("Error thawing filesystems.\n");
-      free(op);
-      op = NULL;
+   op->syncHandle = g_new0(SyncDriverHandle, 1);
+   *op->syncHandle = (handle != NULL) ? *handle : SYNCDRIVER_INVALID_HANDLE;
+
+   if (freeze) {
+      success = SyncDriver_Freeze(op->volumes, op->syncHandle);
    } else {
-      op->syncHandle = handle;
+      success = VmBackupDriverThaw(op);
+   }
+   if (!success) {
+      g_warning("Error %s filesystems.", freeze ? "freezing" : "thawing");
+      free(op);
+      op = NULL;
    }
    return op;
 }
@@ -216,8 +259,13 @@ VmBackupNewDriverOp(Bool freeze,             // IN
 static Bool
 VmBackupSyncDriverReadyForSnapshot(VmBackupState *state)
 {
+   SyncDriverHandle *handle = state->clientData;
+
    g_debug("*** %s\n", __FUNCTION__);
-   return VmBackup_SendEvent(VMBACKUP_EVENT_SNAPSHOT_COMMIT, 0, "");
+   if (handle != NULL && *handle != SYNCDRIVER_INVALID_HANDLE) {
+      return VmBackup_SendEvent(VMBACKUP_EVENT_SNAPSHOT_COMMIT, 0, "");
+   }
+   return TRUE;
 }
 
 
@@ -247,43 +295,16 @@ VmBackupSyncDriverStart(VmBackupState *state,
    VmBackupDriverOp *op;
 
    g_debug("*** %s\n", __FUNCTION__);
-   op = VmBackupNewDriverOp(TRUE,
-                            (SyncDriverHandle) state->clientData,
-                            state->volumes);
+   op = VmBackupNewDriverOp(state, TRUE, NULL, state->volumes);
 
    if (op != NULL) {
-      state->clientData = (intptr_t) op->syncHandle;
+      state->clientData = op->syncHandle;
    }
 
    return VmBackup_SetCurrentOp(state,
                                 (VmBackupOp *) op,
                                 VmBackupSyncDriverReadyForSnapshot,
                                 __FUNCTION__);
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- *  VmBackupSyncDriverAbort --
- *
- *    Does nothing.
- *
- * Result
- *    TRUE.
- *
- * Side effects:
- *    None.
- *
- *-----------------------------------------------------------------------------
- */
-
-static Bool
-VmBackupSyncDriverAbort(VmBackupState *state,
-                        void *clientData)
-{
-   g_debug("*** %s\n", __FUNCTION__);
-   return TRUE;
 }
 
 
@@ -311,9 +332,9 @@ VmBackupSyncDriverSnapshotDone(VmBackupState *state,
 
    g_debug("*** %s\n", __FUNCTION__);
 
-   op = VmBackupNewDriverOp(FALSE,
-                            (SyncDriverHandle) state->clientData,
-                            NULL);
+   op = VmBackupNewDriverOp(state, FALSE, state->clientData, NULL);
+   g_free(state->clientData);
+   state->clientData = NULL;
 
    return VmBackup_SetCurrentOp(state, (VmBackupOp *) op, NULL, __FUNCTION__);
 }
@@ -371,7 +392,6 @@ VmBackup_NewSyncDriverProvider(void)
 
    provider = Util_SafeMalloc(sizeof *provider);
    provider->start = VmBackupSyncDriverStart;
-   provider->abort = VmBackupSyncDriverAbort;
    provider->snapshotDone = VmBackupSyncDriverSnapshotDone;
    provider->release = VmBackupSyncDriverRelease;
    provider->clientData = NULL;

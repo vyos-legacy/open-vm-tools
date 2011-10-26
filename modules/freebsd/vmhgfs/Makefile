@@ -27,21 +27,18 @@ HEADERS += kernelStubs.h
 HEADERS += fsutil.h
 HEADERS += vnopscommon.h
 HEADERS += os.h
-HEADERS += compat_freebsd.h
-HEADERS += compat_vop.h
 HEADERS += vfsopscommon.h
 HEADERS += transport.h
+HEADERS += channel.h
 
 COMMON_SRCS := cpName.c
 COMMON_SRCS += cpNameLinux.c
 COMMON_SRCS += cpNameLite.c
-COMMON_SRCS += dbllnklst.c
 COMMON_SRCS += sha1.c
 COMMON_SRCS += hgfsEscape.c
 COMMON_SRCS += hgfsBd.c
 COMMON_SRCS += rpcout.c
 COMMON_SRCS += message.c
-COMMON_SRCS += messageBackdoor.c
 COMMON_SRCS += backdoor.c
 .if $(MACHINE_ARCH) == "amd64"
 COMMON_SRCS += backdoorGcc64.c
@@ -50,6 +47,7 @@ COMMON_SRCS += backdoorGcc32.c
 .endif
 
 COMMON_HGFS_SRCS := debug.c
+COMMON_HGFS_SRCS := bdhandler.c
 COMMON_HGFS_SRCS += request.c
 COMMON_HGFS_SRCS += worker.c
 COMMON_HGFS_SRCS += fsutil.c
@@ -61,6 +59,7 @@ COMMON_HGFS_SRCS += transport.c
 MODULE_SRCS := vnops.c
 MODULE_SRCS += vfsops.c
 MODULE_SRCS += os.c
+MODULE_SRCS += vmci.c
 MODULE_SRCS += hgfsUtil.c
 MODULE_SRCS += kernelStubsBSD.c
 
@@ -74,7 +73,25 @@ SRCS = $(MODULE_SRCS) $(COMMON_SRCS) $(COMMON_HGFS_SRCS) $(HEADERS)
 KMOD    = vmhgfs
 PROG    = ../$(KMOD).ko
 NOMAN   = t
+NO_MAN  = t
 KLDMOD  = t
+NOOBJ   = 1
+NO_OBJ  = 1
+
+.ifdef OVT_SOURCE_DIR
+   CFLAGS += -I$(OVT_SOURCE_DIR)/lib/include
+   CFLAGS += -I$(OVT_SOURCE_DIR)/lib/backdoor
+   CFLAGS += -I$(OVT_SOURCE_DIR)/lib/hgfs
+   CFLAGS += -I$(OVT_SOURCE_DIR)/modules/freebsd/shared
+   VPATH  := $(OVT_SOURCE_DIR)/lib/backdoor
+   VPATH  := $(VPATH):$(OVT_SOURCE_DIR)/lib/hgfs
+   VPATH  := $(VPATH):$(OVT_SOURCE_DIR)/lib/hgfsBd
+   VPATH  := $(VPATH):$(OVT_SOURCE_DIR)/lib/message
+   VPATH  := $(VPATH):$(OVT_SOURCE_DIR)/lib/misc
+   VPATH  := $(VPATH):$(OVT_SOURCE_DIR)/lib/rpcOut
+.else
+   CFLAGS += -Ishared
+.endif
 
 #
 # FreeBSD's kernel module build system defines a bunch of additional warning

@@ -35,10 +35,16 @@
 #include "vm_assert.h"
 
 
-#define MAX_DAYSLEFT     1024
+#define MAX_DAYSLEFT     4096
 
 struct timeval;
 
+#ifdef _WIN32
+struct timespec {
+   time_t tv_sec;
+   long   tv_nsec;
+};
+#endif
 
 /* Similar to a struct tm but with slightly less weird semantics. */
 typedef struct TimeUtil_Date {
@@ -50,6 +56,10 @@ typedef struct TimeUtil_Date {
    unsigned int second; /* [0, 61] (for leap seconds) */
 } TimeUtil_Date;
 
+typedef struct TimeUtil_TimeOfDay {
+   unsigned long seconds;
+   unsigned long useconds;
+} TimeUtil_TimeOfDay;
 
 typedef struct TimeUtil_Expiration {
    /*
@@ -93,6 +103,8 @@ EXTERN void TimeUtil_DaysAdd(TimeUtil_Date *d, // IN/OUT
 EXTERN void TimeUtil_PopulateWithCurrent(Bool local,        // IN
                                          TimeUtil_Date *d); // OUT
 
+EXTERN void TimeUtil_GetTimeOfDay(TimeUtil_TimeOfDay *d); // OUT
+
 EXTERN unsigned int TimeUtil_DaysLeft(TimeUtil_Date const *d); // IN
 
 EXTERN Bool TimeUtil_ExpirationLowerThan(TimeUtil_Expiration const *left,   // IN
@@ -107,11 +119,10 @@ EXTERN char * TimeUtil_GetTimeFormat(int64 utcTime,  // IN
                                      Bool showDate,  // IN
                                      Bool showTime); // IN
 
-#if !defined _WIN32 && !defined N_PLAT_NLM
 EXTERN int TimeUtil_NtTimeToUnixTime(struct timespec *unixTime, // OUT
                                      VmTimeType ntTime);        // IN
+
 EXTERN VmTimeType TimeUtil_UnixTimeToNtTime(struct timespec unixTime); // IN
-#endif
 
 
 #ifdef _WIN32

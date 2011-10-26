@@ -16,6 +16,48 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of VMware Inc. nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission of VMware Inc.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *********************************************************/
+
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * vm_assert.h --
  *
@@ -29,10 +71,9 @@
 #define _VM_ASSERT_H_
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMMON
-#define INCLUDE_ALLOW_VMNIXMOD
 #define INCLUDE_ALLOW_VMKERNEL
 #define INCLUDE_ALLOW_VMKDRIVERS
 #define INCLUDE_ALLOW_VMK_MODULE
@@ -45,17 +86,55 @@
 #include "vm_basic_types.h"
 #include "vm_basic_defs.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
- * XXX old file code
+ * Internal macros, functions, and strings
+ *
+ * The monitor wants to save space at call sites, so it has specialized
+ * functions for each situation.  User level wants to save on implementation
+ * so it uses generic functions.
  */
 
-#ifdef FILECODEINT
-#error "Don't define FILECODEINT.  It is obsolete."
-#endif
-#ifdef FILECODE
-#error "Don't define FILECODE.  It is obsolete."
-#endif
+#if !defined VMM || defined MONITOR_APP // {
+
+#if defined VMKERNEL
+// vmkernel Panic() function does not want a trailing newline.
+#define _ASSERT_PANIC(name) \
+           Panic(_##name##Fmt, __FILE__, __LINE__)
+#define _ASSERT_PANIC_BUG(bug, name) \
+           Panic(_##name##Fmt " bugNr=%d", __FILE__, __LINE__, bug)
+#define _ASSERT_PANIC_NORETURN(name) \
+           Panic_NoReturn(_##name##Fmt, __FILE__, __LINE__)
+
+#else /* !VMKERNEL */
+#define _ASSERT_PANIC(name) \
+           Panic(_##name##Fmt "\n", __FILE__, __LINE__)
+#define _ASSERT_PANIC_BUG(bug, name) \
+           Panic(_##name##Fmt " bugNr=%d\n", __FILE__, __LINE__, bug)
+#endif /* VMKERNEL */
+
+#define AssertLengthFmt     _AssertLengthFmt
+#define AssertUnexpectedFmt _AssertUnexpectedFmt
+#define AssertNotTestedFmt  _AssertNotTestedFmt
+
+#endif // }
+
+
+// these don't have newline so a bug can be tacked on
+#define _AssertPanicFmt            "PANIC %s:%d"
+#define _AssertAssertFmt           "ASSERT %s:%d"
+#define _AssertNotImplementedFmt   "NOT_IMPLEMENTED %s:%d"
+#define _AssertNotReachedFmt       "NOT_REACHED %s:%d"
+#define _AssertMemAllocFmt         "MEM_ALLOC %s:%d"
+
+// these are complete formats with newline
+#define _AssertLengthFmt           "LENGTH %s:%d r=%#x e=%#x\n"
+#define _AssertUnexpectedFmt       "UNEXPECTED %s:%d bugNr=%d\n"
+#define _AssertNotTestedFmt        "NOT_TESTED %s:%d\n"
+
 
 
 /*
@@ -64,18 +143,19 @@
 
 EXTERN void Log(const char *fmt, ...) PRINTF_DECL(1, 2);
 EXTERN void Warning(const char *fmt, ...) PRINTF_DECL(1, 2);
+#if defined VMKERNEL
+EXTERN NORETURN void Panic_NoReturn(const char *fmt, ...) PRINTF_DECL(1, 2);
+#endif
+#if defined VMKERNEL && defined VMX86_DEBUG
+EXTERN void Panic(const char *fmt, ...) PRINTF_DECL(1, 2);
+#else
 EXTERN NORETURN void Panic(const char *fmt, ...) PRINTF_DECL(1, 2);
+#endif
 
 EXTERN void LogThrottled(uint32 *count, const char *fmt, ...)
             PRINTF_DECL(2, 3);
 EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
             PRINTF_DECL(2, 3);
-
-/* DB family:  messages which are parsed by logfile database system */
-#define WarningDB Warning
-#define LogDB Log
-#define WarningThrottledDB WarningThrottled
-#define LogThrottledDB LogThrottled
 
 
 /*
@@ -127,15 +207,27 @@ EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
 #define PANIC()        _ASSERT_PANIC(AssertPanic)
 #define PANIC_BUG(bug) _ASSERT_PANIC_BUG(bug, AssertPanic)
 
+#ifdef VMKERNEL
+#define ASSERT_OR_IN_PANIC(cond) ASSERT((cond) || Panic_IsSystemInPanic())
+#endif
+
 #define ASSERT_NOT_IMPLEMENTED(cond) \
            ASSERT_IFNOT(cond, NOT_IMPLEMENTED())
 #define ASSERT_NOT_IMPLEMENTED_BUG(bug, cond) \
            ASSERT_IFNOT(cond, NOT_IMPLEMENTED_BUG(bug))
 
+#if defined VMKERNEL && defined VMX86_DEBUG
+#define NOT_IMPLEMENTED()        _ASSERT_PANIC_NORETURN(AssertNotImplemented)
+#else
 #define NOT_IMPLEMENTED()        _ASSERT_PANIC(AssertNotImplemented)
+#endif
 #define NOT_IMPLEMENTED_BUG(bug) _ASSERT_PANIC_BUG(bug, AssertNotImplemented)
 
+#if defined VMKERNEL && defined VMX86_DEBUG
+#define NOT_REACHED()            _ASSERT_PANIC_NORETURN(AssertNotReached)
+#else
 #define NOT_REACHED()            _ASSERT_PANIC(AssertNotReached)
+#endif
 #define NOT_REACHED_BUG(bug)     _ASSERT_PANIC_BUG(bug, AssertNotReached)
 
 #define ASSERT_MEM_ALLOC(cond) \
@@ -175,14 +267,7 @@ EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
    #define NOT_TESTED() Log(AssertNotTestedFmt, __FILE__, __LINE__)
 #endif
 
-#define NOT_TESTED_ONCE()                                               \
-   do {                                                                 \
-      static Bool alreadyPrinted = FALSE;                               \
-      if (UNLIKELY(!alreadyPrinted)) {                                  \
-	 alreadyPrinted = TRUE;                                         \
-	 NOT_TESTED();                                                  \
-      }                                                                 \
-   } while (0)
+#define NOT_TESTED_ONCE() DO_ONCE(NOT_TESTED())
 
 #define NOT_TESTED_1024()                                               \
    do {                                                                 \
@@ -191,14 +276,7 @@ EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
       count = (count + 1) & 1023;                                       \
    } while (0)
 
-#define LOG_ONCE(_s)                                                    \
-   do {                                                                 \
-      static Bool logged = FALSE;                                       \
-      if (!logged) {                                                    \
-	 Log _s;                                                        \
-         logged = TRUE;                                                 \
-      }                                                                 \
-   } while (0)
+#define LOG_ONCE(_s) DO_ONCE(Log _s)
 
 
 /*
@@ -297,38 +375,8 @@ EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
       assertions \
    }
 
-
-/*
- * Internal macros, functions, and strings
- *
- * The monitor wants to save space at call sites, so it has specialized
- * functions for each situation.  User level wants to save on implementation
- * so it uses generic functions.
- */
-
-#if !defined VMM || defined MONITOR_APP // {
-
-#define _ASSERT_PANIC(name) \
-           Panic(_##name##Fmt "\n", __FILE__, __LINE__)
-#define _ASSERT_PANIC_BUG(bug, name) \
-           Panic(_##name##Fmt " bugNr=%d\n", __FILE__, __LINE__, bug)
-
-#define AssertLengthFmt     _AssertLengthFmt
-#define AssertUnexpectedFmt _AssertUnexpectedFmt
-#define AssertNotTestedFmt  _AssertNotTestedFmt
-
-#endif // }
-
-// these don't have newline so a bug can be tacked on
-#define _AssertPanicFmt            "PANIC %s:%d"
-#define _AssertAssertFmt           "ASSERT %s:%d"
-#define _AssertNotImplementedFmt   "NOT_IMPLEMENTED %s:%d"
-#define _AssertNotReachedFmt       "NOT_REACHED %s:%d"
-#define _AssertMemAllocFmt         "MEM_ALLOC %s:%d"
-
-// these are complete formats with newline
-#define _AssertLengthFmt           "LENGTH %s:%d r=%#x e=%#x\n"
-#define _AssertUnexpectedFmt       "UNEXPECTED %s:%d bugNr=%d\n"
-#define _AssertNotTestedFmt        "NOT_TESTED %s:%d\n"
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* ifndef _VM_ASSERT_H_ */

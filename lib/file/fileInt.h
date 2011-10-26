@@ -27,10 +27,13 @@
 
 #define INCLUDE_ALLOW_USERLEVEL
 #include "includeCheck.h"
+#include "err.h"
 #include "posix.h"
+#include "file.h"
 #include "fileIO.h"
 #include "fileLock.h"
 #include "unicodeTypes.h"
+#include "memaligned.h"
 
 #if defined __linux__
 /*
@@ -99,99 +102,107 @@ typedef struct FileData {
    int    fileGroup;
 } FileData;
 
+#define FILE_MAX_WAIT_TIME_MS 2000  // maximum wait time in milliseconds
+
 #if defined(_WIN32)
-EXTERN int FileMapErrorToErrno(char *functionName,
-                               DWORD status);
+int FileMapErrorToErrno(const char *functionName,
+                        Err_Number status);
 
-EXTERN Bool FileRetryThisError(DWORD error,
-                               uint32 numCodes,
-                               DWORD *codes);
+Bool FileRetryThisError(DWORD error,
+                        uint32 numCodes,
+                        DWORD *codes);
 
-EXTERN int FileAttributesRetry(ConstUnicode pathName,
-                               uint32 msecMaxWaitTime,
-                               FileData *fileData);
+int FileAttributesRetry(ConstUnicode pathName,
+                        uint32 msecMaxWaitTime,
+                        FileData *fileData);
 
-EXTERN int FileRenameRetry(ConstUnicode fromPath,
-                           ConstUnicode toPath,
-                           uint32 msecMaxWaitTime);
+int FileRenameRetry(ConstUnicode fromPath,
+                    ConstUnicode toPath,
+                    uint32 msecMaxWaitTime);
 
-EXTERN int FileDeletionRetry(ConstUnicode pathName,
-                             Bool handleLink,
+int FileDeletionRetry(ConstUnicode pathName,
+                      Bool handleLink,
+                      uint32 msecMaxWaitTime);
+
+int FileCreateDirectoryRetry(ConstUnicode pathName,
+                             int mask,
                              uint32 msecMaxWaitTime);
 
-EXTERN int FileCreateDirectoryRetry(ConstUnicode pathName,
-                                    uint32 msecMaxWaitTime);
+int FileRemoveDirectoryRetry(ConstUnicode pathName,
+                             uint32 msecMaxWaitTime);
 
-EXTERN int FileRemoveDirectoryRetry(ConstUnicode pathName,
-                                    uint32 msecMaxWaitTime);
+int FileListDirectoryRetry(ConstUnicode pathName,
+                           uint32 msecMaxWaitTime,
+                           Unicode **ids);
 
-EXTERN int FileListDirectoryRetry(ConstUnicode pathName,
-                                  uint32 msecMaxWaitTime,
-                                  Unicode **ids);
-
-#define FileAttributes(a, b)    FileAttributesRetry((a), 0, (b))
-#define FileRename(a, b)        FileRenameRetry((a), (b), 0)
-#define FileDeletion(a, b)      FileDeletionRetry((a), (b), 0)
-#define FileCreateDirectory(a)  FileCreateDirectoryRetry((a), 0)
-#define FileRemoveDirectory(a)  FileRemoveDirectoryRetry((a), 0)
-
-#define FILE_MAX_WAIT_TIME 2000
+#define FileAttributes(a, b)       FileAttributesRetry((a), 0, (b))
+#define FileRename(a, b)           FileRenameRetry((a), (b), 0)
+#define FileDeletion(a, b)         FileDeletionRetry((a), (b), 0)
+#define FileCreateDirectory(a, b)  FileCreateDirectoryRetry((a), (b), 0)
+#define FileRemoveDirectory(a)     FileRemoveDirectoryRetry((a), 0)
 
 #define FileListDirectoryRobust(a, b) \
-                    FileListDirectoryRetry((a), FILE_MAX_WAIT_TIME, (b))
+                    FileListDirectoryRetry((a), FILE_MAX_WAIT_TIME_MS, (b))
 #define FileAttributesRobust(a, b) \
-                    FileAttributesRetry((a), FILE_MAX_WAIT_TIME, (b))
+                    FileAttributesRetry((a), FILE_MAX_WAIT_TIME_MS, (b))
 #define FileRenameRobust(a, b) \
-                    FileRenameRetry((a), (b), FILE_MAX_WAIT_TIME)
+                    FileRenameRetry((a), (b), FILE_MAX_WAIT_TIME_MS)
 #define FileDeletionRobust(a, b) \
-                    FileDeletionRetry((a), (b), FILE_MAX_WAIT_TIME)
-#define FileCreateDirectoryRobust(a) \
-                    FileCreateDirectoryRetry((a), FILE_MAX_WAIT_TIME)
+                    FileDeletionRetry((a), (b), FILE_MAX_WAIT_TIME_MS)
+#define FileCreateDirectoryRobust(a, b) \
+                    FileCreateDirectoryRetry((a), (b), FILE_MAX_WAIT_TIME_MS)
 #define FileRemoveDirectoryRobust(a) \
-                    FileRemoveDirectoryRetry((a), FILE_MAX_WAIT_TIME)
+                    FileRemoveDirectoryRetry((a), FILE_MAX_WAIT_TIME_MS)
 #else
-EXTERN char *FilePosixGetBlockDevice(char const *path);
+static INLINE int
+FileMapErrorToErrno(const char *functionName,
+                    Err_Number status)
+{
+   return status;
+}
 
-EXTERN int FileAttributes(ConstUnicode pathName,
-                          FileData *fileData);
+char *FilePosixGetBlockDevice(char const *path);
 
-EXTERN int FileRename(ConstUnicode fromPath,
-                      ConstUnicode toPath);
+int FileAttributes(ConstUnicode pathName,
+                   FileData *fileData);
 
-EXTERN int FileDeletion(ConstUnicode pathName,
-                        Bool handleLink);
+int FileRename(ConstUnicode fromPath,
+               ConstUnicode toPath);
 
-EXTERN int FileCreateDirectory(ConstUnicode pathName);
+int FileDeletion(ConstUnicode pathName,
+                 Bool handleLink);
 
-EXTERN int FileRemoveDirectory(ConstUnicode pathName);
+int FileCreateDirectory(ConstUnicode pathName,
+                       int mask);
 
-#define FileListDirectoryRobust(a, b) File_ListDirectory((a), (b))
-#define FileAttributesRobust(a, b)    FileAttributes((a), (b))
-#define FileRenameRobust(a, b)        FileRename((a), (b))
-#define FileDeletionRobust(a, b)      FileDeletion((a), (b))
-#define FileCreateDirectoryRobust(a)  FileCreateDirectory((a))
-#define FileRemoveDirectoryRobust(a)  FileRemoveDirectory((a))
+int FileRemoveDirectory(ConstUnicode pathName);
+
+#define FileListDirectoryRobust(a, b)    File_ListDirectory((a), (b))
+#define FileAttributesRobust(a, b)       FileAttributes((a), (b))
+#define FileRenameRobust(a, b)           FileRename((a), (b))
+#define FileDeletionRobust(a, b)         FileDeletion((a), (b))
+#define FileCreateDirectoryRobust(a, b)  FileCreateDirectory((a), (b))
+#define FileRemoveDirectoryRobust(a)     FileRemoveDirectory((a))
 #endif
 
 typedef struct active_lock
 {
   struct active_lock *next;
-  uint32             age;
-  Bool               marked;
-  Unicode            dirName;
+  uint32              age;
+  Bool                marked;
+  Unicode             dirName;
 } ActiveLock;
 
 typedef struct lock_values
 {
    char         *machineID;
    char         *executionID;
-   char         *payload;
    char         *lockType;
    char         *locationChecksum;
-   Unicode      memberName;
-   unsigned int lamportNumber;
-   uint32       waitTime;
-   uint32       msecMaxWaitTime;
+   Unicode       memberName;
+   unsigned int  lamportNumber;
+   uint32        waitTime;
+   uint32        msecMaxWaitTime;
    ActiveLock   *lockList;
 } LockValues;
 
@@ -201,69 +212,108 @@ typedef struct lock_values
 
 #define FILELOCK_DATA_SIZE 512
 
-#if defined(_WIN32)
-typedef HANDLE FILELOCK_FILE_HANDLE;
+uint32 FileSleeper(uint32 msecMinSleepTime,
+                   uint32 msecMaxSleepTime);
+
+uint32 FileSimpleRandom(void);
+
+const char *FileLockGetMachineID(void);
+
+char *FileLockGetExecutionID(void);
+
+Bool FileLockMachineIDMatch(char *host,
+                            char *second);
+
+int FileLockMemberValues(ConstUnicode lockDir, 
+                         ConstUnicode fileName,
+                         char *buffer,
+                         size_t size,
+                         LockValues *memberValues);
+
+FileLockToken *FileLockIntrinsic(ConstUnicode filePathName,
+                                 Bool exclusivity,
+                                 uint32 msecMaxWaitTime,
+                                 int *err);
+
+int FileUnlockIntrinsic(FileLockToken *tokenPtr);
+
+Bool FileLockIsLocked(ConstUnicode filePath,
+                      int *err);
+
+Bool FileLockValidExecutionID(const char *executionID);
+
+Bool FileLockValidName(ConstUnicode fileName);
+
+Bool FileIsWritableDir(ConstUnicode dirName);
+
+UnicodeIndex FileFirstSlashIndex(ConstUnicode pathName,
+                                 UnicodeIndex startIndex);
+
+FileIOResult
+FileIOCreateRetry(FileIODescriptor *fd,
+                  ConstUnicode pathName,
+                  int access,
+                  FileIOOpenAction action,
+                  int mode,
+                  uint32 msecMaxWaitTime);
+
+
+/*
+ * FileIOAligned_* are useful on hosted platforms where malloc/memalign/valloc
+ * for "large buffers" (in the range 64 KiB - 1 MiB) will generally fall
+ * through to mmap/munmap, which is expensive due to page table modifications
+ * and the attendant TLB flushing (which requires IPIs and possibly world
+ * switches) on other threads running in the same address space.  In particular,
+ * on Mac OS 10.6.6 on a Westmere-class Mac Pro, mmap + memcpy + munmap adds
+ * around a millisecond of CPU time and a hundred IPIs to a 512 KiB write.  See
+ * PR#685845.
+ *
+ * This isn't applicable to ESX because
+ * 1. we don't use this path for disk IO
+ * 2. we don't want to do extra large allocations
+ * 3. we don't have the same alignment constraints
+ * so simply define it away to nothing.
+ *
+ * Tools is another case, we can use this path for IO but we don't want to add
+ * MXUserExclLock dependencies.
+ */
+
+#if defined(VMX86_TOOLS) || defined(VMX86_SERVER)
+#define FileIOAligned_PoolInit()     /* nothing */
+#define FileIOAligned_PoolExit()     /* nothing */
+#define FileIOAligned_PoolMalloc(sz) NULL
+#define FileIOAligned_PoolFree(ptr)  FALSE
 #else
-typedef int FILELOCK_FILE_HANDLE;
+void FileIOAligned_PoolInit(void);
+void FileIOAligned_PoolExit(void);
+void *FileIOAligned_PoolMalloc(size_t);
+Bool FileIOAligned_PoolFree(void *);
 #endif
 
-EXTERN uint32 FileSleeper(uint32 msecMinSleepTime,
-                          uint32 msecMaxSleepTime);
+static INLINE void *
+FileIOAligned_Malloc(size_t sz)  // IN:
+{
+   void *buf = FileIOAligned_PoolMalloc(sz);
 
-EXTERN const char *FileLockGetMachineID(void);
+   if (!buf) {
+      buf = Aligned_Malloc(sz);
+   }
 
-EXTERN char *FileLockGetExecutionID(void);
+   return buf;
+}
 
-EXTERN Bool FileLockMachineIDMatch(char *host,
-                                   char *second);
-
-EXTERN int FileLockMemberValues(ConstUnicode lockDir, 
-                                ConstUnicode fileName,
-                                char *buffer,
-                                uint32 size,
-                                LockValues *memberValues);
-
-EXTERN int FileLockHackVMX(ConstUnicode filePathName);
-
-EXTERN int FileLockOpenFile(ConstUnicode pathName,
-                            int flags,
-                            FILELOCK_FILE_HANDLE *handle);
-
-EXTERN int FileLockCloseFile(FILELOCK_FILE_HANDLE handle);
-
-EXTERN int FileLockReadFile(FILELOCK_FILE_HANDLE handle,
-                            void *buf,
-                            uint32 requestedBytes,
-                            uint32 *resultantBytes);
-
-EXTERN int FileLockWriteFile(FILELOCK_FILE_HANDLE handle,
-                             void *buf,
-                             uint32 requestedBytes,
-                             uint32 *resultantBytes);
-
-EXTERN void *FileLockIntrinsic(ConstUnicode filePathName,
-                               Bool exclusivity,
-                               uint32 msecMaxWaitTime,
-                               const char *payload,
-                               int *err);
-
-EXTERN int FileUnlockIntrinsic(ConstUnicode filePathName,
-                               const void *lockToken);
-
-EXTERN Bool FileLockIsLocked(ConstUnicode filePath,
-                             int *err);
-
-EXTERN Bool FileLockValidOwner(const char *executionID,
-                               const char *payload);
-
-EXTERN Bool FileLockValidName(ConstUnicode fileName);
-
-EXTERN Bool FileIsWritableDir(ConstUnicode dirName);
+static INLINE void
+FileIOAligned_Free(void *ptr)  // IN:
+{
+   if (!FileIOAligned_PoolFree(ptr)) {
+      Aligned_Free(ptr);
+   }
+}
 
 #if defined(__APPLE__)
-EXTERN int PosixFileOpener(ConstUnicode pathName,
-                           int flags,
-                           mode_t mode);
+int PosixFileOpener(ConstUnicode pathName,
+                    int flags,
+                    mode_t mode);
 #else
 #define PosixFileOpener(a, b, c) Posix_Open(a, b, c);
 #endif

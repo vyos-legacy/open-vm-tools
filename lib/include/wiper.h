@@ -43,6 +43,9 @@ typedef enum {
    PARTITION_FAT,
    PARTITION_UFS,
    PARTITION_PCFS,
+   PARTITION_EXT4,
+   PARTITION_HFS,
+   PARTITION_ZFS,
 } WiperPartition_Type;
 
 /* Max size of a path */
@@ -54,6 +57,12 @@ typedef struct WiperPartition {
 
    /* Type of the partition */
    WiperPartition_Type type;
+   
+   /* 
+    * Clients should specifically set this flag to TRUE to enable free space
+    * reclamation using unmaps.
+    */
+   Bool attemptUnmaps;
 
    /*
     * NULL if type is not PARTITION_UNSUPPORTED, otherwise describes
@@ -86,6 +95,7 @@ void WiperPartition_Close(WiperPartition_List *pl);
 WiperPartition *WiperSinglePartition_Allocate(void);
 WiperPartition *WiperSinglePartition_Open(const char *mntpt);
 void WiperSinglePartition_Close(WiperPartition *);
+Bool Wiper_IsWipeSupported(const WiperPartition *);
 
 unsigned char *WiperSinglePartition_GetSpace(const WiperPartition *p,
                               uint64 *free,

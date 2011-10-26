@@ -27,14 +27,18 @@
 #define _VMCI_IOCONTROLS_H_
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMON
 #define INCLUDE_ALLOW_VMCORE
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMKERNEL
 #include "includeCheck.h"
 
-#include "vmci_defs.h"
 #include "vm_assert.h"
+#include "vmci_defs.h"
+
+#if defined(_WIN32) && defined(WINNT_DDK)
+/* We need to expose the API through an IOCTL on Windows.  Use latest API. */
+#include "vmciKernelAPI.h"
+#endif // _WIN32 && WINNT_DDK
 
 
 /*
@@ -111,6 +115,12 @@ VMCIPtrToVA64(void const *ptr) // IN
  * versions are ways of detecting previous versions of the connecting
  * application (i.e., VMX).
  *
+ * VMCI_VERSION_NOVMVM: This version removed support for VM to VM
+ * communication.
+ *
+ * VMCI_VERSION_NOTIFY: This version introduced doorbell notification
+ * support.
+ *
  * VMCI_VERSION_HOSTQP: This version introduced host end point support
  * for hosted products.
  *
@@ -123,12 +133,28 @@ VMCIPtrToVA64(void const *ptr) // IN
  * driver.
  */
 
-#define VMCI_VERSION                VMCI_VERSION_HOSTQP
+#define VMCI_VERSION                VMCI_VERSION_NOVMVM
+#define VMCI_VERSION_NOVMVM         VMCI_MAKE_VERSION(11, 0)
+#define VMCI_VERSION_NOTIFY         VMCI_MAKE_VERSION(10, 0)
 #define VMCI_VERSION_HOSTQP         VMCI_MAKE_VERSION(9, 0)
 #define VMCI_VERSION_PREHOSTQP      VMCI_MAKE_VERSION(8, 0)
 #define VMCI_VERSION_PREVERS2       VMCI_MAKE_VERSION(1, 0)
 
-#if defined(__linux__) || defined(__APPLE__) || defined(SOLARIS) || defined(VMKERNEL)
+/*
+ * VMCISockets driver version.  The version is platform-dependent and is
+ * embedded in vsock_version.h for each platform.  It can be obtained via
+ * VMCISock_Version() (which uses IOCTL_VMCI_SOCKETS_VERSION).  The
+ * following is simply for constructing an unsigned integer value from the
+ * comma-separated version in the header.  This must match the macros defined
+ * in vmci_sockets.h.  An example of using this is:
+ * uint16 parts[4] = { VSOCK_DRIVER_VERSION_COMMAS };
+ * uint32 version = VMCI_SOCKETS_MAKE_VERSION(parts);
+ */
+
+#define VMCI_SOCKETS_MAKE_VERSION(_p) \
+   ((((_p)[0] & 0xFF) << 24) | (((_p)[1] & 0xFF) << 16) | ((_p)[2]))
+
+#if defined(__linux__) || defined(SOLARIS) || defined(VMKERNEL)
 /*
  * Linux defines _IO* macros, but the core kernel code ignore the encoded
  * ioctl value. It is up to individual drivers to decode the value (for
@@ -141,6 +167,15 @@ VMCIPtrToVA64(void const *ptr) // IN
  * intermediate IOCTLCMD_ representation.
  */
 #  define IOCTLCMD(_cmd) IOCTL_VMCI_ ## _cmd
+#elif defined (__APPLE__)
+#include <sys/ioccom.h>
+#define IOCTLCMD(_cmd) IOCTL_VMCI_ ## _cmd
+#define IOCTLCMD_I(_cmd, _type) \
+   IOCTL_VMCI_MACOS_ ## _cmd = _IOW('V', IOCTL_VMCI_ ## _cmd, _type)
+#define IOCTLCMD_O(_cmd, _type) \
+   IOCTL_VMCI_MACOS_ ## _cmd = _IOR('V', IOCTL_VMCI_ ## _cmd, _type)
+#define IOCTLCMD_IO(_cmd, _type) \
+   IOCTL_VMCI_MACOS_ ## _cmd = _IOWR('V', IOCTL_VMCI_ ## _cmd, _type)
 #else // if defined(__linux__)
 /*
  * On platforms other than Linux, IOCTLCMD_foo values are just numbers, and
@@ -168,12 +203,32 @@ enum IOCTLCmd_VMCI {
 
    /* BEGIN VMCI */
    IOCTLCMD(INIT_CONTEXT),
-   IOCTLCMD(CREATE_PROCESS),
-   IOCTLCMD(CREATE_DATAGRAM_PROCESS),
-   IOCTLCMD(SHAREDMEM_CREATE),
-   IOCTLCMD(SHAREDMEM_ATTACH),
-   IOCTLCMD(SHAREDMEM_QUERY),
-   IOCTLCMD(SHAREDMEM_DETACH),
+
+   /*
+    * The following two were used for process and datagram process creation.
+    * They are not used anymore and reserved for future use.
+    * They will fail if issued.
+    */
+   IOCTLCMD(RESERVED1),
+   IOCTLCMD(RESERVED2),
+
+   /*
+    * The following used to be for shared memory. It is now unused and and is
+    * reserved for future use. It will fail if issued.
+    */
+   IOCTLCMD(RESERVED3),
+
+   /*
+    * The follwoing three were also used to be for shared memory. An
+    * old WS6 user-mode client might try to use them with the new
+    * driver, but since we ensure that only contexts created by VMX'en
+    * of the appropriate version (VMCI_VERSION_NOTIFY or
+    * VMCI_VERSION_NEWQP) or higher use these ioctl, everything is
+    * fine.
+    */
+   IOCTLCMD(QUEUEPAIR_SETVA),
+   IOCTLCMD(NOTIFY_RESOURCE),
+   IOCTLCMD(NOTIFICATIONS_RECEIVE),
    IOCTLCMD(VERSION2),
    IOCTLCMD(QUEUEPAIR_ALLOC),
    IOCTLCMD(QUEUEPAIR_SETPAGEFILE),
@@ -197,10 +252,23 @@ enum IOCTLCmd_VMCI {
     * */
    IOCTLCMD(LAST),
    IOCTLCMD(SOCKETS_FIRST) = IOCTLCMD(LAST),
-   IOCTLCMD(SOCKETS_ACCEPT) = IOCTLCMD(SOCKETS_FIRST),
+
+   /*
+    * This used to be for accept() on Windows and Mac OS, which is now
+    * redundant (since we now use real handles).  It is used instead for
+    * getting the version.  This value is now public, so it cannot change.
+    */
+   IOCTLCMD(SOCKETS_VERSION) = IOCTLCMD(SOCKETS_FIRST),
    IOCTLCMD(SOCKETS_BIND),
-   IOCTLCMD(SOCKETS_CLOSE),
+
+   /*
+    * This used to be for close() on Windows and Mac OS, but is no longer
+    * used for the same reason as accept() above.  It is used instead for
+    * sending private symbols to the Mac OS driver.
+    */
+   IOCTLCMD(SOCKETS_SET_SYMBOLS),
    IOCTLCMD(SOCKETS_CONNECT),
+
    /*
     * The next two values are public (vmci_sockets.h) and cannot be changed.
     * That means the number of values above these cannot be changed either
@@ -230,7 +298,6 @@ enum IOCTLCmd_VMCI {
     */
    // Must be last.
    IOCTLCMD(SOCKETS_LAST) = IOCTLCMD(SOCKETS_SOCKET) + 4, /* 1994 on Linux. */
-
    /*
     * The VSockets ioctls occupy the block above.  We define a new range of
     * VMCI ioctls to maintain binary compatibility between the user land and
@@ -244,23 +311,50 @@ enum IOCTLCmd_VMCI {
    IOCTLCMD(LAST2),
 };
 
+#if defined (__APPLE__)
+/*
+ * The size of this must match the size of VSockIoctlPrivSyms in
+ * modules/vsock/common/vsockIoctl.h.
+ */
+#include "vmware_pack_begin.h"
+struct IOCTLCmd_VMCIMacOS_PrivSyms {
+   char data[328];
+}
+#include "vmware_pack_end.h"
+;
+enum IOCTLCmd_VMCIMacOS {
+   IOCTLCMD_I(SOCKETS_SET_SYMBOLS, struct IOCTLCmd_VMCIMacOS_PrivSyms),
+   IOCTLCMD_O(SOCKETS_VERSION, unsigned int),
+   IOCTLCMD_O(SOCKETS_GET_AF_VALUE, int),
+   IOCTLCMD_O(SOCKETS_GET_LOCAL_CID, unsigned int),
+};
+#endif // __APPLE__
+
 
 #if defined _WIN32
 /*
  * Windows VMCI ioctl definitions.
  */
 
-/*
- * The first is the device name in user-mode.  The next two are for registering
- * or opening the device in kernel-mode, and are always in UNICODE.
- */
-#define VMCI_DEVICE_NAME         TEXT("\\\\.\\VMCI")
-#define VMCI_DEVICE_NAME_PATH    L"\\Device\\vmci"
-#define VMCI_DEVICE_LINK_PATH    L"\\DosDevices\\vmci"
+/* PUBLIC: For VMCISockets user-mode clients that use CreateFile(). */
+#define VMCI_INTERFACE_VSOCK_PUBLIC_NAME TEXT("\\\\.\\VMCI")
+
+/* PUBLIC: For VMCISockets user-mode clients that use NtCreateFile(). */
+#define VMCI_INTERFACE_VSOCK_PUBLIC_NAME_NT L"\\??\\VMCI"
+
+/* PUBLIC: For the VMX, which uses CreateFile(). */
+#define VMCI_INTERFACE_VMX_PUBLIC_NAME TEXT("\\\\.\\VMCIDev\\VMX")
+
+/* PRIVATE NAMES */
+#define VMCI_DEVICE_VMCI_LINK_PATH  L"\\DosDevices\\VMCIDev"
+#define VMCI_DEVICE_VSOCK_LINK_PATH L"\\DosDevices\\vmci"
+#define VMCI_DEVICE_HOST_NAME_PATH  L"\\Device\\VMCIHostDev"
+#define VMCI_DEVICE_GUEST_NAME_PATH L"\\Device\\VMCIGuestDev"
+/* PRIVATE NAMES */
 
 /* These values cannot be changed since some of the ioctl values are public. */
-#define FILE_DEVICE_VMCI         0x8103
-#define VMCI_IOCTL_BASE_INDEX    0x801
+#define FILE_DEVICE_VMCI      0x8103
+#define VMCI_IOCTL_BASE_INDEX 0x801
 #define VMCIIOCTL_BUFFERED(name) \
       CTL_CODE(FILE_DEVICE_VMCI, \
 	       VMCI_IOCTL_BASE_INDEX + IOCTLCMD_VMCI_ ## name, \
@@ -272,34 +366,47 @@ enum IOCTLCmd_VMCI {
 	       METHOD_NEITHER, \
 	       FILE_ANY_ACCESS)
 
-#define IOCTL_VMCI_VERSION		VMCIIOCTL_BUFFERED(VERSION)
+enum IOCTLCmd_VMCIWin32 {
+   IOCTLCMD(DEVICE_GET) = IOCTLCMD(LAST2) + 1,
+   IOCTLCMD(SOCKETS_SERVICE_GET),
+   IOCTLCMD(SOCKETS_STOP),
+};
+
+#define IOCTL_VMCI_VERSION VMCIIOCTL_BUFFERED(VERSION)
 
 /* BEGIN VMCI */
-#define IOCTL_VMCI_INIT_CONTEXT         VMCIIOCTL_BUFFERED(INIT_CONTEXT)
-#define IOCTL_VMCI_CREATE_PROCESS       VMCIIOCTL_BUFFERED(CREATE_PROCESS)
-#define IOCTL_VMCI_CREATE_DATAGRAM_PROCESS \
-               VMCIIOCTL_BUFFERED(CREATE_DATAGRAM_PROCESS)
-#define IOCTL_VMCI_HYPERCALL            VMCIIOCTL_BUFFERED(HYPERCALL)
-#define IOCTL_VMCI_SHAREDMEM_CREATE  \
-               VMCIIOCTL_BUFFERED(SHAREDMEM_CREATE)
-#define IOCTL_VMCI_SHAREDMEM_ATTACH  \
-               VMCIIOCTL_BUFFERED(SHAREDMEM_ATTACH)
-#define IOCTL_VMCI_SHAREDMEM_QUERY   \
-               VMCIIOCTL_BUFFERED(SHAREDMEM_QUERY)
-#define IOCTL_VMCI_SHAREDMEM_DETACH  \
-               VMCIIOCTL_BUFFERED(SHAREDMEM_DETACH)
-#define IOCTL_VMCI_VERSION2		VMCIIOCTL_BUFFERED(VERSION2)
+#define IOCTL_VMCI_INIT_CONTEXT \
+               VMCIIOCTL_BUFFERED(INIT_CONTEXT)
+#define IOCTL_VMCI_HYPERCALL \
+               VMCIIOCTL_BUFFERED(HYPERCALL)
+#define IOCTL_VMCI_CREATE_DATAGRAM_HANDLE  \
+               VMCIIOCTL_BUFFERED(CREATE_DATAGRAM_HANDLE)
+#define IOCTL_VMCI_DESTROY_DATAGRAM_HANDLE  \
+               VMCIIOCTL_BUFFERED(DESTROY_DATAGRAM_HANDLE)
+#define IOCTL_VMCI_NOTIFY_RESOURCE    \
+               VMCIIOCTL_BUFFERED(NOTIFY_RESOURCE)
+#define IOCTL_VMCI_NOTIFICATIONS_RECEIVE    \
+               VMCIIOCTL_BUFFERED(NOTIFICATIONS_RECEIVE)
+#define IOCTL_VMCI_VERSION2 \
+               VMCIIOCTL_BUFFERED(VERSION2)
 #define IOCTL_VMCI_QUEUEPAIR_ALLOC  \
                VMCIIOCTL_BUFFERED(QUEUEPAIR_ALLOC)
+#define IOCTL_VMCI_QUEUEPAIR_SETVA  \
+               VMCIIOCTL_BUFFERED(QUEUEPAIR_SETVA)
 #define IOCTL_VMCI_QUEUEPAIR_SETPAGEFILE  \
                VMCIIOCTL_BUFFERED(QUEUEPAIR_SETPAGEFILE)
 #define IOCTL_VMCI_QUEUEPAIR_DETACH  \
                VMCIIOCTL_BUFFERED(QUEUEPAIR_DETACH)
-#define IOCTL_VMCI_DATAGRAM_SEND	VMCIIOCTL_BUFFERED(DATAGRAM_SEND)
-#define IOCTL_VMCI_DATAGRAM_RECEIVE	VMCIIOCTL_NEITHER(DATAGRAM_RECEIVE)
-#define IOCTL_VMCI_DATAGRAM_REQUEST_MAP	VMCIIOCTL_BUFFERED(DATAGRAM_REQUEST_MAP)
-#define IOCTL_VMCI_DATAGRAM_REMOVE_MAP	VMCIIOCTL_BUFFERED(DATAGRAM_REMOVE_MAP)
-#define IOCTL_VMCI_CTX_ADD_NOTIFICATION	VMCIIOCTL_BUFFERED(CTX_ADD_NOTIFICATION)
+#define IOCTL_VMCI_DATAGRAM_SEND \
+               VMCIIOCTL_BUFFERED(DATAGRAM_SEND)
+#define IOCTL_VMCI_DATAGRAM_RECEIVE \
+               VMCIIOCTL_NEITHER(DATAGRAM_RECEIVE)
+#define IOCTL_VMCI_DATAGRAM_REQUEST_MAP \
+               VMCIIOCTL_BUFFERED(DATAGRAM_REQUEST_MAP)
+#define IOCTL_VMCI_DATAGRAM_REMOVE_MAP \
+               VMCIIOCTL_BUFFERED(DATAGRAM_REMOVE_MAP)
+#define IOCTL_VMCI_CTX_ADD_NOTIFICATION \
+               VMCIIOCTL_BUFFERED(CTX_ADD_NOTIFICATION)
 #define IOCTL_VMCI_CTX_REMOVE_NOTIFICATION \
                VMCIIOCTL_BUFFERED(CTX_REMOVE_NOTIFICATION)
 #define IOCTL_VMCI_CTX_GET_CPT_STATE \
@@ -308,15 +415,15 @@ enum IOCTLCmd_VMCI {
                VMCIIOCTL_BUFFERED(CTX_SET_CPT_STATE)
 #define IOCTL_VMCI_GET_CONTEXT_ID    \
                VMCIIOCTL_BUFFERED(GET_CONTEXT_ID)
+#define IOCTL_VMCI_DEVICE_GET \
+               VMCIIOCTL_BUFFERED(DEVICE_GET)
 /* END VMCI */
 
 /* BEGIN VMCI SOCKETS */
-#define IOCTL_VMCI_SOCKETS_ACCEPT \
-               VMCIIOCTL_BUFFERED(SOCKETS_ACCEPT)
+#define IOCTL_VMCI_SOCKETS_VERSION \
+               VMCIIOCTL_BUFFERED(SOCKETS_VERSION)
 #define IOCTL_VMCI_SOCKETS_BIND \
                VMCIIOCTL_BUFFERED(SOCKETS_BIND)
-#define IOCTL_VMCI_SOCKETS_CLOSE \
-               VMCIIOCTL_BUFFERED(SOCKETS_CLOSE)
 #define IOCTL_VMCI_SOCKETS_CONNECT \
                VMCIIOCTL_BUFFERED(SOCKETS_CONNECT)
 #define IOCTL_VMCI_SOCKETS_GET_AF_VALUE \
@@ -333,22 +440,20 @@ enum IOCTLCmd_VMCI {
                VMCIIOCTL_BUFFERED(SOCKETS_IOCTL)
 #define IOCTL_VMCI_SOCKETS_LISTEN \
                VMCIIOCTL_BUFFERED(SOCKETS_LISTEN)
-#define IOCTL_VMCI_SOCKETS_RECV \
-               VMCIIOCTL_BUFFERED(SOCKETS_RECV)
 #define IOCTL_VMCI_SOCKETS_RECV_FROM \
                VMCIIOCTL_BUFFERED(SOCKETS_RECV_FROM)
 #define IOCTL_VMCI_SOCKETS_SELECT \
                VMCIIOCTL_BUFFERED(SOCKETS_SELECT)
-#define IOCTL_VMCI_SOCKETS_SEND \
-               VMCIIOCTL_BUFFERED(SOCKETS_SEND)
 #define IOCTL_VMCI_SOCKETS_SEND_TO \
                VMCIIOCTL_BUFFERED(SOCKETS_SEND_TO)
 #define IOCTL_VMCI_SOCKETS_SET_SOCK_OPT \
                VMCIIOCTL_BUFFERED(SOCKETS_SET_SOCK_OPT)
 #define IOCTL_VMCI_SOCKETS_SHUTDOWN \
                VMCIIOCTL_BUFFERED(SOCKETS_SHUTDOWN)
-#define IOCTL_VMCI_SOCKETS_SOCKET \
-               VMCIIOCTL_BUFFERED(SOCKETS_SOCKET)
+#define IOCTL_VMCI_SOCKETS_SERVICE_GET \
+               VMCIIOCTL_BUFFERED(SOCKETS_SERVICE_GET)
+#define IOCTL_VMCI_SOCKETS_STOP \
+               VMCIIOCTL_NEITHER(SOCKETS_STOP)
 /* END VMCI SOCKETS */
 
 #endif // _WIN32
@@ -369,10 +474,29 @@ typedef struct VMCIInitBlock {
 typedef struct VMCISharedMemInfo {
    VMCIHandle handle;
    uint32     size;
-   uint32     result;     
-   VA64       va; /* Currently only used in the guest. */ 
+   uint32     result;
+   VA64       va; /* Currently only used in the guest. */
    char       pageFileName[VMCI_PATH_MAX];
 } VMCISharedMemInfo;
+
+typedef struct VMCIQueuePairAllocInfo_VMToVM {
+   VMCIHandle handle;
+   VMCIId     peer;
+   uint32     flags;
+   uint64     produceSize;
+   uint64     consumeSize;
+#if !defined(VMX86_SERVER) && !defined(VMKERNEL)
+   VA64       producePageFile; /* User VA. */
+   VA64       consumePageFile; /* User VA. */
+   uint64     producePageFileSize; /* Size of the file name array. */
+   uint64     consumePageFileSize; /* Size of the file name array. */
+#else
+   PPN *      PPNs;
+   uint64     numPPNs;
+#endif
+   int32      result;
+   uint32     _pad;
+} VMCIQueuePairAllocInfo_VMToVM;
 
 typedef struct VMCIQueuePairAllocInfo {
    VMCIHandle handle;
@@ -380,13 +504,23 @@ typedef struct VMCIQueuePairAllocInfo {
    uint32     flags;
    uint64     produceSize;
    uint64     consumeSize;
-   VA64       producePageFile; /* User VA. */
-   VA64       consumePageFile; /* User VA. */
-   uint64     producePageFileSize; /* Size of the file name array. */
-   uint64     consumePageFileSize; /* Size of the file name array. */ 
+#if !defined(VMX86_SERVER) && !defined(VMKERNEL)
+   VA64       ppnVA; /* Start VA of queue pair PPNs. */
+#else
+   PPN *      PPNs;
+#endif
+   uint64     numPPNs;
    int32      result;
-   uint32     _pad;
+   uint32     version;
 } VMCIQueuePairAllocInfo;
+
+typedef struct VMCIQueuePairSetVAInfo {
+   VMCIHandle handle;
+   VA64       va; /* Start VA of queue pair PPNs. */
+   uint64     numPPNs;
+   uint32     version;
+   int32      result;
+} VMCIQueuePairSetVAInfo;
 
 /*
  * For backwards compatibility, here is a version of the
@@ -426,10 +560,12 @@ typedef struct VMCIQueuePairPageFileInfo_NoHostQP {
 
 typedef struct VMCIQueuePairPageFileInfo {
    VMCIHandle handle;
+#if !defined(VMX86_SERVER) && !defined(VMKERNEL)
    VA64       producePageFile; /* User VA. */
    VA64       consumePageFile; /* User VA. */
    uint64     producePageFileSize; /* Size of the file name array. */
    uint64     consumePageFileSize; /* Size of the file name array. */
+#endif
    int32      result;
    uint32     version;   /* Was _pad. */
    VA64       produceVA; /* User VA of the mapped file. */
@@ -448,32 +584,17 @@ typedef struct VMCIDatagramSendRecvInfo {
    int32  result;
 } VMCIDatagramSendRecvInfo;
 
-/* Used to create datagram endpoints in guest or host userlevel. */
-typedef struct VMCIDatagramCreateInfo {
-   VMCIId      resourceID;
-   uint32      flags; 
-#ifdef _WIN32
-   int         eventHnd;
-#else
-   int         _unused;
-#endif
-   int         result;     // result of handle create operation
-   VMCIHandle  handle;     // handle if successfull
-} VMCIDatagramCreateInfo;
-
 /* Used to add/remove well-known datagram mappings. */
 typedef struct VMCIDatagramMapInfo {
    VMCIId      wellKnownID;
    int         result;
 } VMCIDatagramMapInfo;
 
-
 /* Used to add/remove remote context notifications. */
 typedef struct VMCINotifyAddRemoveInfo {
    VMCIId      remoteCID;
    int         result;
 } VMCINotifyAddRemoveInfo;
-
 
 /* Used to set/get current context's checkpoint state. */
 typedef struct VMCICptBufInfo {
@@ -491,32 +612,99 @@ typedef struct VMCISetNotifyInfo {
    uint32      _pad;
 } VMCISetNotifyInfo;
 
-/* User space daemon command numbers. */
-typedef enum VMCIDRequestType {
-    VMCID_REQ_NEW_PAGE_STORE,
-    VMCID_REQ_FREE_PAGE_STORE,
-    VMCID_REQ_ATTACH_PAGE_STORE,
-    VMCID_REQ_DETACH_PAGE_STORE,
-} VMCIDRequestType;
+#define VMCI_NOTIFY_RESOURCE_QUEUE_PAIR 0
+#define VMCI_NOTIFY_RESOURCE_DOOR_BELL  1
 
-#define VMCI_VMCID_INVALID_REQ  CONST64U(-1)
+#define VMCI_NOTIFY_RESOURCE_ACTION_NOTIFY  0
+#define VMCI_NOTIFY_RESOURCE_ACTION_CREATE  1
+#define VMCI_NOTIFY_RESOURCE_ACTION_DESTROY 2
 
-/* Used to pass requests/responses to the user space daemon. */
-typedef struct VMCIDRpc {
-    uint64           reqId;
-    uint32           reqType;
-    uint32           reqResult;
-    /* Passing page file names */
-    VA64             producePageFile; /* User VA. */
-    VA64             consumePageFile; /* User VA. */
-    uint64           producePageFileSize; /* Size of the file name array. */
-    uint64           consumePageFileSize; /* Size of the file name array. */
-    /* Used for attach/detach */
-    VA64             produceVA;
-    VA64             consumeVA;
-    uint64           numProducePages;
-    uint64           numConsumePages;
-} VMCIDRpc;
+/*
+ * Used to create and destroy doorbells, and generate a notification
+ * for a doorbell or queue pair.
+ */
+
+typedef struct VMCINotifyResourceInfo {
+   VMCIHandle  handle;
+   uint16      resource;
+   uint16      action;
+   int32       result;
+} VMCINotifyResourceInfo;
+
+/*
+ * Used to recieve pending notifications for doorbells and queue
+ * pairs.
+ */
+
+typedef struct VMCINotificationReceiveInfo {
+   VA64        dbHandleBufUVA;
+   uint64      dbHandleBufSize;
+   VA64        qpHandleBufUVA;
+   uint64      qpHandleBufSize;
+   int32       result;
+   uint32      _pad;
+} VMCINotificationReceiveInfo;
+
+#if defined(_WIN32) && defined(WINNT_DDK)
+/*
+ * Used on Windows to expose the API calls that are no longer exported.  This
+ * is kernel-mode only, and both sides will have the same bitness, so we can
+ * use pointers directly.
+ */
+
+/* Version 1. */
+typedef struct VMCIDeviceGetInfoVer1 {
+   VMCI_DeviceReleaseFct *deviceRelease;
+   VMCIDatagram_CreateHndFct *dgramCreateHnd;
+   VMCIDatagram_CreateHndPrivFct *dgramCreateHndPriv;
+   VMCIDatagram_DestroyHndFct *dgramDestroyHnd;
+   VMCIDatagram_SendFct *dgramSend;
+   VMCI_GetContextIDFct *getContextId;
+   VMCI_VersionFct *version;
+   VMCIEvent_SubscribeFct *eventSubscribe;
+   VMCIEvent_UnsubscribeFct *eventUnsubscribe;
+   VMCIQPair_AllocFct *qpairAlloc;
+   VMCIQPair_DetachFct *qpairDetach;
+   VMCIQPair_GetProduceIndexesFct *qpairGetProduceIndexes;
+   VMCIQPair_GetConsumeIndexesFct *qpairGetConsumeIndexes;
+   VMCIQPair_ProduceFreeSpaceFct *qpairProduceFreeSpace;
+   VMCIQPair_ProduceBufReadyFct *qpairProduceBufReady;
+   VMCIQPair_ConsumeFreeSpaceFct *qpairConsumeFreeSpace;
+   VMCIQPair_ConsumeBufReadyFct *qpairConsumeBufReady;
+   VMCIQPair_EnqueueFct *qpairEnqueue;
+   VMCIQPair_DequeueFct *qpairDequeue;
+   VMCIQPair_PeekFct *qpairPeek;
+   VMCIQPair_EnqueueVFct *qpairEnqueueV;
+   VMCIQPair_DequeueVFct *qpairDequeueV;
+   VMCIQPair_PeekVFct *qpairPeekV;
+   VMCI_ContextID2HostVmIDFct *contextID2HostVmID;
+   VMCI_IsContextOwnerFct *isContextOwner;
+   VMCIContext_GetPrivFlagsFct *contextGetPrivFlags;
+} VMCIDeviceGetInfoVer1;
+
+/* Version 2. */
+typedef struct VMCIDeviceGetInfoVer2 {
+   VMCIDoorbell_CreateFct *doorbellCreate;
+   VMCIDoorbell_DestroyFct *doorbellDestroy;
+   VMCIDoorbell_NotifyFct *doorbellNotify;
+} VMCIDeviceGetInfoVer2;
+
+typedef struct VMCIDeviceGetInfoHdr {
+   /* Requested API version on input, supported version on output. */
+   uint32 apiVersion;
+   VMCI_DeviceShutdownFn *deviceShutdownCB;
+   void *userData;
+   void *deviceRegistration;
+} VMCIDeviceGetInfoHdr;
+
+/* Combination of all versions. */
+typedef struct VMCIDeviceGetInfo {
+   VMCIDeviceGetInfoHdr hdr;
+   VMCIDeviceGetInfoVer1 ver1;
+   VMCIDeviceGetInfoVer2 ver2;
+} VMCIDeviceGetInfo;
+#endif // _WIN32 && WINNT_DDK
+
 
 #ifdef __APPLE__
 /*
@@ -535,24 +723,21 @@ typedef struct VMCIDRpc {
 enum VMCrossTalkSockOpt {
    VMCI_SO_VERSION = 0,
    VMCI_SO_CONTEXT                  = IOCTL_VMCI_INIT_CONTEXT,
-   VMCI_SO_PROCESS                  = IOCTL_VMCI_CREATE_PROCESS,
-   VMCI_SO_DATAGRAM_PROCESS         = IOCTL_VMCI_CREATE_DATAGRAM_PROCESS,
-   VMCI_SO_SHAREDMEM_CREATE         = IOCTL_VMCI_SHAREDMEM_CREATE,
-   VMCI_SO_SHAREDMEM_ATTACH         = IOCTL_VMCI_SHAREDMEM_ATTACH,
-   VMCI_SO_SHAREDMEM_QUERY          = IOCTL_VMCI_SHAREDMEM_QUERY,
-   VMCI_SO_SHAREDMEM_DETACH         = IOCTL_VMCI_SHAREDMEM_DETACH,
+   VMCI_SO_NOTIFY_RESOURCE          = IOCTL_VMCI_NOTIFY_RESOURCE,
+   VMCI_SO_NOTIFICATIONS_RECEIVE    = IOCTL_VMCI_NOTIFICATIONS_RECEIVE,
    VMCI_SO_VERSION2                 = IOCTL_VMCI_VERSION2,
    VMCI_SO_QUEUEPAIR_ALLOC          = IOCTL_VMCI_QUEUEPAIR_ALLOC,
+   VMCI_SO_QUEUEPAIR_SETVA          = IOCTL_VMCI_QUEUEPAIR_SETVA,
    VMCI_SO_QUEUEPAIR_SETPAGEFILE    = IOCTL_VMCI_QUEUEPAIR_SETPAGEFILE,
    VMCI_SO_QUEUEPAIR_DETACH         = IOCTL_VMCI_QUEUEPAIR_DETACH,
    VMCI_SO_DATAGRAM_SEND            = IOCTL_VMCI_DATAGRAM_SEND,
-   VMCI_SO_DATAGRAM_RECEIVE         = IOCTL_VMCI_DATAGRAM_RECEIVE, 
+   VMCI_SO_DATAGRAM_RECEIVE         = IOCTL_VMCI_DATAGRAM_RECEIVE,
    VMCI_SO_DATAGRAM_REQUEST_MAP     = IOCTL_VMCI_DATAGRAM_REQUEST_MAP,
-   VMCI_SO_DATAGRAM_REMOVE_MAP      = IOCTL_VMCI_DATAGRAM_REMOVE_MAP, 
-   VMCI_SO_CTX_ADD_NOTIFICATION     = IOCTL_VMCI_CTX_ADD_NOTIFICATION, 
-   VMCI_SO_CTX_REMOVE_NOTIFICATION  = IOCTL_VMCI_CTX_REMOVE_NOTIFICATION, 
-   VMCI_SO_CTX_GET_CPT_STATE        = IOCTL_VMCI_CTX_GET_CPT_STATE, 
-   VMCI_SO_CTX_SET_CPT_STATE        = IOCTL_VMCI_CTX_SET_CPT_STATE, 
+   VMCI_SO_DATAGRAM_REMOVE_MAP      = IOCTL_VMCI_DATAGRAM_REMOVE_MAP,
+   VMCI_SO_CTX_ADD_NOTIFICATION     = IOCTL_VMCI_CTX_ADD_NOTIFICATION,
+   VMCI_SO_CTX_REMOVE_NOTIFICATION  = IOCTL_VMCI_CTX_REMOVE_NOTIFICATION,
+   VMCI_SO_CTX_GET_CPT_STATE        = IOCTL_VMCI_CTX_GET_CPT_STATE,
+   VMCI_SO_CTX_SET_CPT_STATE        = IOCTL_VMCI_CTX_SET_CPT_STATE,
    VMCI_SO_GET_CONTEXT_ID           = IOCTL_VMCI_GET_CONTEXT_ID,
    VMCI_SO_USERFD,
 };

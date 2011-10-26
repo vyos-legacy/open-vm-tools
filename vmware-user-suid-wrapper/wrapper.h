@@ -33,11 +33,6 @@
 #include "vm_basic_types.h"
 #include "vmblock.h"
 
-#define TMP_DIR                 "/tmp/VMwareDnD"
-#define TMP_DIR_MODE            (S_ISVTX | S_IRWXU | S_IRWXO | S_IRWXG)
-#define MOUNT_POINT_MODE        (S_IRWXU | S_IRWXO | S_IRWXG)
-#define MODULE_NAME             VMBLOCK_FS_NAME
-
 #define progname                "vmware-user"
 #define Error(fmt, args...)     fprintf(stderr, "%s: " fmt, progname, ##args);
 
@@ -57,31 +52,21 @@
  */
 
 typedef enum {
-   QUERY_LIBDIR = 0,    /* Ask for "BINDIR" */
-   QUERY_BINDIR,        /* Ask for "LIBDIR" */
+   QUERY_LIBDIR = 0,    /* Ask for "LIBDIR" */
+   QUERY_BINDIR,        /* Ask for "BINDIR" */
+   QUERY_SBINDIR,       /* Ask for "SBINDIR" */
    QUERY_MAX            /* Upper limit -- Insert other queries above only. */
 } Selector;
 #else
-#   ifndef VMWARE_USER_PATH
-#      error This program requires either USES_LOCATIONS_DB or VMWARE_USER_PATH.
-#   endif // ifndef VMWARE_USER_PATH
+#   ifndef VMTOOLSD_PATH
+#      error This program requires either USES_LOCATIONS_DB or VMTOOLSD_PATH.
+#   endif // ifndef VMTOOLSD_PATH
 #endif // ifdef USES_LOCATIONS_DB
 
 
 /*
  * Global functions
  */
-
-#if defined(sun) || defined(__FreeBSD__)
-#define TOGGLE_VMBLOCK
-extern int GetModuleId(const char *);
-extern Bool UnloadModule(int);
-
-extern Bool UnloadVMBlock(void);
-extern Bool LoadVMBlock(void);
-extern Bool UnmountVMBlock(const char *);
-extern Bool MountVMBlock(void);
-#endif
 
 extern Bool CompatExec(const char *, char * const [], char * const []);
 extern Bool BuildExecPath(char *, size_t);

@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 
 /*
  * hgfsUtil.h --
@@ -66,10 +80,47 @@ struct timespec {
 #      include <errno.h>
 #   endif
     typedef int HgfsInternalStatus;
+    /*
+     * There is no internal error in Linux.
+     * Define a const that is converted to HGFS_INTERNAL_STATUS_ERROR.
+     */
+#   define EINTERNAL                    1001
 #else
 #   include <windows.h>
     typedef DWORD HgfsInternalStatus;
 #endif
+
+#if defined _WIN32
+#define HGFS_ERROR_SUCCESS           ERROR_SUCCESS
+#define HGFS_ERROR_IO                ERROR_IO_DEVICE
+#define HGFS_ERROR_ACCESS_DENIED     ERROR_ACCESS_DENIED
+#define HGFS_ERROR_INVALID_PARAMETER ERROR_INVALID_PARAMETER
+#define HGFS_ERROR_INVALID_HANDLE    ERROR_INVALID_HANDLE
+#define HGFS_ERROR_PROTOCOL          RPC_S_PROTOCOL_ERROR
+#define HGFS_ERROR_STALE_SESSION     ERROR_CONNECTION_INVALID
+#define HGFS_ERROR_BUSY              ERROR_RETRY
+#define HGFS_ERROR_PATH_BUSY         ERROR_RETRY
+#define HGFS_ERROR_FILE_NOT_FOUND    ERROR_FILE_NOT_FOUND
+#define HGFS_ERROR_FILE_EXIST        ERROR_ALREADY_EXISTS
+#define HGFS_ERROR_NOT_SUPPORTED     ERROR_NOT_SUPPORTED
+#define HGFS_ERROR_NOT_ENOUGH_MEMORY ERROR_NOT_ENOUGH_MEMORY
+#define HGFS_ERROR_INTERNAL          ERROR_INTERNAL_ERROR
+#else
+#define HGFS_ERROR_SUCCESS           0
+#define HGFS_ERROR_IO                EIO
+#define HGFS_ERROR_ACCESS_DENIED     EACCES
+#define HGFS_ERROR_INVALID_PARAMETER EINVAL
+#define HGFS_ERROR_INVALID_HANDLE    EBADF
+#define HGFS_ERROR_PROTOCOL          EPROTO
+#define HGFS_ERROR_STALE_SESSION     ENETRESET
+#define HGFS_ERROR_BUSY              EBUSY
+#define HGFS_ERROR_PATH_BUSY         EBUSY
+#define HGFS_ERROR_FILE_NOT_FOUND    ENOENT
+#define HGFS_ERROR_FILE_EXIST        EEXIST
+#define HGFS_ERROR_NOT_SUPPORTED     EOPNOTSUPP
+#define HGFS_ERROR_NOT_ENOUGH_MEMORY ENOMEM
+#define HGFS_ERROR_INTERNAL          EINTERNAL
+#endif // _WIN32
 
 /*
  * Unfortunately, we need a catch-all "generic error" to use with
@@ -100,8 +151,8 @@ struct timespec {
 #define EPROTO (ELAST + 1)
 #endif
 
-#define HGFS_NAME_BUFFER_SIZE(request) (HGFS_PACKET_MAX - (sizeof *request - 1))
-#define HGFS_NAME_BUFFER_SIZET(sizet) (HGFS_PACKET_MAX - ((sizet) - 1))
+#define HGFS_NAME_BUFFER_SIZE(packetSize, request) (packetSize - (sizeof *request - 1))
+#define HGFS_NAME_BUFFER_SIZET(packetSize, sizet) (packetSize - ((sizet) - 1))
 
 #ifndef _WIN32
 /*

@@ -103,6 +103,11 @@ VSockAddr_InitNoFamily(struct sockaddr_vm *addr, // OUT
 {
    ASSERT(addr);
    memset(addr, 0, sizeof *addr);
+
+#if defined(__APPLE__)
+   addr->svm_len = sizeof *addr;
+#endif
+
    addr->svm_cid = cid;
    addr->svm_port = port;
    VSOCK_ADDR_NOFAMILY_ASSERT(addr);
@@ -221,7 +226,7 @@ Bool
 VSockAddr_Bound(struct sockaddr_vm *addr) // IN: socket address to check
 {
    ASSERT(addr);
-   return addr->svm_cid != VMADDR_CID_ANY && addr->svm_port != VMADDR_PORT_ANY;
+   return addr->svm_port != VMADDR_PORT_ANY;
 }
 
 
@@ -277,6 +282,39 @@ VSockAddr_EqualsAddr(struct sockaddr_vm *addr,  // IN
    VSOCK_ADDR_NOFAMILY_ASSERT(other);
    return (addr->svm_cid == other->svm_cid &&
            addr->svm_port == other->svm_port);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * VSockAddr_EqualsAddrAny --
+ *
+ *    Determine if the given addresses are equal. Will accept either an exact
+ *    match or one where the rids match and that either the cids match or
+ *    are set to VMADDR_CID_ANY.
+ *
+ * Results:
+ *    TRUE if the addresses are equal, FALSE otherwise.
+ *
+ * Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+VSockAddr_EqualsAddrAny(struct sockaddr_vm *addr,  // IN
+                        struct sockaddr_vm *other) // IN
+{
+   VSOCK_ADDR_NOFAMILY_ASSERT(addr);
+   VSOCK_ADDR_NOFAMILY_ASSERT(other);
+   if (addr->svm_cid == VMADDR_CID_ANY ||
+       other->svm_cid == VMADDR_CID_ANY ||
+       addr->svm_cid == other->svm_cid) {
+      return (addr->svm_port == other->svm_port);
+   }
+   return FALSE;
 }
 
 
@@ -408,7 +446,13 @@ VSockAddr_SocketContextDgram(uint32 cid,  // IN
                              uint32 rid)  // IN
 {
    if (cid == VMCI_HYPERVISOR_CONTEXT_ID) {
-      if (rid != VMCI_VSOCK_VMX_LOOKUP) {
+      /*
+       * Registrations of PBRPC Servers do not modify VMX/Hypervisor state and
+       * are allowed.
+       */
+      if (rid == VMCI_UNITY_PBRPC_REGISTER) {
+         return TRUE;
+      } else {
          return FALSE;
       }
    }

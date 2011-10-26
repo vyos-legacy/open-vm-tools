@@ -26,10 +26,7 @@
 #include "safetime.h"
 #include "unicode.h"
 
-#if defined(N_PLAT_NLM)
-#  include <sys/timeval.h>
-#  include <nwtime.h>
-#elif defined(_WIN32)
+#if defined(_WIN32)
 #  include <wtypes.h>
 #else
 #  include <sys/time.h>
@@ -61,28 +58,24 @@
 #define UNIX_S32_MAX (UNIX_EPOCH + (uint64)0x80000000 * 10000000)
 
 /*
- * Days in month defines. The month is 1 - 12.
- * Notice that there are 28 days in february. It will updated for leap year
- * as necessary by the function using this defines.
- */
-#define DAYS_IN_MONTH { 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
-
-
-/*
  * Local Definitions
  */
 
 static void TimeUtilInit(TimeUtil_Date *d);
 static Bool TimeUtilLoadDate(TimeUtil_Date *d, const char *date);
-static Bool TimeUtilIsLeapYear(unsigned int year);
-static Bool TimeUtilIsValidDate(unsigned int year, unsigned int month, unsigned int day);
+static const unsigned int *TimeUtilMonthDaysForYear(unsigned int year);
+static Bool TimeUtilIsValidDate(unsigned int year,
+                                unsigned int month,
+                                unsigned int day);
 
 
 /*
  * Function to guess Windows TZ Index and Name by using time offset in
  * a lookup table
  */
-static int TimeUtilFindIndexAndNameByUTCOffset(int utcStdOffMins, const char **ptzName);
+
+static int TimeUtilFindIndexAndNameByUTCOffset(int utcStdOffMins,
+                                               const char **ptzName);
 
 #if defined(_WIN32)
 /*
@@ -158,6 +151,7 @@ TimeUtil_StringToDate(TimeUtil_Date *d,  // IN/OUT
     * Reduce the string to a known and handled format: YYYYMMDD.
     * Then, passed to internal function TimeUtilLoadDate.
     */
+
    if (strlen(date) == 8) {
       /* 'YYYYMMDD' */
       return TimeUtilLoadDate(d, date);
@@ -318,6 +312,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     *   intentionally subtract an additional 2 days for each year
     *   and an additional 3 days.
     */
+
    dayCount = dayCount + 3 + 2 * (dayCount / 365);
 
    subYear = dayCount / 365;
@@ -344,6 +339,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * making sure on the valid range, without checking
     * for leap year, etc.
     */
+
    if ((estDay > 28) && (estMonth == 2)) {
       estDay = 28;
    }
@@ -356,6 +352,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * we also copy the time from the original argument in making
     * sure that it does not play role in the comparison.
     */
+
    estRes.hour = d->hour;
    estRes.minute = d->minute;
    estRes.second = d->second;
@@ -365,6 +362,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * guaranteed to be lower than the actual result. Otherwise,
     * infinite loop will happen.
     */
+
    ASSERT(TimeUtil_DateLowerThan(&estRes, d));
 
    /*
@@ -372,6 +370,7 @@ TimeUtil_DaysSubtract(TimeUtil_Date *d,   // IN/OUT
     * Done by moving up (moving forward) the estimated a day at a time
     *    until they are the correct one (i.e. estDate + arg #day = arg date)
     */
+
    temp = estRes;
    TimeUtil_DaysAdd(&temp, nr);
    while (TimeUtil_DateLowerThan(&temp, d)) {
@@ -408,18 +407,14 @@ void
 TimeUtil_DaysAdd(TimeUtil_Date *d, // IN/OUT
                  unsigned int nr)  // IN
 {
-   static unsigned int monthdays[13] = DAYS_IN_MONTH;
+   const unsigned int *monthDays;
    unsigned int i;
 
    /*
     * Initialize the table
     */
 
-   if (TimeUtilIsLeapYear(d->year)) {
-      monthdays[2] = 29;
-   } else {
-      monthdays[2] = 28;
-   }
+   monthDays = TimeUtilMonthDaysForYear(d->year);
 
    for (i = 0; i < nr; i++) {
       /*
@@ -427,7 +422,7 @@ TimeUtil_DaysAdd(TimeUtil_Date *d, // IN/OUT
        */
 
       d->day++;
-      if (d->day > monthdays[d->month]) {
+      if (d->day > monthDays[d->month]) {
          d->day = 1;
          d->month++;
          if (d->month > 12) {
@@ -438,11 +433,7 @@ TimeUtil_DaysAdd(TimeUtil_Date *d, // IN/OUT
              * Update the table
              */
 
-            if (TimeUtilIsLeapYear(d->year)) {
-               monthdays[2] = 29;
-            } else {
-               monthdays[2] = 28;
-            }
+            monthDays = TimeUtilMonthDaysForYear(d->year);
          }
       }
    }
@@ -490,15 +481,16 @@ TimeUtil_PopulateWithCurrent(Bool local,       // IN
    d->second = currentTime.wSecond;
 #else
    struct tm *currentTime;
+   struct tm tmbuf;
    time_t utcTime;
 
    ASSERT(d);
 
    utcTime = time(NULL);
    if (local) {
-      currentTime = localtime(&utcTime);
+      currentTime = localtime_r(&utcTime, &tmbuf);
    } else {
-      currentTime = gmtime(&utcTime);
+      currentTime = gmtime_r(&utcTime, &tmbuf);
    }
    ASSERT_NOT_IMPLEMENTED(currentTime);
    d->year   = 1900 + currentTime->tm_year;
@@ -508,6 +500,71 @@ TimeUtil_PopulateWithCurrent(Bool local,       // IN
    d->minute = currentTime->tm_min;
    d->second = currentTime->tm_sec;
 #endif // _WIN32
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * TimeUtil_GetTimeOfDay --
+ *
+ *      Get the current time for local timezone in seconds and micro-seconds.
+ *      same as gettimeofday on posix systems. Time is returned in the 'time'
+ *      variable.
+ *
+ * Results:
+ *      void
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+TimeUtil_GetTimeOfDay(TimeUtil_TimeOfDay *timeofday)
+{
+
+#ifdef _WIN32
+   FILETIME ft;
+   uint64 tmptime = 0;
+
+   ASSERT(timeofday != NULL);
+
+   /*
+    * May need to use QueryPerformanceCounter API if we need more 
+    * refinement/accuracy than what we are doing below.
+    */
+
+   // Get the system time in UTC format.
+   GetSystemTimeAsFileTime(&ft);
+   
+   // Convert ft structure to a uint64 containing the # of 100 ns from UTC.
+   tmptime |= ft.dwHighDateTime;
+   tmptime <<= 32;
+   tmptime |= ft.dwLowDateTime;
+   
+#define DELTA_EPOCH_IN_MICROSECS  11644473600000000ULL
+   // Convert file time to unix epoch.
+   tmptime -= DELTA_EPOCH_IN_MICROSECS; 
+   // convert into microseconds (since the return is in 100 nseconds).
+   tmptime /= 10;  
+   // Get the seconds and microseconds in the timeofday
+   timeofday->seconds = (unsigned long)(tmptime / 1000000UL);
+   timeofday->useconds = (unsigned long)(tmptime % 1000000UL);
+   
+
+#undef DELTA_EPOCH_IN_MICROSECS   
+#else
+   struct timeval curTime;
+   
+   ASSERT(timeofday != NULL);
+
+   gettimeofday(&curTime, NULL);
+   timeofday->seconds = (unsigned long) curTime.tv_sec;
+   timeofday->useconds = (unsigned long) curTime.tv_usec;
+#endif // _WIN32
+
 }
 
 
@@ -538,12 +595,15 @@ TimeUtil_DaysLeft(TimeUtil_Date const *d) // IN
    /* Get the current local date. */
    TimeUtil_PopulateWithCurrent(TRUE, &c);
 
-   /* Compute how many days we can add to the current date before reaching
-      the given date */
+   /*
+    * Compute how many days we can add to the current date before reaching
+    * the given date
+    */
+
    for (i = 0; i < MAX_DAYSLEFT + 1; i++) {
-      if (    c.year > d->year
-          || (c.year == d->year && c.month > d->month)
-          || (c.year == d->year && c.month == d->month && c.day >= d->day)) {
+      if ((c.year > d->year) ||
+          (c.year == d->year && c.month > d->month) ||
+          (c.year == d->year && c.month == d->month && c.day >= d->day)) {
          /* current date >= given date */
          return i;
       }
@@ -769,7 +829,8 @@ TimeUtil_GetTimeFormat(int64 utcTime,  // IN
       return NULL;
    }
 
-   if (!TimeUtil_UTCTimeToSystemTime((const __time64_t) utcTime, &systemTime)) {
+   if (!TimeUtil_UTCTimeToSystemTime((const __time64_t) utcTime,
+                                      &systemTime)) {
       return NULL;
    }
 
@@ -786,14 +847,27 @@ TimeUtil_GetTimeFormat(int64 utcTime,  // IN
    }
 
 #else
+   /*
+    * On 32-bit systems the assignment of utcTime to time_t below will truncate
+    * in the year 2038.  Ignore it; there's nothing we can do.
+    */
+
    char *str;
-   str = Util_SafeStrdup(ctime((const time_t *) &utcTime));
-   str[strlen(str)-1] = '\0';
+   char buf[26];
+   const time_t t = (time_t) utcTime;  // Implicit narrowing on 32-bit
+
+#if defined sun
+   str = Util_SafeStrdup(ctime_r(&t, buf, sizeof buf));
+#else
+   str = Util_SafeStrdup(ctime_r(&t, buf));
+#endif
+   str[strlen(str) - 1] = '\0';  // Remove the trailing '\n'.
+
    return str;
 #endif // _WIN32
 }
 
-#if !defined _WIN32 && !defined N_PLAT_NLM
+
 /*
  *-----------------------------------------------------------------------------
  *
@@ -818,9 +892,6 @@ TimeUtil_NtTimeToUnixTime(struct timespec *unixTime,   // OUT: Time in Unix form
                           VmTimeType ntTime)           // IN: Time in Windows NT format
 {
 #ifndef VM_X86_64
-   uint32 sec;
-   uint32 nsec;
-
    ASSERT(unixTime);
    /* We assume that time_t is 32bit */
    ASSERT(sizeof (unixTime->tv_sec) == 4);
@@ -843,9 +914,14 @@ TimeUtil_NtTimeToUnixTime(struct timespec *unixTime,   // OUT: Time in Unix form
    }
 
 #ifdef __i386__ // only for 32-bit x86
-   Div643232(ntTime - UNIX_EPOCH, 10000000, &sec, &nsec);
-   unixTime->tv_sec = sec;
-   unixTime->tv_nsec = nsec * 100;
+   {
+      uint32 sec;
+      uint32 nsec;
+
+      Div643232(ntTime - UNIX_EPOCH, 10000000, &sec, &nsec);
+      unixTime->tv_sec = sec;
+      unixTime->tv_nsec = nsec * 100;
+   }
 #else
    unixTime->tv_sec = (ntTime - UNIX_EPOCH) / 10000000;
    unixTime->tv_nsec = ((ntTime - UNIX_EPOCH) % 10000000) * 100;
@@ -875,9 +951,8 @@ VmTimeType
 TimeUtil_UnixTimeToNtTime(struct timespec unixTime) // IN: Time in Unix format
 {
    return (VmTimeType)unixTime.tv_sec * 10000000 +
-      unixTime.tv_nsec / 100 + UNIX_EPOCH;
+                                          unixTime.tv_nsec / 100 + UNIX_EPOCH;
 }
-#endif // _WIN32 && N_PLAT_NLM
 
 #ifdef _WIN32
 /*
@@ -909,6 +984,7 @@ TimeUtil_UTCTimeToSystemTime(const __time64_t utcTime,   // IN
     * _localtime64 support years up through 3000.  At least it says
     * so.  I'm getting garbage only after reaching year 4408.
     */
+
    if (utcTime < 0 || utcTime > (60LL * 60 * 24 * 365 * (3000 - 1970))) {
       return FALSE;
    }
@@ -926,6 +1002,7 @@ TimeUtil_UTCTimeToSystemTime(const __time64_t utcTime,   // IN
     * Main reason for this test is to cut out negative values _localtime64
     * likes to return for some inputs.
     */
+
    if (atmYear < 1601 || atmYear > 30827 ||
        atmMonth < 1 || atmMonth > 12 ||
        atm->tm_wday < 0 || atm->tm_wday > 6 ||
@@ -1011,11 +1088,12 @@ TimeUtil_GetLocalWindowsTimeZoneIndexAndName(char **ptzName)   // OUT: returning
       struct tm tim;
       localtime_r(&now, &tim);
 
-      #if defined(sun) || defined N_PLAT_NLM
+      #if defined(sun)
          /*
           * Offset is to standard (no need for DST adjustment).
           * Negative is east of prime meridian.
           */
+
          utcStdOffMins = 0 - timezone/60;
       #else
          /*
@@ -1023,6 +1101,7 @@ TimeUtil_GetLocalWindowsTimeZoneIndexAndName(char **ptzName)   // OUT: returning
           * Offset is to local (need to adjust for DST).
           * Negative is west of prime meridian.
           */
+
          utcStdOffMins = tim.tm_gmtoff/60;
          if (tim.tm_isdst) {
             utcStdOffMins -= 60;
@@ -1037,7 +1116,8 @@ TimeUtil_GetLocalWindowsTimeZoneIndexAndName(char **ptzName)   // OUT: returning
 
    /* If we don't have it yet, look up windowsCode. */
    if (winTimeZoneIndex < 0) {
-      winTimeZoneIndex = TimeUtilFindIndexAndNameByUTCOffset(utcStdOffMins, &tzNameByUTCOffset);
+      winTimeZoneIndex = TimeUtilFindIndexAndNameByUTCOffset(utcStdOffMins,
+                                                         &tzNameByUTCOffset);
       if (winTimeZoneIndex >= 0) {
          *ptzName = Unicode_AllocWithUTF8(tzNameByUTCOffset);
       }
@@ -1108,20 +1188,17 @@ TimeUtilIsValidDate(unsigned int year,   // IN
                     unsigned int month,  // IN
                     unsigned int day)    // IN
 {
-   static unsigned int monthdays[13] = DAYS_IN_MONTH;
+   const unsigned int *monthDays;
 
    /*
     * Initialize the table
     */
-   if (TimeUtilIsLeapYear(year)) {
-      monthdays[2] = 29;
-   } else {
-      monthdays[2] = 28;
-   }
+
+   monthDays = TimeUtilMonthDaysForYear(year);
 
    if ((year >= 1) &&
        (month >= 1) && (month <= 12) &&
-       (day >= 1) && (day <= monthdays[month])) {
+       (day >= 1) && (day <= monthDays[month])) {
       return TRUE;
    }
 
@@ -1132,12 +1209,14 @@ TimeUtilIsValidDate(unsigned int year,   // IN
 /*
  *----------------------------------------------------------------------
  *
- * TimeUtilIsLeapYear --
+ * TimeUtilMonthDaysForYear --
  *
- *    Check whether the argument represents a leap year.
+ *    Return an array of days in months depending on whether the 
+ *    argument represents a leap year.
  *
  * Results:
- *    TRUE or FALSE.
+ *    A pointer to an array of 13 ints representing the days in the 
+ *    12 months.  There are 13 entries because month is 1-12.
  *
  * Side effects:
  *    None.
@@ -1145,16 +1224,16 @@ TimeUtilIsValidDate(unsigned int year,   // IN
  *----------------------------------------------------------------------
  */
 
-static Bool
-TimeUtilIsLeapYear(unsigned int year)  // IN
+static unsigned int const *
+TimeUtilMonthDaysForYear(unsigned int year) // IN
 {
-   if ((year % 4) == 0 &&
-       ((year % 100) != 0 ||
-        (year % 400) == 0)) {
-      return TRUE;
-   }
+   static const unsigned int leap[13] =
+                   { 0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+   static const unsigned int common[13] =
+                   { 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
-   return FALSE;
+   return ((year % 4) == 0 && ((year % 100) != 0 || (year % 400) == 0)) ? 
+           leap : common;
 }
 
 
@@ -1227,7 +1306,8 @@ TimeUtilLoadDate(TimeUtil_Date *d,  // IN/OUT
       return FALSE;
    }
 
-   if (!TimeUtilIsValidDate((unsigned int) year, (unsigned int) month, (unsigned int) day)) {
+   if (!TimeUtilIsValidDate((unsigned int) year, (unsigned int) month,
+                            (unsigned int) day)) {
       return FALSE;
    }
 
@@ -1404,9 +1484,7 @@ static int Win32TimeUtilLookupZoneIndex(const char* targetName)
                            "Windows NT\\"
                            "CurrentVersion\\"
                            "Time Zones",
-                           0,
-                           KEY_READ,
-                           &parentKey) != ERROR_SUCCESS) {
+                           0, KEY_READ, &parentKey) != ERROR_SUCCESS) {
       /* Failed to open registry */
       return (-1);
    }
@@ -1415,13 +1493,9 @@ static int Win32TimeUtilLookupZoneIndex(const char* targetName)
    keyIndex = 0;
    while (
          timeZoneIndex < 0 &&
-         Win32U_RegEnumKeyEx(parentKey,
-                             keyIndex,
-                             childKeyName,
-                             &childKeyLen,
+         Win32U_RegEnumKeyEx(parentKey, keyIndex, childKeyName, &childKeyLen,
                              0,0,0,0) == ERROR_SUCCESS) {
-
-      char* std;
+      char *std;
       DWORD stdSize;
 
       /* Open child key */
@@ -1431,28 +1505,25 @@ static int Win32TimeUtilLookupZoneIndex(const char* targetName)
       }
 
       /* Get size of "Std" value */
-      if (Win32U_RegQueryValueEx(childKey,
-                                 "Std", 0, 0,
+      if (Win32U_RegQueryValueEx(childKey, "Std", 0, 0,
                                  NULL, &stdSize) == ERROR_SUCCESS) {
 
          /* Get value of "Std" */
          std = (char*) calloc(stdSize+1, sizeof(char));
          if (std != NULL) {
-            if (Win32U_RegQueryValueEx(childKey,
-                                       "Std", 0, 0,
-                                       (LPBYTE) std, &stdSize) == ERROR_SUCCESS) {
+            if (Win32U_RegQueryValueEx(childKey, "Std", 0, 0, (LPBYTE) std,
+                                       &stdSize) == ERROR_SUCCESS) {
 
                /* Make sure there is at least one EOS */
                std[stdSize] = '\0';
 
                /* Is this the name we want? */
                if (!strcmp(std, targetName)) {
-
                   /* yes: look up value of "Index" */
                   DWORD val = 0;
                   DWORD valSize = sizeof(val);
-                  if (Win32U_RegQueryValueEx(childKey,
-                                             "Index", 0, 0,
+
+                  if (Win32U_RegQueryValueEx(childKey, "Index", 0, 0,
                                              (LPBYTE) &val,
                                              &valSize) == ERROR_SUCCESS) {
                      timeZoneIndex = val;

@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 1998-2008 VMware, Inc. All rights reserved.
+ * Copyright (C) 1998-2009 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -16,6 +16,48 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of VMware Inc. nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission of VMware Inc.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *********************************************************/
+
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  *
  * vm_basic_types.h --
@@ -28,10 +70,9 @@
 #define _VM_BASIC_TYPES_H_
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMMON
-#define INCLUDE_ALLOW_VMNIXMOD
 #define INCLUDE_ALLOW_VMKERNEL
 #define INCLUDE_ALLOW_VMKDRIVERS
 #define INCLUDE_ALLOW_VMK_MODULE
@@ -41,7 +82,9 @@
 #include "includeCheck.h"
 
 /* STRICT ANSI means the Xserver build and X defines Bool differently. */
-#if !defined(__STRICT_ANSI__) || defined(__FreeBSD__)
+#if !defined(_XTYPEDEF_BOOL) && \
+    (!defined(__STRICT_ANSI__) || defined(__FreeBSD__) || defined(__MINGW32__))
+#define _XTYPEDEF_BOOL
 typedef char           Bool;
 #endif
 
@@ -67,10 +110,6 @@ typedef char           Bool;
 
 #ifdef __i386__
 #define VM_I386
-#endif
-
-#ifdef __arm__
-#define VM_ARM
 #endif
 
 #ifdef __x86_64__
@@ -105,25 +144,24 @@ typedef char           Bool;
 
 #include <stdint.h>
 
-typedef uint64_t uint64;
-typedef int64_t int64;
-typedef uint32_t uint32;
-typedef int32_t int32;
-typedef uint16_t uint16;
-typedef int16_t int16;
-typedef uint8_t uint8;
+typedef uint64_t    uint64;
+typedef  int64_t     int64;
+typedef uint32_t    uint32;
+typedef  int32_t     int32;
+typedef uint16_t    uint16;
+typedef  int16_t     int16;
+typedef  uint8_t    uint8;
+typedef   int8_t     int8;
 
 /*
- * XXX: int8_t is defined to be 'signed char' on Mac hosts.
+ * Note: C does not specify whether char is signed or unsigned, and
+ * both gcc and msvc implement processor-specific signedness.  With
+ * three types:
+ * typeof(char) != typeof(signed char) != typeof(unsigned char)
  *
- * Unfortunately, GCC 4.0.1 warns when doing pointer assignment or
- * comparison between signed char * and char * (even if char is
- * signed).
- *
- * If we want to use int8_t to define int8, we need to go through and
- * replace uses of char * with signed char * to prevent warnings.
+ * Be careful here, because gcc (4.0.1 and others) likes to warn about
+ * conversions between signed char * and char *.
  */
-typedef char int8;
 
 #else /* !HAVE_STDINT_H */
 
@@ -134,29 +172,26 @@ typedef signed __int64 int64;
 
 #elif __GNUC__
 /* The Xserver source compiles with -ansi -pendantic */
-#ifndef __STRICT_ANSI__
-#if defined(VM_X86_64)
+#   if !defined(__STRICT_ANSI__) || defined(__FreeBSD__)
+#      if defined(VM_X86_64)
 typedef unsigned long uint64;
 typedef long int64;
-#else
+#      else
 typedef unsigned long long uint64;
 typedef long long int64;
-#endif
-#elif defined __FreeBSD__
-typedef unsigned long long uint64;
-typedef long long int64;
-#endif
+#      endif
+#   endif
 #else
-#error - Need compiler define for int64/uint64
+#   error - Need compiler define for int64/uint64
 #endif /* _MSC_VER */
 
 typedef unsigned int       uint32;
 typedef unsigned short     uint16;
 typedef unsigned char      uint8;
 
-typedef int       int32;
-typedef short     int16;
-typedef char      int8;
+typedef int                int32;
+typedef short              int16;
+typedef signed char        int8;
 
 #endif /* HAVE_STDINT_H */
 
@@ -215,22 +250,31 @@ typedef char      int8;
 #         include <stdlib.h>
 #         include <stdint.h>
 #      endif
+#   elif defined __ANDROID__
+#      include <stdint.h>
 #   else
 #      if !defined(__intptr_t_defined) && !defined(intptr_t)
+#         ifdef VM_I386
 #         define __intptr_t_defined
-#         define intptr_t  intptr_t
-#         ifdef VM_X86_64
-             typedef int64     intptr_t;
-#         elif defined VM_I386 || defined VM_ARM
-             typedef int32     intptr_t;
+#            ifdef VM_X86_64
+typedef int64     intptr_t;
+#            else
+typedef int32     intptr_t;
+#            endif
+#         elif defined(__arm__)
+typedef int32     intptr_t;
 #         endif
 #      endif
 
 #      ifndef _STDINT_H
-#         ifdef VM_X86_64
-             typedef uint64    uintptr_t;
-#         elif defined VM_I386 || defined VM_ARM
-             typedef uint32    uintptr_t;
+#         ifdef VM_I386
+#            ifdef VM_X86_64
+typedef uint64    uintptr_t;
+#            else
+typedef uint32    uintptr_t;
+#            endif
+#         elif defined(__arm__)
+typedef uint32    uintptr_t;
 #         endif
 #      endif
 #   endif
@@ -268,7 +312,11 @@ typedef int64 VmTimeVirtualClock;  /* Virtual Clock kept in CPU cycles */
 #elif defined __APPLE__
    /* Mac OS hosts use the same formatters for 32- and 64-bit. */
    #define FMT64 "ll"
-   #define FMTSZ "z"
+   #if KERNEL
+      #define FMTSZ "l"
+   #else
+      #define FMTSZ "z"
+   #endif
    #define FMTPD "l"
    #define FMTH ""
 #elif __GNUC__
@@ -368,6 +416,12 @@ typedef int64 VmTimeVirtualClock;  /* Virtual Clock kept in CPU cycles */
     #define CONST3264U(a) (a)
 #endif
 
+#define MIN_INT8   ((int8)0x80)
+#define MAX_INT8   ((int8)0x7f)
+
+#define MIN_UINT8  ((uint8)0)
+#define MAX_UINT8  ((uint8)0xff)
+
 #define MIN_INT16  ((int16)0x8000)
 #define MAX_INT16  ((int16)0x7fff)
 
@@ -411,10 +465,18 @@ typedef uint64    BA;
 #endif
 typedef uint32    BPN;
 typedef uint32    PageNum;
-typedef unsigned  MemHandle;
+typedef unsigned      MemHandle;
+typedef unsigned int  IoHandle;
 typedef int32     World_ID;
 
-#define INVALID_WORLD_ID ((World_ID)-1)
+/* !! do not alter the definition of INVALID_WORLD_ID without ensuring
+ * that the values defined in both bora/public/vm_basic_types.h and
+ * lib/vprobe/vm_basic_types.h are the same.  Additionally, the definition
+ * of VMK_INVALID_WORLD_ID in vmkapi_world.h also must be defined with
+ * the same value
+ */
+
+#define INVALID_WORLD_ID ((World_ID)0)
 
 typedef World_ID User_CartelID;
 #define INVALID_CARTEL_ID INVALID_WORLD_ID
@@ -428,13 +490,10 @@ typedef User_CartelID User_CartelGroupID;
 typedef uint32 Worldlet_ID;
 #define INVALID_WORLDLET_ID ((Worldlet_ID)-1)
 
-/* world page number */
-typedef uint32    WPN;
-
 /* The Xserver source compiles with -ansi -pendantic */
 #ifndef __STRICT_ANSI__
-typedef uint64     MA;
-typedef uint32     MPN;
+typedef uint64 MA;
+typedef uint32 MPN;
 #endif
 
 /*
@@ -511,23 +570,23 @@ typedef void * UserVA;
  * Must be at least as large as MAX_PPN which is the maximum PPN
  * for any region other than buserror.
  */
-#define PHYSMEM_MAX_PPN ((PPN)0xffffffff)
-#define MAX_PPN         ((PPN)0x1fffffff)   /* Maximal observable PPN value. */
-#define INVALID_PPN     ((PPN)0xffffffff)
+#define PHYSMEM_MAX_PPN   ((PPN)0xffffffff)
+#define MAX_PPN           ((PPN)0x1fffffff) /* Maximal observable PPN value. */
+#define INVALID_PPN       ((PPN)0xffffffff)
+#define APIC_DISABLED_PPN ((PPN)0xfffffffe)
 
-#define INVALID_BPN  ((BPN) 0x1fffffff)
+#define INVALID_BPN       ((BPN)0x1fffffff)
 
-#define INVALID_MPN  ((MPN)-1)
-#define MEMREF_MPN   ((MPN)-2)
-#define RESERVED_MPN ((MPN) 0)
-/* Support 43 bits of address space. */
-#define MAX_MPN      ((MPN)0x7fffffff)
+#define RESERVED_MPN      ((MPN) 0)
+#define INVALID_MPN       ((MPN)-1)
+#define MEMREF_MPN        ((MPN)-2)
+#define RELEASED_MPN      ((MPN)-3)
+#define MAX_MPN           ((MPN)0x7fffffff)  /* 43 bits of address space. */
 
-#define INVALID_LPN ((LPN)-1)
-#define INVALID_VPN ((VPN)-1)
-#define INVALID_LPN64 ((LPN64)-1)
-#define INVALID_PAGENUM ((PageNum)-1)
-#define INVALID_WPN ((WPN) -1)
+#define INVALID_LPN       ((LPN)-1)
+#define INVALID_VPN       ((VPN)-1)
+#define INVALID_LPN64     ((LPN64)-1)
+#define INVALID_PAGENUM   ((PageNum)-1)
 
 
 /*
@@ -535,7 +594,7 @@ typedef void * UserVA;
  * Use them like this: Log("%#"FMTLA"x\n", laddr)
  */
 
-#if defined(VMM64) || defined(FROBOS64) || vm_x86_64 || defined __APPLE__
+#if defined(VMM) || defined(FROBOS64) || vm_x86_64 || defined __APPLE__
 #   define FMTLA "l"
 #   define FMTVA "l"
 #   define FMTVPN "l"
@@ -593,6 +652,19 @@ typedef void * UserVA;
 
 
 /*
+ * At present, we effectively require a compiler that is at least
+ * gcc-3.3 (circa 2003).  Enforce this here, various things below
+ * this line depend upon it.
+ *
+ * In practice, most things presently compile with gcc-4.1 or gcc-4.4.
+ * The various linux kernel modules may use older (gcc-3.3) compilers.
+ */
+#if defined __GNUC__ && (__GNUC__ < 3 || (__GNUC__ == 3 && __GNUC_MINOR__ < 3))
+#error "gcc version is to old to compile assembly, need gcc-3.3 or better"
+#endif
+
+
+/*
  * Consider the following reasons functions are inlined:
  *
  *  1) inlined for performance reasons
@@ -604,21 +676,19 @@ typedef void * UserVA;
  * are added the inline-ness should be removed.
  */
 
-#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ >= 3)
+#if defined __GNUC__
 /*
  * Starting at version 3.3, gcc does not always inline functions marked
- * 'inline' (it depends on their size). To force gcc to do so, one must use the
- * extra __always_inline__ attribute.
+ * 'inline' (it depends on their size and other factors). To force gcc
+ * to inline a function, one must use the __always_inline__ attribute.
+ * This attribute should be used sparingly and with care.  It is usually
+ * preferable to let gcc make its own inlining decisions
  */
-#   define INLINE_SINGLE_CALLER INLINE __attribute__((__always_inline__))
-#   if    defined(VMM) \
-       && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 1))
-#      warning Verify INLINE_SINGLE_CALLER '__always_inline__' attribute (did \
-             monitor size change?)
-#   endif
+#   define INLINE_ALWAYS INLINE __attribute__((__always_inline__))
 #else
-#   define INLINE_SINGLE_CALLER INLINE
+#   define INLINE_ALWAYS INLINE
 #endif
+#define INLINE_SINGLE_CALLER INLINE_ALWAYS
 
 /*
  * Used when a hard guaranteed of no inlining is needed. Very few
@@ -626,7 +696,7 @@ typedef void * UserVA;
  * that gcc will not do inlining.
  */
 
-#if defined(__GNUC__) && defined(VMM)
+#if defined(__GNUC__) && (defined(VMM) || defined (VMKERNEL))
 #define ABSOLUTELY_NOINLINE __attribute__((__noinline__))
 #endif
 
@@ -637,21 +707,10 @@ typedef void * UserVA;
 
 #ifdef _MSC_VER
 #define NORETURN __declspec(noreturn)
-#elif __GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ >= 9)
+#elif defined __GNUC__
 #define NORETURN __attribute__((__noreturn__))
 #else
 #define NORETURN
-#endif
-
-/*
- * GCC 3.2 inline asm needs the + constraint for input/ouput memory operands.
- * Older GCCs don't know about it --hpreg
- */
-
-#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ >= 2)
-#   define VM_ASM_PLUS 1
-#else
-#   define VM_ASM_PLUS 0
 #endif
 
 /*
@@ -667,7 +726,7 @@ typedef void * UserVA;
  * all others we don't so we do nothing.
  */
 
-#if (__GNUC__ >= 3)
+#if defined __GNUC__
 /*
  * gcc3 uses __builtin_expect() to inform the compiler of an expected value.
  * We use this to inform the static branch predictor. The '!!' in LIKELY
@@ -717,11 +776,19 @@ typedef void * UserVA;
 # endif
 #endif
 
+#ifndef UNUSED_VARIABLE
+// XXX is there a better way?
+#  define UNUSED_VARIABLE(_var) (void)_var
+#endif
+
 /*
- * REGPARM defaults to REGPARM3, i.e., a requent that gcc
- * puts the first three arguments in registers.  (It is fine
- * if the function has fewer than three args.)  Gcc only.
+ * REGPARM defaults to REGPARM3; i.e., a request that gcc
+ * put the first three arguments in registers.  (It is fine
+ * if the function has fewer than three arguments.)  Gcc only.
  * Syntactically, put REGPARM where you'd put INLINE or NORETURN.
+ *
+ * Note that 64-bit code already puts the first six arguments in
+ * registers, so these attributes are only useful for 32-bit code.
  */
 
 #if defined(__GNUC__)
@@ -738,6 +805,16 @@ typedef void * UserVA;
 # define REGPARM
 #endif
 
+
+/*
+ * gcc can warn us if we're ignoring returns
+ */
+#if defined(__GNUC__)
+# define MUST_CHECK_RETURN __attribute__((warn_unused_result))
+#else
+# define MUST_CHECK_RETURN
+#endif
+
 /*
  * ALIGNED specifies minimum alignment in "n" bytes.
  */
@@ -746,63 +823,6 @@ typedef void * UserVA;
 #define ALIGNED(n) __attribute__((__aligned__(n)))
 #else
 #define ALIGNED(n)
-#endif
-
-/*
- ***********************************************************************
- * STRUCT_OFFSET_CHECK --                                    */ /**
- *
- * \brief Check if the actual offsef of a member in a structure
- *        is what is expected
- *
- *
- * \param[in]  STRUCT       Structure the member is a part of.
- * \param[in]  MEMBER       Member to check the offset of.
- * \param[in]  OFFSET       Expected offset of MEMBER in STRUCTURE.
- * \param[in]  DEBUG_EXTRA  Additional bytes to be added to OFFSET to
- *                          compensate for extra info in debug builds.
- *
- ***********************************************************************
- */
-#ifdef VMX86_DEBUG
-#define STRUCT_OFFSET_CHECK(STRUCT, MEMBER, OFFSET, DEBUG_EXTRA) \
-  ASSERT_ON_COMPILE(vmk_offsetof(STRUCT, MEMBER) == (OFFSET + DEBUG_EXTRA))
-#else
-#define STRUCT_OFFSET_CHECK(STRUCT, MEMBER, OFFSET, DEBUG_EXTRA) \
-  ASSERT_ON_COMPILE(vmk_offsetof(STRUCT, MEMBER) == OFFSET)
-#endif
-
-/*
- ***********************************************************************
- * STRUCT_SIZE_CHECK --                                      */ /**
- *
- * \brief Check if the actual size of a structure is what is expected
- *
- *
- * \param[in]  STRUCT       Structure whose size is to be checked.
- * \param[in]  SIZE         Expected size of STRUCT.
- * \param[in]  DEBUG_EXTRA  Additional bytes to be added to SIZE to
- *                          compensate for extra info in debug builds.
- *
- ***********************************************************************
- */
-#ifdef VMX86_DEBUG
-#define STRUCT_SIZE_CHECK(STRUCT, SIZE, DEBUG_EXTRA) \
-  ASSERT_ON_COMPILE(sizeof(STRUCT) == (SIZE + DEBUG_EXTRA))
-#else
-#define STRUCT_SIZE_CHECK(STRUCT, SIZE, DEBUG_EXTRA) \
-  ASSERT_ON_COMPILE(sizeof(STRUCT) == SIZE)
-#endif
-
-/*
- * __func__ is a stringified function name that is part of the C99 standard. The block
- * below defines __func__ on older systems where the compiler does not support that
- * macro.
- */
-#if defined(__GNUC__) \
-   && ((__GNUC__ == 2 && __GNUC_MINOR < 96) \
-       || (__GNUC__ < 2))
-#   define __func__ __FUNCTION__
 #endif
 
 /*
@@ -831,9 +851,6 @@ typedef void * UserVA;
 
 #   ifdef _BSD_SSIZE_T_
 #      undef _BSD_SSIZE_T_
-#      define _SSIZE_T
-#      define __ssize_t_defined
-#      define _SSIZE_T_DECLARED
 #      ifdef VM_I386
 #         ifdef VM_X86_64
              typedef int64 ssize_t;
@@ -844,24 +861,38 @@ typedef void * UserVA;
 #   endif
 
 #else
-#   ifndef _SIZE_T
-#      define _SIZE_T
-#      ifdef VM_X86_64
-          typedef uint64 size_t;
-#      elif defined VM_I386 || defined VM_ARM
+#   if !defined(_SIZE_T) && !defined(_SIZE_T_DEFINED)
+#      ifdef VM_I386
+#         define _SIZE_T
+#         ifdef VM_X86_64
+             typedef uint64 size_t;
+#         else
+             typedef uint32 size_t;
+#         endif
+#      elif defined(__arm__)
+#         define _SIZE_T
           typedef uint32 size_t;
 #      endif
 #   endif
 
-#   if !defined(FROBOS) && !defined(_SSIZE_T) && !defined(ssize_t) && \
-       !defined(__ssize_t_defined) && !defined(_SSIZE_T_DECLARED)
-#      define _SSIZE_T
-#      define __ssize_t_defined
-#      define _SSIZE_T_DECLARED
-#      ifdef VM_X86_64
-          typedef int64 ssize_t;
-#      elif defined VM_I386 || defined VM_ARM
-          typedef int32 ssize_t;
+#   if !defined(FROBOS) && !defined(_SSIZE_T) && !defined(_SSIZE_T_) && \
+       !defined(ssize_t) && !defined(__ssize_t_defined) && \
+       !defined(_SSIZE_T_DECLARED) && !defined(_SSIZE_T_DEFINED) && \
+       !defined(_SSIZE_T_DEFINED_)
+#      ifdef VM_I386
+#         define _SSIZE_T
+#         define __ssize_t_defined
+#         define _SSIZE_T_DECLARED
+#         ifdef VM_X86_64
+             typedef int64 ssize_t;
+#         else
+             typedef int32 ssize_t;
+#         endif
+#      elif defined(__arm__)
+#         define _SSIZE_T
+#         define __ssize_t_defined
+#         define _SSIZE_T_DECLARED
+             typedef int32 ssize_t;
 #      endif
 #   endif
 
@@ -922,7 +953,21 @@ typedef void * UserVA;
 #if defined(__FreeBSD__) && (__FreeBSD__ + 0) && ((__FreeBSD__ + 0) >= 5)
 #   define FMTTIME FMTSZ"d"
 #else
-#   define FMTTIME "ld"
+#   if defined(_MSC_VER)
+#      ifndef _SAFETIME_H_
+#         if (_MSC_VER < 1400) || defined(_USE_32BIT_TIME_T)
+#             define FMTTIME "ld"
+#         else
+#             define FMTTIME FMT64"d"
+#         endif
+#      else
+#         ifndef FMTTIME
+#            error "safetime.h did not define FMTTIME"
+#         endif
+#      endif
+#   else
+#      define FMTTIME "ld"
+#   endif
 #endif
 
 #ifdef __APPLE__
@@ -964,11 +1009,7 @@ typedef int MXSemaHandle;
  * Define type for poll device handles.
  */
 
-#ifdef _WIN32
-typedef uintptr_t PollDevHandle;
-#else
-typedef int PollDevHandle;
-#endif
+typedef int64 PollDevHandle;
 
 /*
  * Define the utf16_t type.
@@ -1000,5 +1041,11 @@ typedef struct VMRect {
    int bottom;
 } VMRect;
 #endif
+
+/*
+ * ranked locks "everywhere"
+ */
+
+typedef uint32 MX_Rank;
 
 #endif  /* _VM_BASIC_TYPES_H_ */

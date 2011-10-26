@@ -118,6 +118,8 @@ enum {
    VIX_E_LICENSE                                = 32,
    VIX_E_VM_HOST_DISCONNECTED                   = 34,
    VIX_E_AUTHENTICATION_FAIL                    = 35,
+   VIX_E_HOST_CONNECTION_LOST                   = 36,
+   VIX_E_DUPLICATE_NAME                         = 41,
 
    /* Handle Errors */
    VIX_E_INVALID_HANDLE                         = 1000,
@@ -155,26 +157,29 @@ enum {
    VIX_E_CONSOLE_GUEST_OPERATIONS_PROHIBITED    = 3026,
    VIX_E_MUST_BE_CONSOLE_USER                   = 3027,
    VIX_E_VMX_MSG_DIALOG_AND_NO_UI               = 3028,
-   VIX_E_NOT_ALLOWED_DURING_VM_RECORDING        = 3029,
-   VIX_E_NOT_ALLOWED_DURING_VM_REPLAY           = 3030,
+   /* VIX_E_NOT_ALLOWED_DURING_VM_RECORDING        = 3029, Removed in version 1.11 */
+   /* VIX_E_NOT_ALLOWED_DURING_VM_REPLAY           = 3030, Removed in version 1.11 */
    VIX_E_OPERATION_NOT_ALLOWED_FOR_LOGIN_TYPE   = 3031,
    VIX_E_LOGIN_TYPE_NOT_SUPPORTED               = 3032,
    VIX_E_EMPTY_PASSWORD_NOT_ALLOWED_IN_GUEST    = 3033,
    VIX_E_INTERACTIVE_SESSION_NOT_PRESENT        = 3034,
    VIX_E_INTERACTIVE_SESSION_USER_MISMATCH      = 3035,
-   VIX_E_UNABLE_TO_REPLAY_VM                    = 3039,
+   /* VIX_E_UNABLE_TO_REPLAY_VM                    = 3039, Removed in version 1.11 */
    VIX_E_CANNOT_POWER_ON_VM                     = 3041,
    VIX_E_NO_DISPLAY_SERVER                      = 3043,
-   VIX_E_VM_NOT_RECORDING                       = 3044,
-   VIX_E_VM_NOT_REPLAYING                       = 3045,
+   /* VIX_E_VM_NOT_RECORDING                       = 3044, Removed in version 1.11 */
+   /* VIX_E_VM_NOT_REPLAYING                       = 3045, Removed in version 1.11 */
+   VIX_E_TOO_MANY_LOGONS                        = 3046,
+   VIX_E_INVALID_AUTHENTICATION_SESSION         = 3047,
 
-   /* VM Errors */ 
+   /* VM Errors */
    VIX_E_VM_NOT_FOUND                           = 4000,
    VIX_E_NOT_SUPPORTED_FOR_VM_VERSION           = 4001,
    VIX_E_CANNOT_READ_VM_CONFIG                  = 4002,
    VIX_E_TEMPLATE_VM                            = 4003,
    VIX_E_VM_ALREADY_LOADED                      = 4004,
    VIX_E_VM_ALREADY_UP_TO_DATE                  = 4006,
+   VIX_E_VM_UNSUPPORTED_GUEST                   = 4011,
 
    /* Property Errors */
    VIX_E_UNRECOGNIZED_PROPERTY                  = 6000,
@@ -213,7 +218,9 @@ enum {
    VIX_E_SNAPSHOT_MEMORY_ON_INDEPENDENT_DISK    = 13018,
    VIX_E_SNAPSHOT_MAXSNAPSHOTS                  = 13019,
    VIX_E_SNAPSHOT_MIN_FREE_SPACE                = 13020,
-   VIX_E_SNAPSHOT_RRSUSPEND                     = 13021,
+   VIX_E_SNAPSHOT_HIERARCHY_TOODEEP             = 13021,
+   VIX_E_SNAPSHOT_RRSUSPEND                     = 13022,
+   VIX_E_SNAPSHOT_NOT_REVERTABLE                = 13024,
 
    /* Host Errors */
    VIX_E_HOST_DISK_INVALID_VALUE                = 14003,
@@ -263,6 +270,9 @@ enum {
    VIX_E_DISK_NOLICENSE                         = 16064,
    VIX_E_DISK_NODEVICE                          = 16065,
    VIX_E_DISK_UNSUPPORTEDDEVICE                 = 16066,
+   VIX_E_DISK_CAPACITY_MISMATCH                 = 16067,
+   VIX_E_DISK_PARENT_NOTALLOWED                 = 16068,
+   VIX_E_DISK_ATTACH_ROOTLINK                   = 16069,
 
    /* Crypto Library Errors */
    VIX_E_CRYPTO_UNKNOWN_ALGORITHM               = 17000,
@@ -296,6 +306,7 @@ enum {
    VIX_E_NOT_A_DIRECTORY                        = 20002,
    VIX_E_NO_SUCH_PROCESS                        = 20003,
    VIX_E_FILE_NAME_TOO_LONG                     = 20004,
+   VIX_E_OPERATION_DISABLED                     = 20005,
 
    /* Tools install errors */
    VIX_E_TOOLS_INSTALL_NO_IMAGE                 = 21000,
@@ -310,12 +321,80 @@ enum {
    VIX_E_TOOLS_INSTALL_ERROR                    = 21009,
    VIX_E_TOOLS_INSTALL_ALREADY_UP_TO_DATE       = 21010,
    VIX_E_TOOLS_INSTALL_IN_PROGRESS              = 21011,
+   VIX_E_TOOLS_INSTALL_IMAGE_COPY_FAILED        = 21012,
 
    /* Wrapper Errors */
    VIX_E_WRAPPER_WORKSTATION_NOT_INSTALLED      = 22001,
    VIX_E_WRAPPER_VERSION_NOT_FOUND              = 22002,
    VIX_E_WRAPPER_SERVICEPROVIDER_NOT_FOUND      = 22003,
    VIX_E_WRAPPER_PLAYER_NOT_INSTALLED           = 22004,
+   VIX_E_WRAPPER_RUNTIME_NOT_INSTALLED          = 22005,
+   VIX_E_WRAPPER_MULTIPLE_SERVICEPROVIDERS      = 22006,
+
+   /* FuseMnt errors*/
+   VIX_E_MNTAPI_MOUNTPT_NOT_FOUND               = 24000,
+   VIX_E_MNTAPI_MOUNTPT_IN_USE                  = 24001,
+   VIX_E_MNTAPI_DISK_NOT_FOUND                  = 24002,
+   VIX_E_MNTAPI_DISK_NOT_MOUNTED                = 24003,
+   VIX_E_MNTAPI_DISK_IS_MOUNTED                 = 24004,
+   VIX_E_MNTAPI_DISK_NOT_SAFE                   = 24005,
+   VIX_E_MNTAPI_DISK_CANT_OPEN                  = 24006,
+   VIX_E_MNTAPI_CANT_READ_PARTS                 = 24007,
+   VIX_E_MNTAPI_UMOUNT_APP_NOT_FOUND            = 24008,
+   VIX_E_MNTAPI_UMOUNT                          = 24009,
+   VIX_E_MNTAPI_NO_MOUNTABLE_PARTITONS          = 24010,
+   VIX_E_MNTAPI_PARTITION_RANGE                 = 24011,
+   VIX_E_MNTAPI_PERM                            = 24012,
+   VIX_E_MNTAPI_DICT                            = 24013,
+   VIX_E_MNTAPI_DICT_LOCKED                     = 24014,
+   VIX_E_MNTAPI_OPEN_HANDLES                    = 24015,
+   VIX_E_MNTAPI_CANT_MAKE_VAR_DIR               = 24016,
+   VIX_E_MNTAPI_NO_ROOT                         = 24017,
+   VIX_E_MNTAPI_LOOP_FAILED                     = 24018,
+   VIX_E_MNTAPI_DAEMON                          = 24019,
+   VIX_E_MNTAPI_INTERNAL                        = 24020,
+   VIX_E_MNTAPI_SYSTEM                          = 24021,
+   VIX_E_MNTAPI_NO_CONNECTION_DETAILS           = 24022,
+   /* FuseMnt errors: Do not exceed 24299 */
+
+   /* VixMntapi errors*/
+   VIX_E_MNTAPI_INCOMPATIBLE_VERSION            = 24300,
+   VIX_E_MNTAPI_OS_ERROR                        = 24301,
+   VIX_E_MNTAPI_DRIVE_LETTER_IN_USE             = 24302,
+   VIX_E_MNTAPI_DRIVE_LETTER_ALREADY_ASSIGNED   = 24303,
+   VIX_E_MNTAPI_VOLUME_NOT_MOUNTED              = 24304,
+   VIX_E_MNTAPI_VOLUME_ALREADY_MOUNTED          = 24305,
+   VIX_E_MNTAPI_FORMAT_FAILURE                  = 24306,
+   VIX_E_MNTAPI_NO_DRIVER                       = 24307,
+   VIX_E_MNTAPI_ALREADY_OPENED                  = 24308,
+   VIX_E_MNTAPI_ITEM_NOT_FOUND                  = 24309,
+   VIX_E_MNTAPI_UNSUPPROTED_BOOT_LOADER         = 24310,
+   VIX_E_MNTAPI_UNSUPPROTED_OS                  = 24311,
+   VIX_E_MNTAPI_CODECONVERSION                  = 24312,
+   VIX_E_MNTAPI_REGWRITE_ERROR                  = 24313,
+   VIX_E_MNTAPI_UNSUPPORTED_FT_VOLUME           = 24314,
+   VIX_E_MNTAPI_PARTITION_NOT_FOUND             = 24315,
+   VIX_E_MNTAPI_PUTFILE_ERROR                   = 24316,
+   VIX_E_MNTAPI_GETFILE_ERROR                   = 24317,
+   VIX_E_MNTAPI_REG_NOT_OPENED                  = 24318,
+   VIX_E_MNTAPI_REGDELKEY_ERROR                 = 24319,
+   VIX_E_MNTAPI_CREATE_PARTITIONTABLE_ERROR     = 24320,
+   VIX_E_MNTAPI_OPEN_FAILURE                    = 24321,
+   VIX_E_MNTAPI_VOLUME_NOT_WRITABLE             = 24322,
+
+   /* Network Errors */
+   VIX_E_NET_HTTP_UNSUPPORTED_PROTOCOL     = 30001,
+   VIX_E_NET_HTTP_URL_MALFORMAT            = 30003,
+   VIX_E_NET_HTTP_COULDNT_RESOLVE_PROXY    = 30005,
+   VIX_E_NET_HTTP_COULDNT_RESOLVE_HOST     = 30006,
+   VIX_E_NET_HTTP_COULDNT_CONNECT          = 30007,
+   VIX_E_NET_HTTP_HTTP_RETURNED_ERROR      = 30022,
+   VIX_E_NET_HTTP_OPERATION_TIMEDOUT       = 30028,
+   VIX_E_NET_HTTP_SSL_CONNECT_ERROR        = 30035,
+   VIX_E_NET_HTTP_TOO_MANY_REDIRECTS       = 30047,
+   VIX_E_NET_HTTP_TRANSFER                 = 30200,
+   VIX_E_NET_HTTP_SSL_SECURITY             = 30201,
+   VIX_E_NET_HTTP_GENERIC                  = 30202,
 };
 
 // {{ End VIX_ERROR }}
@@ -368,13 +447,16 @@ enum {
    VIX_PROPERTY_VM_VMTEAM_PATHNAME                    = 105, 
    VIX_PROPERTY_VM_MEMORY_SIZE                        = 106,
    VIX_PROPERTY_VM_READ_ONLY                          = 107,
+   VIX_PROPERTY_VM_NAME                               = 108,
+   VIX_PROPERTY_VM_GUESTOS                            = 109,
    VIX_PROPERTY_VM_IN_VMTEAM                          = 128,
    VIX_PROPERTY_VM_POWER_STATE                        = 129,
    VIX_PROPERTY_VM_TOOLS_STATE                        = 152,
    VIX_PROPERTY_VM_IS_RUNNING                         = 196,
    VIX_PROPERTY_VM_SUPPORTED_FEATURES                 = 197,
-   VIX_PROPERTY_VM_IS_RECORDING                       = 236,
-   VIX_PROPERTY_VM_IS_REPLAYING                       = 237,
+   /* VIX_PROPERTY_VM_IS_RECORDING                       = 236, Removed in version 1.11 */
+   /* VIX_PROPERTY_VM_IS_REPLAYING                       = 237, Removed in version 1.11 */
+   VIX_PROPERTY_VM_SSL_ERROR                          = 293,
 
    /* Result properties; these are returned by various procedures */
    VIX_PROPERTY_JOB_RESULT_ERROR_CODE                 = 3000,
@@ -402,6 +484,7 @@ enum {
    VIX_PROPERTY_JOB_RESULT_SCREEN_IMAGE_DATA          = 3059,
    VIX_PROPERTY_JOB_RESULT_FILE_SIZE                  = 3061,
    VIX_PROPERTY_JOB_RESULT_FILE_MOD_TIME              = 3062,
+   VIX_PROPERTY_JOB_RESULT_EXTRA_ERROR_INFO           = 3084,
 
    /* Event properties; these are sent in the moreEventInfo for some events. */
    VIX_PROPERTY_FOUND_ITEM_LOCATION                   = 4010,
@@ -410,7 +493,7 @@ enum {
    VIX_PROPERTY_SNAPSHOT_DISPLAYNAME                  = 4200,   
    VIX_PROPERTY_SNAPSHOT_DESCRIPTION                  = 4201,
    VIX_PROPERTY_SNAPSHOT_POWERSTATE                   = 4205,
-   VIX_PROPERTY_SNAPSHOT_IS_REPLAYABLE                = 4207,
+   /* VIX_PROPERTY_SNAPSHOT_IS_REPLAYABLE                = 4207, Removed in version 1.11 */
 
    VIX_PROPERTY_GUEST_SHAREDFOLDERS_SHARES_PATH       = 4525,
 
@@ -480,16 +563,21 @@ void Vix_FreeBuffer(void *p);
 
 typedef int VixHostOptions;
 enum {
-   VIX_HOSTOPTION_USE_EVENT_PUMP        = 0x0008,
+   /*
+    * The following option was removed in version 1.11.
+      VIX_HOSTOPTION_USE_EVENT_PUMP        = 0x0008,
+    */
+   VIX_HOSTOPTION_VERIFY_SSL_CERT       = 0x4000,
 };
 
 typedef int VixServiceProvider;
 enum {
-   VIX_SERVICEPROVIDER_DEFAULT               = 1,
-   VIX_SERVICEPROVIDER_VMWARE_SERVER         = 2,
-   VIX_SERVICEPROVIDER_VMWARE_WORKSTATION    = 3,
-   VIX_SERVICEPROVIDER_VMWARE_PLAYER         = 4,
-   VIX_SERVICEPROVIDER_VMWARE_VI_SERVER      = 10,
+   VIX_SERVICEPROVIDER_DEFAULT                   = 1,
+   VIX_SERVICEPROVIDER_VMWARE_SERVER             = 2,
+   VIX_SERVICEPROVIDER_VMWARE_WORKSTATION        = 3,
+   VIX_SERVICEPROVIDER_VMWARE_PLAYER             = 4,
+   VIX_SERVICEPROVIDER_VMWARE_VI_SERVER          = 10,
+   VIX_SERVICEPROVIDER_VMWARE_WORKSTATION_SHARED = 11,
 };
 
 /*
@@ -567,16 +655,21 @@ VixHandle VixHost_OpenVM(VixHandle hostHandle,
 
 
 /*
- * Event pump
+ * Following functions were removed in version 1.11.
+ *
+   typedef int VixPumpEventsOptions;
+   enum {
+    VIX_PUMPEVENTOPTION_NONE = 0,
+   };
+   void Vix_PumpEvents(VixHandle hostHandle, VixPumpEventsOptions options);
+
+   VixHandle VixVM_OpenUrlInGuest(VixHandle vmHandle,
+                                  const char *url,
+                                  int windowState,
+                                  VixHandle propertyListHandle,
+                                  VixEventProc *callbackProc,
+                                  void *clientData);
  */
-
-typedef int VixPumpEventsOptions;
-enum {
-   VIX_PUMPEVENTOPTION_NONE = 0,
-};
-
-void Vix_PumpEvents(VixHandle hostHandle, VixPumpEventsOptions options);
-
 
 /*
  *-----------------------------------------------------------------------------
@@ -718,35 +811,36 @@ enum {
 
 
 /*
- * Record/replay operations
- */
-VixHandle VixVM_BeginRecording(VixHandle vmHandle,
-                               const char *displayName,
-                               const char *description,
+ * Following functions were removed in version 1.11.
+ *
+   VixHandle VixVM_BeginRecording(VixHandle vmHandle,
+                                  const char *displayName,
+                                  const char *description,
+                                  int options,
+                                  VixHandle propertyList,
+                                  VixEventProc *callbackProc,
+                                  void *clientData);
+
+   VixHandle VixVM_EndRecording(VixHandle vmHandle,
+                                int options,
+                                VixHandle propertyList,
+                                VixEventProc *callbackProc,
+                                void *clientData);
+
+   VixHandle VixVM_BeginReplay(VixHandle vmHandle,
+                               VixHandle snapshotHandle,
                                int options,
                                VixHandle propertyList,
                                VixEventProc *callbackProc,
                                void *clientData);
 
-VixHandle VixVM_EndRecording(VixHandle vmHandle,
+   VixHandle VixVM_EndReplay(VixHandle vmHandle,
                              int options,
                              VixHandle propertyList,
                              VixEventProc *callbackProc,
                              void *clientData);
 
-VixHandle VixVM_BeginReplay(VixHandle vmHandle,
-                            VixHandle snapshotHandle,
-                            int options,
-                            VixHandle propertyList,
-                            VixEventProc *callbackProc,
-                            void *clientData);
-
-VixHandle VixVM_EndReplay(VixHandle vmHandle,
-                          int options,
-                          VixHandle propertyList,
-                          VixEventProc *callbackProc,
-                          void *clientData);
-
+ */
 
 /*
  * Guest operations
@@ -812,14 +906,6 @@ VixHandle VixVM_RunScriptInGuest(VixHandle vmHandle,
                                  VixHandle propertyListHandle,
                                  VixEventProc *callbackProc,
                                  void *clientData);
-
-VixHandle VixVM_OpenUrlInGuest(VixHandle vmHandle,
-                               const char *url,
-                               int windowState,
-                               VixHandle propertyListHandle,
-                               VixEventProc *callbackProc,
-                               void *clientData);
-
 
 /* 
  * Guest File functions 
