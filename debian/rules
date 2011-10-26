@@ -74,6 +74,7 @@ configure	+= --mandir=/usr/share/man
 configure	+= --sysconfdir=/etc
 configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
+configure	+= --without-root-privileges
 configure	+= --without-x
 configure	+= --with-procps
 configure	+= --with-dnet
