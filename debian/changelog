@@ -1,3 +1,17 @@
+open-vm-tools (1:8.8.0+vyatta-1) unstable; urgency=low
+
+  * Update to open-vm-tools 8.8.0
+  * Fix up changelog from merge
+  * Remove no longer used unity config option
+  * Fix configure for Vyatta build env
+  * Add debian patch to install kernel modules in correct directory
+  * set version to 8.8.0
+  * Remove configure from repository
+  * change to build without root privledges
+  * Fix build in Vyatta environment
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 26 Oct 2011 10:10:08 +0200
+
 open-vm-tools (1:8.4.2+vyatta-35) unstable; urgency=low
 
   * Update to 3.0.6 kernel
