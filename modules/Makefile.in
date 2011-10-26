@@ -153,7 +153,7 @@ LTLIBOBJS = @LTLIBOBJS@
 MAKEINFO = @MAKEINFO@
 MKDIR_P = @MKDIR_P@
 MODULES = @MODULES@
-MODULES_DIR = @MODULES_DIR@
+MODULES_DIR = /lib/modules/$(KERNEL_RELEASE)
 MODULES_OS = @MODULES_OS@
 MSCGEN = @MSCGEN@
 MSCGEN_DIR = @MSCGEN_DIR@
@@ -571,6 +571,7 @@ install-exec-hook:
 @FREEBSD_TRUE@	      $(DESTDIR)$(MODULES_DIR);                                        \
 @FREEBSD_TRUE@	done
 @LINUX_TRUE@	for MOD in $(MODULES); do                                              \
+@LINUX_TRUE@	   echo "install $${MOD} in `eval echo '$$'$${MOD}dir`";               \
 @LINUX_TRUE@	   $(INSTALL) -d $(DESTDIR)`eval echo '$$'$${MOD}dir`;                 \
 @LINUX_TRUE@	   $(INSTALL) -m644 $(modulesrc)/$(MODULES_OS)/$$MOD/$$MOD.ko          \
 @LINUX_TRUE@	      $(DESTDIR)`eval echo '$$'$${MOD}dir`;                            \
