@@ -132,6 +132,10 @@ install: build
 	mv $(PKGDIR)/lib/modules $(CURDIR)/debian/$(MODPKG)/lib
 	-rmdir $(PKGDIR)/lib
 
+	# Removing useless files
+	rm -f debian/open-vm-tools/usr/lib/*.la
+	rm -f debian/open-vm-tools/usr/lib/open-vm-tools/plugins/*/*.la
+
 	# Fix up hooks
 	install -D -m 0755 debian/local/vmxnet.hook \
 		$(PKGDIR)/usr/share/initramfs-tools/hooks/vmxnet

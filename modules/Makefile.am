@@ -4,6 +4,7 @@ all: modules
 modules: $(MODULES)
 
 modulesrc = $(abs_top_srcdir)/modules
+MODULES_DIR = /lib/modules/$(KERNEL_RELEASE)
 
 $(MODULES):
 	$(MAKE) VM_UNAME=$(KERNEL_RELEASE) MV=mv RM=rm      \
