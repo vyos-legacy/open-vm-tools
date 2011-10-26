@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-2) unstable; urgency=low
+
+  * Generate configure with current autoconf
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Wed, 26 Oct 2011 10:21:49 +0200
+
 open-vm-tools (1:8.8.0+vyatta-1) unstable; urgency=low
 
   * Update to open-vm-tools 8.8.0
