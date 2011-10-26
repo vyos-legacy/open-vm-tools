@@ -80,7 +80,6 @@ configure	+= --with-dnet
 configure	+= --without-gtkmm
 configure	+= --without-gtk2
 configure	+= --without-icu
-configure	+= --disable-unity
 configure	+= CFLAGS="$(CFLAGS)"
 configure	+= LDFLAGS="-Wl,-z,defs"
 
