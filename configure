@@ -3005,7 +3005,7 @@ if test "$with_kernel_modules" = "yes"; then
          if test ! -d "$LINUXDIR/kernel/"; then
              as_fn_error $? "$LINUXDIR/kernel does not exist" "$LINENO" 5
          fi
-         LINUXINCLUDE="$LINUXDIR/build/include"
+         LINUXINCLUDE="$LINUXDIR/include"
          if test ! -d "$LINUXINCLUDE"; then
             as_fn_error $? "Can't find include dir under $LINUXDIR" "$LINENO" 5
          fi
