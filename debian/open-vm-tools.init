@@ -34,7 +34,10 @@ case "${1}" in
 		log_end_msg 0
 
 		log_daemon_msg "Starting open-vm daemon" "vmtoolsd"
-		/usr/bin/vmtoolsd --background /var/run/vmtoolsd.pid
+		start-stop-daemon --start --oknodo --quiet \
+		    --exec /usr/bin/vmtools \
+		    --pidfile /var/run/vmtools.pid \
+		    -- -background /var/run/vmtoolsd.pid
 		log_end_msg $?
 		;;
 
@@ -44,13 +47,10 @@ case "${1}" in
 
 		log_daemon_msg "Stopping open-vm guest daemon" "vmtoolsd"
 
-		if [ -f /var/run/vmtoolsd.pid ]
-		then
-			kill $(cat /var/run/vmtoolsd.pid)
-			rm -f /var/run/vmtoolsd.pid
-		fi
-
-		log_end_msg 0
+		start-stop-daemon --stop --quiet --oknodo \
+		    --exec /usr/bin/vmtools \
+		    --pidfile /var/run/vmtools.pid
+		log_end_msg $?
 
 		log_daemon_msg "Removing open-vm-tools modules"
 		log_progress_msg "vmhgfs"; modprobe -r vmhgfs
