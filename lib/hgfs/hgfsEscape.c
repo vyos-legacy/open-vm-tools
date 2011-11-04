@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * hgfsEscape.c --
  *
@@ -560,8 +574,19 @@ HgfsIsEscapeSequence(char const *bufIn,   // IN: input name
 {
    if (bufIn[offset] == HGFS_ESCAPE_CHAR && offset > 0) {
       char *substitute;
-      if (bufIn[offset - 1] == HGFS_ESCAPE_SUBSTITUE_CHAR) {
-         return TRUE;
+      if (bufIn[offset - 1] == HGFS_ESCAPE_SUBSTITUE_CHAR && offset > 1) {
+         /*
+          * Possibly a valid sequence, check it must be preceded with a substitute
+          * character or another escape-escape character. Otherwise, HGFS did
+          * not generate this sequence and should leave it alone.
+          */
+         if (bufIn[offset - 2] == HGFS_ESCAPE_SUBSTITUE_CHAR) {
+            return TRUE;
+         }
+         substitute = strchr(HGFS_SUBSTITUTE_CHARS, bufIn[offset - 2]);
+         if (substitute != NULL) {
+            return TRUE;
+         }
       }
       substitute = strchr(HGFS_SUBSTITUTE_CHARS, bufIn[offset - 1]);
       if (substitute != NULL) {
@@ -672,9 +697,9 @@ HgfsEscapeEnumerate(char const *bufIn,              // IN:  Buffer with unescape
 
 int
 HgfsEscape_Do(char const *bufIn, // IN:  Buffer with unescaped input
-	           uint32 sizeIn,     // IN:  Size of input buffer
-	           uint32 sizeBufOut, // IN:  Size of output buffer
-	           char *bufOut)      // OUT: Buffer for escaped output
+              uint32 sizeIn,     // IN:  Size of input buffer
+              uint32 sizeBufOut, // IN:  Size of output buffer
+              char *bufOut)      // OUT: Buffer for escaped output
 {
    const char *currentComponent = bufIn;
    uint32 sizeLeft = sizeBufOut;
@@ -847,11 +872,14 @@ HgfsEscapeUndoComponent(char   *bufIn,             // IN: Characters to be unesc
                                                    //     in the whole name
 {
    size_t offset;
-   size_t sizeIn = strlen(bufIn);
-   char* curOutBuffer = bufIn;
+   size_t sizeIn;
+   char* curOutBuffer;
    char* escapePointer;
-   ASSERT(bufIn);
 
+   ASSERT(bufIn != NULL);
+
+   curOutBuffer = bufIn;
+   sizeIn = strlen(curOutBuffer);
    escapePointer = strchr(curOutBuffer, HGFS_ESCAPE_CHAR);
    while (escapePointer != NULL) {
       offset = escapePointer - bufIn;

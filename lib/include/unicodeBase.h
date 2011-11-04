@@ -28,7 +28,6 @@
 #define INCLUDE_ALLOW_USERLEVEL
 #define INCLUDE_ALLOW_VMCORE
 #define INCLUDE_ALLOW_VMKERNEL
-#define INCLUDE_ALLOW_VMNIXMOD
 #include "includeCheck.h"
 
 #ifdef __cplusplus
@@ -40,6 +39,8 @@ extern "C" {
 #include "util.h"
 #include "unicodeTypes.h"
 
+
+#define UNICODE_SUBSTITUTION_CHAR "\xEF\xBF\xBD"
 
 /*
  * Unescapes \\uABCD in string literals to Unicode code point

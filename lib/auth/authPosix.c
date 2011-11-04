@@ -19,15 +19,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
-#ifndef GLIBC_VERSION_22
-#define __USE_XOPEN
-#endif
-#include <unistd.h> // for access, etc.
-
-#if (defined(GLIBC_VERSION_22) && !defined(USING_AUTOCONF)) || defined(HAVE_CRYPT_H)
-#include <crypt.h>
-#endif
+#include <unistd.h> // for access, crypt, etc.
 
 #include "vmware.h"
 #include "vm_version.h"
@@ -35,26 +27,44 @@
 #include "posix.h"
 #include "auth.h"
 #include "str.h"
+#include "log.h"
 
 #ifdef USE_PAM
 #  include "file.h"
 #  include "config.h"
 #  include "localconfig.h"
-#  include <security/pam_appl.h>
+#if defined(__APPLE__) && (MAC_OS_X_VERSION_MAX_ALLOWED <= MAC_OS_X_VERSION_10_5)
+#include <pam/pam_appl.h>
+#else
+#include <security/pam_appl.h>
+#endif
 #  include <dlfcn.h>
+#endif
+
+#if defined(HAVE_CONFIG_H) || defined(sun)
+#  include <crypt.h>
 #endif
 
 #define LOGLEVEL_MODULE auth
 #include "loglevel_user.h"
 
 #ifdef USE_PAM
+#if defined(sun)
+#define CURRENT_PAM_LIBRARY	"libpam.so.1"
+#elif defined(__FreeBSD__)
+#define CURRENT_PAM_LIBRARY	"libpam.so"
+#elif defined(__APPLE__)
+#define CURRENT_PAM_LIBRARY	"libpam.dylib"
+#else
 #define CURRENT_PAM_LIBRARY	"libpam.so.0"
+#endif
 
 static typeof(&pam_start) dlpam_start;
 static typeof(&pam_end) dlpam_end;
 static typeof(&pam_authenticate) dlpam_authenticate;
 static typeof(&pam_setcred) dlpam_setcred;
 static typeof(&pam_acct_mgmt) dlpam_acct_mgmt;
+static typeof(&pam_strerror) dlpam_strerror;
 #if 0  /* These three functions are not used yet */
 static typeof(&pam_open_session) dlpam_open_session;
 static typeof(&pam_close_session) dlpam_close_session;
@@ -71,6 +81,7 @@ static struct {
    IMPORT_SYMBOL(pam_authenticate),
    IMPORT_SYMBOL(pam_setcred),
    IMPORT_SYMBOL(pam_acct_mgmt),
+   IMPORT_SYMBOL(pam_strerror),
 #undef IMPORT_SYMBOL
 };
 
@@ -112,7 +123,9 @@ AuthLoadPAM(void)
        * XXX do we even try to configure the pam libraries?
        * potential nightmare on all the possible guest OSes
        */
+
       Log("System PAM libraries are unusable: %s\n", dlerror());
+
       return FALSE;
 #else
       char *liblocation;
@@ -121,6 +134,7 @@ AuthLoadPAM(void)
       libdir = LocalConfig_GetPathName(DEFAULT_LIBDIRECTORY, CONFIG_VMWAREDIR);
       if (!libdir) {
          Log("System PAM library unusable and bundled one not found.\n");
+
          return FALSE;
       }
       liblocation = Str_SafeAsprintf(NULL, "%s/lib/%s/%s", libdir,
@@ -132,6 +146,7 @@ AuthLoadPAM(void)
          Log("Neither system nor bundled (%s) PAM libraries usable: %s\n",
              liblocation, dlerror());
          free(liblocation);
+
          return FALSE;
       }
       free(liblocation);
@@ -139,14 +154,20 @@ AuthLoadPAM(void)
    }
    for (i = 0; i < ARRAYSIZE(authPAMImported); i++) {
       void *symbol = dlsym(pam_library, authPAMImported[i].procname);
+
       if (!symbol) {
-         Log("PAM library does not contain required function: %s\n", dlerror());
+         Log("PAM library does not contain required function: %s\n",
+             dlerror());
+
          return FALSE;
       }
+
       *(authPAMImported[i].procaddr) = symbol;
    }
+
    authPamLibraryHandle = pam_library;
    Log("PAM up and running.\n");
+
    return TRUE;
 }
 
@@ -154,12 +175,21 @@ AuthLoadPAM(void)
 static const char *PAM_username;
 static const char *PAM_password;
 
-static int PAM_conv (int num_msg,
-		     const struct pam_message **msg,
-		     struct pam_response **resp,
-		     void *appdata_ptr) {
+#if defined(sun)
+static int PAM_conv (int num_msg,                     // IN:
+		     struct pam_message **msg,        // IN:
+		     struct pam_response **resp,      // OUT:
+		     void *appdata_ptr)               // IN:
+#else
+static int PAM_conv (int num_msg,                     // IN:
+		     const struct pam_message **msg,  // IN:
+		     struct pam_response **resp,      // OUT:
+		     void *appdata_ptr)               // IN:
+#endif
+{
    int count;
    struct pam_response *reply = calloc(num_msg, sizeof(struct pam_response));
+
    if (!reply) {
       return PAM_CONV_ERR;
    }
@@ -190,11 +220,13 @@ static int PAM_conv (int num_msg,
             free(reply[count].resp);
          }
          free(reply);
+
          return PAM_CONV_ERR;
       }
    }
    
    *resp = reply;
+
    return PAM_SUCCESS;
 }
 
@@ -224,8 +256,8 @@ static struct pam_conv PAM_conversation = {
  */
 
 AuthToken
-Auth_AuthenticateUser(const char *user,       //IN
-                      const char *pass)       //IN
+Auth_AuthenticateUser(const char *user,  // IN:
+                      const char *pass)  // IN:
 {
    struct passwd *pwd;
 
@@ -245,27 +277,39 @@ Auth_AuthenticateUser(const char *user,       //IN
 
 #ifdef USE_PAM
 #ifdef ACCEPT_XXX_PASS
-   if(strcmp("XXX", pass) != 0) {
+   if (strcmp("XXX", pass) != 0) {
 #endif
       if (!AuthLoadPAM()) {
          return NULL;
       }
+
       /*
        * XXX PAM can blow away our syslog level settings so we need
-       * to call Log_Init() again before doing any more Log()s
+       * to call Log_InitEx() again before doing any more Log()s
        */
+
 #define PAM_BAIL if (pam_error != PAM_SUCCESS) { \
+                  Log_Error("%s:%d: PAM failure - %s (%d)\n", \
+                            __FUNCTION__, __LINE__, \
+                            dlpam_strerror(pamh, pam_error), pam_error); \
                   dlpam_end(pamh, pam_error); \
                   return NULL; \
                  }
       PAM_username = user;
       PAM_password = pass;
+
 #if defined(VMX86_TOOLS)
-      pam_error = dlpam_start("vmtoolsd", PAM_username, &PAM_conversation, &pamh);
+      pam_error = dlpam_start("vmtoolsd", PAM_username, &PAM_conversation,
+                              &pamh);
 #else
-      pam_error = dlpam_start("vmware-authd", PAM_username, &PAM_conversation, &pamh);
+      pam_error = dlpam_start("vmware-authd", PAM_username, &PAM_conversation,
+                              &pamh);
 #endif
-      PAM_BAIL;
+      if (pam_error != PAM_SUCCESS) {
+         Log("Failed to start PAM (error = %d).\n", pam_error);
+         return NULL;
+      }
+
       pam_error = dlpam_authenticate(pamh, 0);
       PAM_BAIL;
       pam_error = dlpam_acct_mgmt(pamh, 0);
@@ -273,6 +317,7 @@ Auth_AuthenticateUser(const char *user,       //IN
       pam_error = dlpam_setcred(pamh, PAM_ESTABLISH_CRED);
       PAM_BAIL;
       dlpam_end(pamh, PAM_SUCCESS);
+
 #if ACCEPT_XXX_PASS
    }
 #endif
@@ -298,6 +343,7 @@ Auth_AuthenticateUser(const char *user,       //IN
 
    if (*pwd->pw_passwd != '\0') {
       char *namep = (char *) crypt(pass, pwd->pw_passwd);
+
       if (strcmp(namep, pwd->pw_passwd)
 #ifdef ACCEPT_XXX_PASS
           && strcmp("XXX", pass) != 0
@@ -332,7 +378,7 @@ Auth_AuthenticateUser(const char *user,       //IN
  */
 
 void
-Auth_CloseToken(AuthToken token)       //IN
+Auth_CloseToken(AuthToken token)  // IN:
 {
 }
 

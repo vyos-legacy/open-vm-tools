@@ -23,6 +23,7 @@
 #include <sys/malloc.h>
 #include <sys/kernel.h>
 #include <sys/socket.h>
+#include <sys/systm.h>
 
 /*
  * FreeBSD 5.3 introduced an MP-safe (multiprocessor-safe) network stack.
@@ -103,6 +104,7 @@ typedef struct vxn_softc {
    struct arpcom            arpcom;
 #else
    struct ifnet            *vxn_ifp;
+   struct ifmedia           media;
 #endif
 #ifdef VXN_MPSAFE
    struct mtx               vxn_mtx;
@@ -215,6 +217,93 @@ vxn_execute_4(const vxn_softc_t *sc,	/* IN: adapter */
    return bus_space_read_4(sc->vxn_iobtag, sc->vxn_iobhandle,
                            VMXNET_COMMAND_ADDR);
 }
+
+static int
+vxn_check_link(vxn_softc_t *sc)
+{
+   uint32 status;
+   int ok;
+
+   status = bus_space_read_4(sc->vxn_iobtag, sc->vxn_iobhandle, VMXNET_STATUS_ADDR);
+   ok = (status & VMXNET_STATUS_CONNECTED) != 0;
+   return ok;
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vxn_media_status --
+ *
+ *      This routine is called when the user quries the status of interface
+ *      using ifconfig. Checks link state and updates media state accorgingly.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+vxn_media_status(struct ifnet * ifp, struct ifmediareq * ifmr)
+{
+   vxn_softc_t *sc = ifp->if_softc;
+   int connected = 0;
+
+   VXN_LOCK((vxn_softc_t *)ifp->if_softc);
+   connected = vxn_check_link(sc);
+
+   ifmr->ifm_status = IFM_AVALID;
+   ifmr->ifm_active = IFM_ETHER;
+
+   if (!connected) {
+      ifmr->ifm_status &= ~IFM_ACTIVE;
+      VXN_UNLOCK((vxn_softc_t *)ifp->if_softc);
+      return;
+   }
+
+   ifmr->ifm_status |= IFM_ACTIVE;
+
+   VXN_UNLOCK((vxn_softc_t *)ifp->if_softc);
+   return;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * vxn_media_change --
+ *
+ *      This routine is called when the user changes speed/duplex using
+ *      media/mediopt option with ifconfig.
+ *
+ * Results:
+ *      Returns 0 for success, error code otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static int
+vxn_media_change(struct ifnet * ifp)
+{
+   vxn_softc_t *sc = ifp->if_softc;
+   struct ifmedia *ifm = &sc->media;
+
+   if (IFM_TYPE(ifm->ifm_media) != IFM_ETHER)
+      return (EINVAL);
+
+   if (IFM_SUBTYPE(ifm->ifm_media) != IFM_AUTO)
+      printf("Media subtype is not AUTO, it is : %d.\n",
+             IFM_SUBTYPE(ifm->ifm_media));
+
+   return (0);
+}
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -392,7 +481,8 @@ vxn_attach(device_t dev)
     * read the MAC address from the device
     */
    for (i = 0; i < 6; i++) {
-      mac[i] = bus_space_read_1(sc->vxn_iobtag, sc->vxn_iobhandle, VMXNET_MAC_ADDR + i);
+      mac[i] = bus_space_read_1(sc->vxn_iobtag, sc->vxn_iobhandle, VMXNET_MAC_ADDR
+                                + i);
    }
 
 #ifdef VXN_NEEDARPCOM
@@ -413,9 +503,22 @@ vxn_attach(device_t dev)
           sc->vxn_num_tx_bufs, (int)sizeof(Vmxnet2_TxRingEntry),
           driverDataSize);
 
+   /*
+    * Specify the media types supported by this adapter and register
+    * callbacks to update media and link information
+    */
+   ifmedia_init(&sc->media, IFM_IMASK, vxn_media_change,
+                vxn_media_status);
+   ifmedia_add(&sc->media, IFM_ETHER | IFM_FDX, 0, NULL);
+   ifmedia_add(&sc->media, IFM_ETHER | IFM_1000_T | IFM_FDX, 0, NULL);
+   ifmedia_add(&sc->media, IFM_ETHER | IFM_1000_T, 0, NULL);
+   ifmedia_add(&sc->media, IFM_ETHER | IFM_AUTO, 0, NULL);
+   ifmedia_set(&sc->media, IFM_ETHER | IFM_AUTO);
+
+
    goto done;
 
-  fail:
+fail:
 
    if (sc->vxn_intrhand != NULL) {
       bus_teardown_intr(dev, sc->vxn_irq, sc->vxn_intrhand);
@@ -432,6 +535,10 @@ vxn_attach(device_t dev)
    if (ifp != NULL) {
       VXN_IF_FREE(sc);
    }
+
+   pci_disable_io(dev, SYS_RES_IOPORT);
+   pci_disable_busmaster(dev);
+   VXN_MTX_DESTROY(&sc->vxn_mtx);
 
   done:
 
@@ -463,8 +570,7 @@ vxn_detach(device_t dev)
    sc = device_get_softc(dev);
 
    ifp = VXN_SC2IFP(sc);
-
-   if (device_get_state(dev) >= DS_ATTACHED) {
+   if (device_is_attached(dev)) {
       vxn_stop(sc);
       /*
        * detach from stack
@@ -475,12 +581,14 @@ vxn_detach(device_t dev)
    /*
     * Cleanup - release resources and memory
     */
+   VXN_IF_FREE(sc);
    contigfree(sc->vxn_dd, sc->vxn_dd->length, M_DEVBUF);
    bus_teardown_intr(dev, sc->vxn_irq, sc->vxn_intrhand);
    bus_release_resource(dev, SYS_RES_IRQ, 0, sc->vxn_irq);
    bus_release_resource(dev, SYS_RES_IOPORT, VXN_PCIR_MAPS, sc->vxn_io);
+   pci_disable_io(dev, SYS_RES_IOPORT);
+   pci_disable_busmaster(dev);
    VXN_MTX_DESTROY(&sc->vxn_mtx);
-   VXN_IF_FREE(sc);
 
    splx(s);
    return 0;
@@ -682,7 +790,8 @@ vxn_initl(vxn_softc_t *sc)
 {
    Vmxnet2_DriverData *dd = sc->vxn_dd;
    struct ifnet *ifp = VXN_SC2IFP(sc);
-   uint32 r;
+   uint32 r, i;
+   u_char mac_addr[6];
 
    VXN_LOCK_ASSERT(sc);
 
@@ -693,6 +802,28 @@ vxn_initl(vxn_softc_t *sc)
       if (vxn_init_rings(sc) != 0) {
          printf("vxn%d: ring intitialization failed\n", VXN_IF_UNIT(ifp));
          return;
+      }
+
+      /* Get MAC address from interface and set it in hardware */
+#if __FreeBSD_version >= 700000
+      printf("addrlen : %d. \n", ifp->if_addrlen);
+      bcopy(LLADDR((struct sockaddr_dl *)ifp->if_addr->ifa_addr), mac_addr,
+            ifp->if_addrlen > 6 ? 6 : ifp->if_addrlen);
+#else
+      if (!ifaddr_byindex(ifp->if_index)) {
+         printf("vxn:%d Invalid link address, interface index :%d.\n",
+                VXN_IF_UNIT(ifp), ifp->if_index);
+      } else {
+         bcopy(LLADDR((struct sockaddr_dl *)ifaddr_byindex(ifp->if_index)->ifa_addr),
+               mac_addr, ifp->if_addrlen);
+      }
+#endif
+      printf("vxn%d: MAC Address : %02x:%02x:%02x:%02x:%02x:%02x \n",
+             VXN_IF_UNIT(ifp), mac_addr[0], mac_addr[1], mac_addr[2],
+             mac_addr[3], mac_addr[4], mac_addr[5]);
+      for (i = 0; i < 6; i++) {
+         bus_space_write_1(sc->vxn_iobtag, sc->vxn_iobhandle, VMXNET_MAC_ADDR +
+                           i, mac_addr[i]);
       }
 
       /*
@@ -1001,6 +1132,10 @@ vxn_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
       error = 0;
       break;
 
+   case SIOCSIFMEDIA:
+   case SIOCGIFMEDIA:
+      ifmedia_ioctl(ifp, (struct ifreq *)data, &sc->media, command);
+
    default:
       error = EINVAL;
       break;
@@ -1135,7 +1270,7 @@ vxn_rx(vxn_softc_t *sc)
                m_new = NULL;
             }
          }
-	
+
          /*
           * replace the current mbuf in the descriptor with the new one
           * and pass the packet up to the kernel
@@ -1255,9 +1390,14 @@ vxn_init_rings(vxn_softc_t *sc)
     */
    for (i = 0; i < sc->vxn_num_rx_bufs; i++) {
       struct mbuf *m_new = NULL;
-	
+
+      /*
+       * Allocate an mbuf and initialize it to contain a packet header and
+       * internal data.
+       */
       MGETHDR(m_new, M_DONTWAIT, MT_DATA);
       if (m_new != NULL) {
+         /* Allocate and attach an mbuf cluster to mbuf. */
          MCLGET(m_new, M_DONTWAIT);
          if (m_new->m_flags & M_EXT) {
             m_adj(m_new, ETHER_ALIGN);
@@ -1267,12 +1407,16 @@ vxn_init_rings(vxn_softc_t *sc)
             sc->vxn_rx_buffptr[i] = m_new;
             sc->vxn_rx_ring[i].ownership = VMXNET2_OWNERSHIP_NIC;
          } else {
+            /*
+             * Allocation and attachment of mbuf clusters failed.
+             */
             m_freem(m_new);
             m_new = NULL;
-            return ENOMEM;
+            goto err_release_ring;
          }
       } else {
-         return ENOMEM;
+         /* Allocation of mbuf failed. */
+         goto err_release_ring;
       }
    }
 
@@ -1299,6 +1443,19 @@ vxn_init_rings(vxn_softc_t *sc)
 
    sc->vxn_rings_allocated = 1;
    return 0;
+err_release_ring:
+   /*
+    * Clearup already allocated mbufs and attached clusters.
+    */
+  for (--i; i >= 0; i--) {
+     m_freem(sc->vxn_rx_buffptr[i]);
+     sc->vxn_rx_buffptr[i] = NULL;
+     sc->vxn_rx_ring[i].paddr = 0;
+     sc->vxn_rx_ring[i].bufferLength = 0;
+     sc->vxn_rx_ring[i].ownership = 0;
+  }
+  return ENOMEM;
+
 }
 
 /*

@@ -15,9 +15,11 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-noinst_LTLIBRARIES = libtestPlugin.la
+plugindir = @TEST_PLUGIN_INSTALLDIR@
+plugin_LTLIBRARIES = libtestPlugin.la
 
 libtestPlugin_la_CPPFLAGS =
+libtestPlugin_la_CPPFLAGS += @CUNIT_CPPFLAGS@
 libtestPlugin_la_CPPFLAGS += @GOBJECT_CPPFLAGS@
 libtestPlugin_la_CPPFLAGS += @PLUGIN_CPPFLAGS@
 
@@ -25,6 +27,7 @@ libtestPlugin_la_LDFLAGS =
 libtestPlugin_la_LDFLAGS += @PLUGIN_LDFLAGS@
 
 libtestPlugin_la_LIBADD =
+libtestPlugin_la_LIBADD += @CUNIT_LIBS@
 libtestPlugin_la_LIBADD += @GOBJECT_LIBS@
 libtestPlugin_la_LIBADD += @VMTOOLS_LIBS@
 libtestPlugin_la_LIBADD += @XDR_LIBS@
@@ -48,13 +51,8 @@ EXTRA_DIST =
 EXTRA_DIST += testData.x
 
 testData.h: testData.x
-	if [ $(top_builddir) != $(top_srcdir) ]; then                   \
-	   cp -f $(top_srcdir)/tests/testPlugin/testData.x $(builddir); \
-	fi
-	$(RPCGEN) $(RPCGENFLAGS) -h -o $@ $(builddir)/testData.x
-	$(SED) 's,rpc/rpc\.h,vmxrpc.h,' $@ > $@.tmp
-	mv $@.tmp $@
+	@RPCGEN_WRAPPER@ tests/testPlugin/testData.x $@
 
 testData_xdr.c: testData.x testData.h
-	$(RPCGEN) $(RPCGENFLAGS) -c -o $@ $(builddir)/testData.x
+	@RPCGEN_WRAPPER@ tests/testPlugin/testData.x $@
 

@@ -70,6 +70,16 @@ Bool
 DynBuf_Copy(DynBuf *src,    // IN
             DynBuf *dest);  // OUT
 
+void
+DynBuf_SafeInternalAppend(DynBuf *b,            // IN
+                          void const *data,     // IN
+                          size_t size,          // IN
+                          char const *file,     // IN
+                          unsigned int lineno); // IN
+
+#define DynBuf_SafeAppend(_buf, _data, _size) \
+   DynBuf_SafeInternalAppend(_buf, _data, _size, __FILE__, __LINE__)
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -87,7 +97,11 @@ DynBuf_Copy(DynBuf *src,    // IN
  *-----------------------------------------------------------------------------
  */
 
+#if defined(SWIG)
+static void *
+#else
 static INLINE void *
+#endif
 DynBuf_Get(DynBuf const *b) // IN
 {
    ASSERT(b);
@@ -112,7 +126,11 @@ DynBuf_Get(DynBuf const *b) // IN
  *-----------------------------------------------------------------------------
  */
 
+#if defined(SWIG)
+static size_t
+#else
 static INLINE size_t
+#endif
 DynBuf_GetSize(DynBuf const *b) // IN
 {
    ASSERT(b);
@@ -137,7 +155,11 @@ DynBuf_GetSize(DynBuf const *b) // IN
  *-----------------------------------------------------------------------------
  */
 
+#if defined(SWIG)
+static void
+#else
 static INLINE void
+#endif
 DynBuf_SetSize(DynBuf *b,   // IN
                size_t size) // IN
 {
@@ -164,7 +186,11 @@ DynBuf_SetSize(DynBuf *b,   // IN
  *-----------------------------------------------------------------------------
  */
 
+#if defined(SWIG)
+static size_t
+#else
 static INLINE size_t
+#endif
 DynBuf_GetAllocatedSize(DynBuf const *b) // IN
 {
    ASSERT(b);
@@ -192,7 +218,11 @@ DynBuf_GetAllocatedSize(DynBuf const *b) // IN
  *----------------------------------------------------------------------------
  */
 
+#if defined(SWIG)
+static Bool
+#else
 static INLINE Bool
+#endif
 DynBuf_AppendString(DynBuf *buf,         // IN
                     const char *string)  // IN
 {

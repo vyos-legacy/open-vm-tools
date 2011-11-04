@@ -28,12 +28,12 @@ then
    echo "   src:  root of unpacked open-vm-tools package"
    echo "   dst:  where to create the dkms tree"
    echo
-   echo "The script will create an 'open-vm-tools' module with version 2009.10.15."
+   echo "The script will create an 'open-vm-tools' module with version 2011.09.23."
    exit 1
 fi
 
 src=$1
-dst=$2/open-vm-tools-2009.10.15
+dst=$2/open-vm-tools-2011.09.23
 
 SHARED_HEADERS="backdoor_def.h"
 SHARED_HEADERS="$SHARED_HEADERS backdoor_types.h"
@@ -57,13 +57,14 @@ SHARED_HEADERS="$SHARED_HEADERS vmware_pack_begin.h"
 SHARED_HEADERS="$SHARED_HEADERS vmware_pack_end.h"
 SHARED_HEADERS="$SHARED_HEADERS vmware_pack_init.h"
 SHARED_HEADERS="$SHARED_HEADERS x86cpuid.h"
+SHARED_HEADERS="$SHARED_HEADERS x86vendor.h"
 SHARED_HEADERS="$SHARED_HEADERS x86cpuid_asm.h"
 
 rm -rf $dst
 mkdir -p $dst
 cp -f `dirname $0`/dkms.conf $dst
 
-for m in pvscsi vmblock vmci vmhgfs vmmemctl vmsync vmxnet vmxnet3 vsock
+for m in vmblock vmci vmhgfs vmsync vmxnet vsock
 do
    mdst="$dst/$m"
 
@@ -78,7 +79,6 @@ do
    if test $m = vmblock
    then
       cp -f $src/lib/include/vmblock.h $mdst/linux
-      cp -f $src/lib/misc/dbllnklst.c $mdst/linux
       cp -rf $src/modules/shared/vmblock/* $mdst/linux
    fi
 
@@ -103,20 +103,14 @@ do
       cp -f $src/lib/rpcOut/*.c $mdst
    fi
 
-   # Shared vmmemctl code.
-   if test $m = vmmemctl
-   then
-      cp -f $src/modules/shared/vmmemctl/* $mdst
-   fi
-
    # Extra header file for vmsync.
    if test $m = vmsync
    then
       cp -f $src/lib/include/syncDriverIoc.h $mdst
    fi
 
-   # Shared vmxnet / vmxnet3 headers.
-   if test $m = vmxnet -o $m = vmxnet3
+   # Shared vmxnet headers.
+   if test $m = vmxnet
    then
       cp -f $src/modules/shared/vmxnet/* $mdst/shared
    fi

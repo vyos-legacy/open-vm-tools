@@ -16,6 +16,20 @@
  *
  *********************************************************/
 
+/*********************************************************
+ * The contents of this file are subject to the terms of the Common
+ * Development and Distribution License (the "License") version 1.0
+ * and no later version.  You may not use this file except in
+ * compliance with the License.
+ *
+ * You can obtain a copy of the License at
+ *         http://www.opensource.org/licenses/cddl1.php
+ *
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ *********************************************************/
+
 /*
  * backdoor.c --
  *
@@ -31,16 +45,15 @@
 extern "C" {
 #endif
 
-#if defined(__KERNEL__) || defined(_KERNEL)
-#else
-#   include "debug.h"
-#endif
-
 #include "backdoor_def.h"
 #include "backdoor.h"
 #include "backdoorInt.h"
 
 #if defined(BACKDOOR_DEBUG) && defined(USERLEVEL)
+#if defined(__KERNEL__) || defined(_KERNEL)
+#else
+#   include "debug.h"
+#endif
 #   include <stdio.h>
 #   define BACKDOOR_LOG(args) Debug args
 #   define BACKDOOR_LOG_PROTO_STRUCT(x) BackdoorPrintProtoStruct((x))

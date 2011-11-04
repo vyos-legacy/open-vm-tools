@@ -29,9 +29,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
-
 #include "vmware.h"
-#include "guestCaps.h"
+#include "vmware/guestrpc/capabilities.h"
 
 #ifdef __cplusplus
 };
@@ -47,16 +46,15 @@ extern "C" {
 #define APPUTIL_ICON_SMALL 16
 #define APPUTIL_ICON_BIG 32
 
-
-typedef struct _AppUtilIconEntry {
-   uint32 width;
-   uint32 height;
-   uint32 widthBytes;
-   uint32 dataLength;
-   unsigned char *dataBGRA;
+typedef struct AppUtilIconEntry {
+   uint32 width;            // width of icon in pixels
+   uint32 height;           // height of icon in pixels
+   uint32 widthBytes;       // width of one row in bytes, including padding
+   uint32 dataLength;       // length of bgra data, in bytes
+   unsigned char *dataBGRA; // pointer to bgra data
 } AppUtilIconEntry;
 
-typedef struct _AppUtilIconInfo {
+typedef struct AppUtilIconInfo {
    uint32 numEntries;
    AppUtilIconEntry *iconList;
 } AppUtilIconInfo;
@@ -86,29 +84,45 @@ HICON AppUtil_GetWindowIcon(HWND hwnd,
                             uint32 iconSize);
 
 void AppUtil_BuildGlobalApplicationList(void);
+
 char *AppUtil_ActionURIForCommandLine(const WCHAR *commandLineUtf16);
+
 Bool AppUtil_GetLinkIconData(const TCHAR *path,
                              AppUtilIconInfo *iconInfo,
                              AppUtilBitmapOrigin dibOrientation);
-Bool AppUtil_GetAppIconData(HWND hwnd,
-                            const TCHAR *path,
+
+Bool AppUtil_GetAppIconData(const TCHAR *path,
                             AppUtilIconInfo *iconInfo,
                             AppUtilBitmapOrigin dibOrientation);
 
-Bool
-AppUtil_GetIconIndexAndLocationForShortcut(const TCHAR *shortcut,
-                                           int maxLen,
-                                           TCHAR *iconFile,
-                                           int *iconIndex);
+Bool AppUtil_LoadIcon(HMODULE module,
+                      LPCWSTR resID,
+                      AppUtilBitmapOrigin origin,
+                      AppUtilIconInfo *icon);
+
+Bool AppUtil_CopyIcon(const AppUtilIconInfo *srcIcon, AppUtilIconInfo *dstIcon);
+
+void AppUtil_DestroyIcon(AppUtilIconInfo *icon);
+
+Bool AppUtil_GetIconIndexAndLocationForShortcut(const TCHAR *shortcut,
+                                                int maxLen,
+                                                TCHAR *iconFile,
+                                                int *iconIndex);
+
+LPSTR  AppUtil_ToLowerUtf8(LPCSTR s);
+LPWSTR AppUtil_ToLowerUtf16(LPCWSTR s);
 
 #ifdef __cplusplus
 };
 #endif // __cplusplus
 
-#endif //_WIN32
+#else // not _WIN32
 
-#if defined(linux)
 #include <glib.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
 
 void AppUtil_Init(void);
 GPtrArray *AppUtil_CollectIconArray(const char *iconName,
@@ -118,14 +132,27 @@ void AppUtil_FreeIconArray(GPtrArray *pixbufs);
 Bool AppUtil_AppIsSkippable(const char *appName);
 char *AppUtil_CanonicalizeAppName(const char *appName,
                                   const char *cwd);
+
+#ifdef __cplusplus
+};
+#endif // __cplusplus
+
 #endif
 
 /*
  * Platform-independent functions.
  */
+
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
 void AppUtil_SendGuestCaps(const GuestCapabilities *caps,
                            size_t numCaps,
                            Bool enabled);
 
-#endif // _APP_UTIL_H_
+#ifdef __cplusplus
+};
+#endif // __cplusplus
 
+#endif // _APP_UTIL_H_

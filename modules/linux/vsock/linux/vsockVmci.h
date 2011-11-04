@@ -84,16 +84,80 @@ VSockVmci_ErrorToVSockError(int32 vmciError) // IN
    case VMCI_ERROR_DUPLICATE_ENTRY:
       err = EADDRINUSE;
       break;
+   case VMCI_ERROR_NO_ACCESS:
+      err = EPERM;
+      break;
    case VMCI_ERROR_NO_RESOURCES:
       err = ENOBUFS;
       break;
-   case VMCI_ERROR_INVALID_ARGS:
    case VMCI_ERROR_INVALID_RESOURCE:
+      err = EHOSTUNREACH;
+      break;
+   case VMCI_ERROR_MODULE_NOT_LOADED:
+      err = ESYSNOTREADY;
+      break;
+   case VMCI_ERROR_INVALID_ARGS:
    default:
       err = EINVAL;
    }
 
    return sockerr2err(err);
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * VSockVmci_GetVmciObjSocket --
+ *
+ *      Get a socket from a VMCI object, but only if the object is of the
+ *      appropriate type.
+ *
+ * Results:
+ *      A socket if the object is of the correct type, NULL otherwise.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static INLINE void *
+VSockVmci_GetVmciObjSocket(VMCIObj *obj) // IN
+{
+   ASSERT(obj);
+   if (NULL != obj->ptr && VMCIOBJ_SOCKET == obj->type) {
+      return obj->ptr;
+   }
+   return NULL;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * VSockVmci_SetVmciObjSocket --
+ *
+ *      Set the socket in a VMCI object.  This will also set the type
+ *      accordingly.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static INLINE void
+VSockVmci_SetVmciObjSocket(VMCIObj *obj, // OUT
+                           void *s)      // IN
+{
+   ASSERT(obj);
+   ASSERT(s);
+   obj->ptr = s;
+   obj->type = VMCIOBJ_SOCKET;
 }
 
 

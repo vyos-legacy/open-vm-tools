@@ -69,7 +69,7 @@ typedef Atomic_Ptr HashTableLink;
 
 typedef struct HashTableEntry {
    HashTableLink     next;
-   const char       *keyStr;
+   const void       *keyStr;
    Atomic_Ptr        clientData;
 } HashTableEntry;
 
@@ -94,9 +94,12 @@ struct HashTable {
  * Local functions
  */
 
-static HashTableEntry *HashTableLookup(HashTable *ht, const char *keyStr, 
+static HashTableEntry *HashTableLookup(HashTable *ht,
+                                       const void *keyStr, 
                                        uint32 hash);
-HashTableEntry *HashTableLookupOrInsert(HashTable *ht, const char *keyStr,
+
+HashTableEntry *HashTableLookupOrInsert(HashTable *ht,
+                                        const void *keyStr,
                                         void *clientData);
 
 
@@ -117,34 +120,39 @@ HashTableEntry *HashTableLookupOrInsert(HashTable *ht, const char *keyStr,
  */
 
 static INLINE uint32
-HashTableComputeHash(HashTable *ht,            // IN: hash table
-                     const char *s)            // IN: string to hash
+HashTableComputeHash(HashTable *ht,  // IN: hash table
+                     const void *s)  // IN: string to hash
 {
    uint32 h = 0;
 
    switch (ht->keyType) {
    case HASH_STRING_KEY: {
-	 int c;
-	 while ((c = (unsigned char) *s++)) {
-	    h ^= c;
-	    h = h << HASH_ROTATE | h >> (32 - HASH_ROTATE);
-	 }
+         int c;
+         unsigned char *keyPtr = (unsigned char *) s;
+
+         while ((c = *keyPtr++)) {
+            h ^= c;
+            h = h << HASH_ROTATE | h >> (32 - HASH_ROTATE);
+         }
       }
       break;
    case HASH_ISTRING_KEY: {
-	 int c;
-	 while ((c = tolower((unsigned char) *s++))) {
-	    h ^= c;
-	    h = h << HASH_ROTATE | h >> (32 - HASH_ROTATE);
-	 }
+         int c;
+         unsigned char *keyPtr = (unsigned char *) s;
+
+         while ((c = tolower(*keyPtr++))) {
+            h ^= c;
+            h = h << HASH_ROTATE | h >> (32 - HASH_ROTATE);
+         }
       }
       break;
    case HASH_INT_KEY:
       ASSERT_ON_COMPILE(sizeof s == 4 || sizeof s == 8);
+
       if (sizeof s == 4) {
-	 h = (uint32) (uintptr_t) s;
+         h = (uint32) (uintptr_t) s;
       } else {
-	 h = (uint32) (uintptr_t) s ^ (uint32) ((uint64) (uintptr_t) s >> 32);
+         h = (uint32) (uintptr_t) s ^ (uint32) ((uint64) (uintptr_t) s >> 32);
       }
       h *= 48271;  // http://www.google.com/search?q=48271+pseudorandom
       break;
@@ -155,43 +163,16 @@ HashTableComputeHash(HashTable *ht,            // IN: hash table
    {
       int numBits = ht->numBits;
       uint32 mask = MASK(numBits);
+
       for (; h > mask; h = (h & mask) ^ (h >> numBits)) {
       }
    }
 
    ASSERT(h < ht->numEntries);
+
    return h;
 }
 
-#if defined(N_PLAT_NLM)
-static int
-strcasecmp(const char *s1,  // IN:
-           const char *s2)  // IN:
-{
-   while (*s1 && tolower(*s1++) == tolower(*s2++));
-   
-   return tolower(*s1) - tolower(*s2);
-}
-
-static int
-ffs(uint32 bits)
-{
-   uint32 i;
-
-   if (bits == 0) {
-      i = 0;
-   } else {
-      i = 1;
-
-      while ((bits & 0x1) == 0) {
-         i++;
-         bits >>= 1;
-      }
-   }
-
-   return i;
-}
-#endif
 
 /*
  *-----------------------------------------------------------------------------
@@ -210,16 +191,16 @@ ffs(uint32 bits)
  */
 
 static INLINE Bool
-HashTableEqualKeys(HashTable *ht,            // IN: hash table
-                   const char *key1,         // IN: key
-                   const char *key2)         // IN: key
+HashTableEqualKeys(HashTable *ht,     // IN: hash table
+                   const void *key1,  // IN: key
+                   const void *key2)  // IN: key
 {
    switch (ht->keyType) {
    case HASH_STRING_KEY:
-      return Str_Strcmp(key1, key2) == 0;
+      return Str_Strcmp((const char *) key1, (const char *) key2) == 0;
 
    case HASH_ISTRING_KEY:
-      return Str_Strcasecmp(key1, key2) == 0;
+      return Str_Strcasecmp((const char *) key1, (const char *) key2) == 0;
 
    default:
       return key1 == key2;
@@ -238,15 +219,15 @@ HashTableEqualKeys(HashTable *ht,            // IN: hash table
  *      The new hashtable.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 HashTable *
-HashTable_Alloc(uint32 numEntries,       // IN: must be a power of 2
-                int keyType,             // IN: whether keys are strings
-                HashTableFreeEntryFn fn) // IN: free entry function
+HashTable_Alloc(uint32 numEntries,        // IN: must be a power of 2
+                int keyType,              // IN: whether keys are strings
+                HashTableFreeEntryFn fn)  // IN: free entry function
 {
    HashTable *ht;
 
@@ -264,7 +245,7 @@ HashTable_Alloc(uint32 numEntries,       // IN: must be a power of 2
    ht = Util_SafeMalloc(sizeof *ht);
    ASSERT_MEM_ALLOC(ht);
 
-   ht->numBits = ffs(numEntries) - 1;
+   ht->numBits = lssb32_0(numEntries);
    ht->numEntries = numEntries;
    ht->keyType = keyType & HASH_TYPE_MASK;
    ht->atomic = (keyType & HASH_FLAG_ATOMIC) != 0;
@@ -289,22 +270,22 @@ HashTable_Alloc(uint32 numEntries,       // IN: must be a power of 2
  * HashTable_AllocOnce --
  *
  *      Create a hash table and store it in the supplied Atomic_Ptr,
- *	unless it's already been created.
+ *      unless it's already been created.
  *
  * Results:
  *      The new (or existing) hashtable.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 HashTable *
-HashTable_AllocOnce(Atomic_Ptr *var,         // IN/OUT: the atomic var
-                    uint32 numEntries,       // IN: must be a power of 2
-                    int keyType,             // IN: whether keys are strings
-                    HashTableFreeEntryFn fn) // IN: free entry function
+HashTable_AllocOnce(Atomic_Ptr *var,          // IN/OUT: the atomic var
+                    uint32 numEntries,        // IN: must be a power of 2
+                    int keyType,              // IN: whether keys are strings
+                    HashTableFreeEntryFn fn)  // IN: free entry function
 {
    HashTable *ht;
 
@@ -317,44 +298,14 @@ HashTable_AllocOnce(Atomic_Ptr *var,         // IN/OUT: the atomic var
       ht = Atomic_ReadIfEqualWritePtr(var, NULL, new);
 #endif
       if (ht == NULL) {
-	 ht = new;
+         ht = new;
       } else {
-	 new->atomic = FALSE;
-	 HashTable_Free(new);
+         HashTable_FreeUnsafe(new);
       }
    }
    ASSERT(ht == Atomic_ReadPtr(var));
 
    return ht;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * HashTable_Free --
- *
- *      Free the hash table skeleton.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *	None.
- *
- *----------------------------------------------------------------------
- */
-
-void
-HashTable_Free(HashTable *ht) // IN/OUT
-{
-   ASSERT(ht);
-   ASSERT(!ht->atomic);
-
-   HashTable_Clear(ht);
-
-   free(ht->buckets);
-   free(ht);
 }
 
 
@@ -369,34 +320,102 @@ HashTable_Free(HashTable *ht) // IN/OUT
  *      None.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
-void
-HashTable_Clear(HashTable *ht) // IN/OUT
+static void
+HashTableClearInternal(HashTable *ht)  // IN/OUT:
 {
    int i;
-
-   ASSERT(ht);
-   ASSERT(!ht->atomic);
 
    ht->numElements = 0;
 
    for (i = 0; i < ht->numEntries; i++) {
       HashTableEntry *entry;
+
       while ((entry = ENTRY(ht->buckets[i])) != NULL) {
-	 SETENTRY(ht->buckets[i], ENTRY(entry->next));
-	 if (ht->copyKey) {
-	    free((char *) entry->keyStr);
-	 }
+         SETENTRY(ht->buckets[i], ENTRY(entry->next));
+         if (ht->copyKey) {
+            free((void *) entry->keyStr);
+         }
          if (ht->freeEntryFn) {
             ht->freeEntryFn(Atomic_ReadPtr(&entry->clientData));
          }
-	 free(entry);
+         free(entry);
       }
    }
+}
+
+
+void
+HashTable_Clear(HashTable *ht)  // IN/OUT:
+{
+   ASSERT(ht);
+   ASSERT(!ht->atomic);
+
+   HashTableClearInternal(ht);
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HashTable_Free --
+ *
+ *      Free the hash table skeleton. Do not call this if the hashTable is
+ *      atomic; use HashTable_FreeUnsafe and HEED THE RESTRICTIONS!
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+void
+HashTable_Free(HashTable *ht)  // IN/OUT:
+{
+   ASSERT(ht);
+   ASSERT(!ht->atomic);
+
+   HashTableClearInternal(ht);
+
+   free(ht->buckets);
+   free(ht);
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HashTable_FreeUnsafe --
+ *
+ *      HashTable_Free for atomic hash tables.  Non-atomic hash tables
+ *      should always use HashTable_Free.  The caller should make sure
+ *      no other thread may access the hash table when this is called.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+void
+HashTable_FreeUnsafe(HashTable *ht)  // IN/OUT:
+{
+   ASSERT(ht);
+
+   HashTableClearInternal(ht);
+
+   free(ht->buckets);
+   free(ht);
 }
 
 
@@ -411,21 +430,21 @@ HashTable_Clear(HashTable *ht) // IN/OUT
  *      A pointer to the found HashTableEntry or NULL if not found
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 static HashTableEntry *
-HashTableLookup(HashTable *ht,      // IN
-                const char *keyStr, // IN
-                uint32 hash)        // IN
+HashTableLookup(HashTable *ht,       // IN:
+                const void *keyStr,  // IN:
+                uint32 hash)         // IN:
 {
    HashTableEntry *entry;
 
    for (entry = ENTRY(ht->buckets[hash]);
-	entry != NULL;
-	entry = ENTRY(entry->next)) {
+        entry != NULL;
+        entry = ENTRY(entry->next)) {
       if (HashTableEqualKeys(ht, entry->keyStr, keyStr)) {
          return entry;
       }
@@ -447,15 +466,15 @@ HashTableLookup(HashTable *ht,      // IN
  *      FALSE otherwise
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 Bool
-HashTable_Lookup(HashTable  *ht,      // IN
-                 const char *keyStr,  // IN
-                 void **clientData)   // OUT
+HashTable_Lookup(HashTable  *ht,      // IN:
+                 const void *keyStr,  // IN:
+                 void **clientData)   // OUT:
 {
    uint32 hash = HashTableComputeHash(ht, keyStr);
    HashTableEntry *entry = HashTableLookup(ht, keyStr, hash);
@@ -467,6 +486,7 @@ HashTable_Lookup(HashTable  *ht,      // IN
    if (clientData) {
       *clientData = Atomic_ReadPtr(&entry->clientData);
    }
+
    return TRUE;
 }
 
@@ -483,14 +503,44 @@ HashTable_Lookup(HashTable  *ht,      // IN
  *      FALSE otherwise
  *
  * Side effects:
- *	See above
+ *      See above
  *
  *----------------------------------------------------------------------
  */
 
 Bool
-HashTable_Delete(HashTable  *ht,        // IN/OUT: the hash table
-                 const char *keyStr)    // IN: key for the element to remove
+HashTable_Delete(HashTable  *ht,      // IN/OUT: the hash table
+                 const void *keyStr)  // IN: key for the element to remove
+{
+   return HashTable_LookupAndDelete(ht, keyStr, NULL);
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HashTable_LookupAndDelete --
+ *
+ *      Look up an element in the hash table, then delete it.
+ *
+ *      If clientData is specified, then the entry data is returned,
+ *      and the free function is not called.
+ *
+ * Results:
+ *      TRUE if the entry was found and subsequently removed
+ *      FALSE otherwise
+ *      Entry value is returned in *clientData.
+ *
+ * Side effects:
+ *      See above
+ *
+ *----------------------------------------------------------------------
+ */
+
+Bool
+HashTable_LookupAndDelete(HashTable *ht,       // IN/OUT: the hash table
+                          const void *keyStr,  // IN: key for the element
+                          void **clientData)   // OUT: return data
 {
    uint32 hash = HashTableComputeHash(ht, keyStr);
    HashTableLink *linkp;
@@ -499,21 +549,25 @@ HashTable_Delete(HashTable  *ht,        // IN/OUT: the hash table
    ASSERT(!ht->atomic);
 
    for (linkp = &ht->buckets[hash];
-	(entry = ENTRY(*linkp)) != NULL;
-	linkp = &entry->next) {
+        (entry = ENTRY(*linkp)) != NULL;
+        linkp = &entry->next) {
       if (HashTableEqualKeys(ht, entry->keyStr, keyStr)) {
-	 SETENTRY(*linkp, ENTRY(entry->next));
+         SETENTRY(*linkp, ENTRY(entry->next));
          ht->numElements--;
-	 if (ht->copyKey) {
-	    free((char *) entry->keyStr);
-	 }
-         if (ht->freeEntryFn) {
+         if (ht->copyKey) {
+            free((void *) entry->keyStr);
+         }
+         if (clientData != NULL) {
+            *clientData = Atomic_ReadPtr(&entry->clientData);
+         } else if (ht->freeEntryFn) {
             ht->freeEntryFn(Atomic_ReadPtr(&entry->clientData));
          }
          free(entry);
+
          return TRUE;
       }
    }
+
    return FALSE;
 }
 
@@ -526,22 +580,22 @@ HashTable_Delete(HashTable  *ht,        // IN/OUT: the hash table
  *      Insert an element into the hashtable.
  *
  *      Unless the hash table was created with HASH_FLAG_COPYKEY,
- *	the string key is not duplicated and thus cannot be freed until
+ *      the string key is not duplicated and thus cannot be freed until
  *      the entry is deleted or the hash table is cleared or freed.
  *
  * Results:
  *      FALSE if item already exists.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 Bool
-HashTable_Insert(HashTable  *ht,          // IN/OUT
-                 const char *keyStr,      // IN
-                 void       *clientData)  // IN
+HashTable_Insert(HashTable  *ht,          // IN/OUT:
+                 const void *keyStr,      // IN:
+                 void       *clientData)  // IN:
 {
    return HashTableLookupOrInsert(ht, keyStr, clientData) == NULL;
 }
@@ -556,22 +610,22 @@ HashTable_Insert(HashTable  *ht,          // IN/OUT
  *      Otherwise, insert it into the hashtable and return it.
  *
  *      Unless the hash table was created with HASH_FLAG_COPYKEY,
- *	the string key is not duplicated and thus cannot be freed until
+ *      the string key is not duplicated and thus cannot be freed until
  *      the entry is deleted or the hash table is cleared or freed.
  *
  * Results:
  *      Old element or new one.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 void *
-HashTable_LookupOrInsert(HashTable  *ht,          // IN/OUT
-                         const char *keyStr,      // IN
-                         void       *clientData)  // IN
+HashTable_LookupOrInsert(HashTable  *ht,          // IN/OUT:
+                         const void *keyStr,      // IN:
+                         void       *clientData)  // IN:
 {
    HashTableEntry *entry = HashTableLookupOrInsert(ht, keyStr, clientData);
 
@@ -585,26 +639,26 @@ HashTable_LookupOrInsert(HashTable  *ht,          // IN/OUT
  * HashTable_ReplaceOrInsert --
  *
  *      Look up an a key.  If found, replace the existing clientData
- *	and return TRUE.
+ *      and return TRUE.
  *      Otherwise, insert new entry and return FALSE.
  *
  *      Unless the hash table was created with HASH_FLAG_COPYKEY,
- *	the string key is not duplicated and thus cannot be freed until
+ *      the string key is not duplicated and thus cannot be freed until
  *      the entry is deleted or the hash table is cleared or freed.
  *
  * Results:
  *      TRUE if replaced, FALSE if inserted.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 Bool
-HashTable_ReplaceOrInsert(HashTable  *ht,          // IN/OUT
-                          const char *keyStr,      // IN
-                          void       *clientData)  // IN
+HashTable_ReplaceOrInsert(HashTable  *ht,          // IN/OUT:
+                          const void *keyStr,      // IN:
+                          void       *clientData)  // IN:
 {
    HashTableEntry *entry = HashTableLookupOrInsert(ht, keyStr, clientData);
 
@@ -615,15 +669,17 @@ HashTable_ReplaceOrInsert(HashTable  *ht,          // IN/OUT
 #ifndef NO_ATOMIC_HASHTABLE
    if (ht->atomic && ht->freeEntryFn) {
       void *old = Atomic_ReadWritePtr(&entry->clientData, clientData);
+
       ht->freeEntryFn(old);
    } else
 #endif
    {
       if (ht->freeEntryFn) {
-	 ht->freeEntryFn(Atomic_ReadPtr(&entry->clientData));
+         ht->freeEntryFn(Atomic_ReadPtr(&entry->clientData));
       }
       Atomic_WritePtr(&entry->clientData, clientData);
    }
+
    return TRUE;
 }
 
@@ -634,23 +690,23 @@ HashTable_ReplaceOrInsert(HashTable  *ht,          // IN/OUT
  * HashTable_ReplaceIfEqual --
  *
  *      Look up an a key.  If found, replace the existing clientData
- *	if it is the same as oldClientData and return TRUE.
- *	Return FALSE otherwise.
+ *      if it is the same as oldClientData and return TRUE.
+ *      Return FALSE otherwise.
  *
  * Results:
  *      TRUE if replaced, FALSE otherwise.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 Bool
-HashTable_ReplaceIfEqual(HashTable  *ht,            // IN/OUT
-                         const char *keyStr,        // IN
-			 void       *oldClientData, // IN
-                         void       *newClientData) // IN
+HashTable_ReplaceIfEqual(HashTable *ht,        // IN/OUT:
+                         const void *keyStr,   // IN:
+                         void *oldClientData,  // IN:
+                         void *newClientData)  // IN:
 {
    uint32 hash = HashTableComputeHash(ht, keyStr);
    HashTableEntry *entry = HashTableLookup(ht, keyStr, hash);
@@ -663,19 +719,19 @@ HashTable_ReplaceIfEqual(HashTable  *ht,            // IN/OUT
 #ifndef NO_ATOMIC_HASHTABLE
    if (ht->atomic) {
       void *data = Atomic_ReadIfEqualWritePtr(&entry->clientData,
-					      oldClientData, newClientData);
+                                              oldClientData, newClientData);
       if (data == oldClientData) {
-	 retval = TRUE;
-	 if (ht->freeEntryFn != NULL) {
-	    ht->freeEntryFn(data);
-	 }
+         retval = TRUE;
+         if (ht->freeEntryFn != NULL) {
+            ht->freeEntryFn(data);
+         }
       }
    } else
 #endif
    if (Atomic_ReadPtr(&entry->clientData) == oldClientData) {
       retval = TRUE;
       if (ht->freeEntryFn) {
-	 ht->freeEntryFn(Atomic_ReadPtr(&entry->clientData));
+         ht->freeEntryFn(Atomic_ReadPtr(&entry->clientData));
       }
       Atomic_WritePtr(&entry->clientData, newClientData);
    }
@@ -696,15 +752,15 @@ HashTable_ReplaceIfEqual(HashTable  *ht,            // IN/OUT
  *      Old HashTableEntry or NULL.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 HashTableEntry *
-HashTableLookupOrInsert(HashTable  *ht,          // IN/OUT
-                        const char *keyStr,      // IN
-                        void       *clientData)  // IN
+HashTableLookupOrInsert(HashTable *ht,       // IN/OUT:
+                        const void *keyStr,  // IN:
+                        void *clientData)    // IN:
 {
    uint32 hash = HashTableComputeHash(ht, keyStr);
    HashTableEntry *entry = NULL;
@@ -716,34 +772,36 @@ again:
 
    oldEntry = HashTableLookup(ht, keyStr, hash);
    if (oldEntry != NULL) {
-      if(entry != NULL) {
+      if (entry != NULL) {
          if (ht->copyKey) {
-            free((char *) entry->keyStr);
+            free((void *) entry->keyStr);
          }
          free(entry);
       }
+
       return oldEntry;
    }
 
    if (entry == NULL) {
       entry = Util_SafeMalloc(sizeof *entry);
       if (ht->copyKey) {
-	 entry->keyStr = Util_SafeStrdup(keyStr);
+         entry->keyStr = Util_SafeStrdup(keyStr);
       } else {
-	 entry->keyStr = keyStr;
+         entry->keyStr = keyStr;
       }
       Atomic_WritePtr(&entry->clientData, clientData);
    }
    SETENTRY(entry->next, head);
    if (ht->atomic) {
       if (!SETENTRYATOMIC(ht->buckets[hash], head, entry)) {
-	 goto again;
+         goto again;
       }
    } else {
       SETENTRY(ht->buckets[hash], entry);
    }
 
    ht->numElements++;
+
    return NULL;
 }
 
@@ -755,27 +813,83 @@ again:
  *
  *      Get the number of elements in the hash table.
  *
- *	Atomic hash tables do not support this function because
- *	the numElements field is not modified atomically so may be
- *	incorrect.
+ *      Atomic hash tables do not support this function because
+ *      the numElements field is not modified atomically so may be
+ *      incorrect.
  *
  * Results:
  *      The number of elements.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 size_t
-HashTable_GetNumElements(const HashTable *ht) // IN:
+HashTable_GetNumElements(const HashTable *ht)  // IN:
 {
    ASSERT(ht);
    ASSERT(!ht->atomic);
 
    return ht->numElements;
 }
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HashTable_KeyArray --
+ *
+ *      Returns an array of pointers to each key in the hash table.
+ *
+ * Results:
+ *      The key array plus its size. If the hash table is empty
+ *      'size' is 0 and 'keys' is NULL. Free 'keys' array with free(). Do *not*
+ *      free the individual elements of the array.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+void
+HashTable_KeyArray(const HashTable *ht,  // IN:
+                   const void ***keys,   // OUT:
+                   size_t *size)         // OUT:
+{
+   uint32 i;
+   size_t j;
+
+   ASSERT(ht);
+   ASSERT(keys);
+   ASSERT(size);
+
+   ASSERT(!ht->atomic);
+
+   *keys = NULL;
+   *size = HashTable_GetNumElements(ht);
+
+   if (0 == *size) {
+      return;
+   }
+
+   /* alloc array */
+   *keys = Util_SafeMalloc(*size * sizeof **keys);
+
+   /* fill array */
+   for (i = 0, j = 0; i < ht->numEntries; i++) {
+      HashTableEntry *entry;
+
+      for (entry = ENTRY(ht->buckets[i]);
+           entry != NULL;
+           entry = ENTRY(entry->next)) {
+         (*keys)[j++] = entry->keyStr;
+      }
+   }
+}
+
 
 
 /*
@@ -791,15 +905,15 @@ HashTable_GetNumElements(const HashTable *ht) // IN:
  *      'size' is 0 and 'clientDatas' is NULL. Free with free().
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 void
-HashTable_ToArray(const HashTable *ht,  // IN
-                  void ***clientDatas,  // OUT
-                  size_t *size)         // OUT
+HashTable_ToArray(const HashTable *ht,  // IN:
+                  void ***clientDatas,  // OUT:
+                  size_t *size)         // OUT:
 {
    uint32 i;
    size_t j;
@@ -823,9 +937,10 @@ HashTable_ToArray(const HashTable *ht,  // IN
    /* fill array */
    for (i = 0, j = 0; i < ht->numEntries; i++) {
       HashTableEntry *entry;
+
       for (entry = ENTRY(ht->buckets[i]);
-	   entry != NULL;
-	   entry = ENTRY(entry->next)) {
+           entry != NULL;
+           entry = ENTRY(entry->next)) {
          (*clientDatas)[j++] = Atomic_ReadPtr(&entry->clientData);
       }
    }
@@ -846,15 +961,15 @@ HashTable_ToArray(const HashTable *ht,  // IN
  *      value of the first non-zero callback.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 int
-HashTable_ForEach(const HashTable *ht,           // IN
-                  HashTableForEachCallback cb,   // IN
-                  void *clientData)              // IN
+HashTable_ForEach(const HashTable *ht,          // IN:
+                  HashTableForEachCallback cb,  // IN:
+                  void *clientData)             // IN:
 {
    int i;
 
@@ -863,16 +978,19 @@ HashTable_ForEach(const HashTable *ht,           // IN
 
    for (i = 0; i < ht->numEntries; i++) {
       HashTableEntry *entry;
+
       for (entry = ENTRY(ht->buckets[i]);
-	   entry != NULL;
-	   entry = ENTRY(entry->next)) {
+           entry != NULL;
+           entry = ENTRY(entry->next)) {
          int result = (*cb)(entry->keyStr, Atomic_ReadPtr(&entry->clientData),
-			    clientData);
+                            clientData);
+
          if (result) {
             return result;
          }
       }
    }
+
    return 0;
 }
 
@@ -889,7 +1007,7 @@ HashTable_ForEach(const HashTable *ht,           // IN
  *      None.
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *----------------------------------------------------------------------
  */
@@ -909,8 +1027,8 @@ HashPrint(HashTable *ht) // IN
       printf("%4d: \n", i);
 
       for (entry = ENTRY(ht->buckets[i]);
-	   entry != NULL;
-	   entry = ENTRY(entry->next)) {
+           entry != NULL;
+           entry = ENTRY(entry->next)) {
          if (ht->keyType == HASH_INT_KEY) {
             printf("\t%p\n", entry->keyStr);
          } else {

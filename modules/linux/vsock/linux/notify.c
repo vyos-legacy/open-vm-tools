@@ -33,7 +33,7 @@
 #include "af_vsock.h"
 
 #define PKT_FIELD(vsk, fieldName) \
-   (vsk)->notify.fieldName
+   (vsk)->notify.pkt.fieldName
 
 #define VSOCK_MAX_DGRAM_RESENDS       10
 
@@ -77,11 +77,16 @@ VSockVmciNotifyWaitingWrite(VSockVmciSock *vsk)    // IN
 
    if (!PKT_FIELD(vsk, peerWaitingWriteDetected)) {
       PKT_FIELD(vsk, peerWaitingWriteDetected) = TRUE;
-      PKT_FIELD(vsk, writeNotifyWindow) -= PAGE_SIZE;
-      if (PKT_FIELD(vsk, writeNotifyWindow) <
-                    PKT_FIELD(vsk, writeNotifyMinWindow)) {
+      if (PKT_FIELD(vsk, writeNotifyWindow) < PAGE_SIZE) {
          PKT_FIELD(vsk, writeNotifyWindow) =
             PKT_FIELD(vsk, writeNotifyMinWindow);
+      } else {
+         PKT_FIELD(vsk, writeNotifyWindow) -= PAGE_SIZE;
+         if (PKT_FIELD(vsk, writeNotifyWindow) <
+             PKT_FIELD(vsk, writeNotifyMinWindow)) {
+            PKT_FIELD(vsk, writeNotifyWindow) =
+               PKT_FIELD(vsk, writeNotifyMinWindow);
+         }
       }
    }
    notifyLimit = vsk->consumeSize - PKT_FIELD(vsk, writeNotifyWindow);
@@ -105,8 +110,7 @@ VSockVmciNotifyWaitingWrite(VSockVmciSock *vsk)    // IN
     *   if writeNotifyWindow > bufferReady then notify
     * as freeSpace == ConsumeSize - bufferReady.
     */
-   retval = VMCIQueue_FreeSpace(vsk->consumeQ, vsk->produceQ, vsk->consumeSize) >
-            notifyLimit;
+   retval = VMCIQPair_ConsumeFreeSpace(vsk->qpair) > notifyLimit;
 #ifdef VSOCK_OPTIMIZATION_FLOW_CONTROL
    if (retval) {
       /*
@@ -154,8 +158,7 @@ VSockVmciNotifyWaitingRead(VSockVmciSock *vsk)  // IN
     * not require a protocol change and will retain compatibility between
     * endpoints with mixed versions of this function.
     */
-   return VMCIQueue_BufReady(vsk->produceQ,
-			     vsk->consumeQ, vsk->produceSize) > 0;
+   return VMCIQPair_ProduceBufReady(vsk->qpair) > 0;
 #else
    return TRUE;
 #endif
@@ -292,7 +295,7 @@ VSockVmciHandleRead(struct sock *sk,            // IN
    PKT_FIELD(vsk, sentWaitingWrite) = FALSE;
 #endif
 
-   sk->compat_sk_write_space(sk);
+   sk->sk_write_space(sk);
 }
 
 
@@ -339,7 +342,7 @@ VSockVmciSendWaitingRead(struct sock *sk,    // IN
              vsk->consumeSize);
    }
 
-   VMCIQueue_GetPointers(vsk->consumeQ, vsk->produceQ, &tail, &head);
+   VMCIQPair_GetConsumeIndexes(vsk->qpair, &tail, &head);
    roomLeft = vsk->consumeSize - head;
    if (roomNeeded >= roomLeft) {
       waitingInfo.offset = roomNeeded - roomLeft;
@@ -398,7 +401,7 @@ VSockVmciSendWaitingWrite(struct sock *sk,   // IN
       return TRUE;
    }
 
-   VMCIQueue_GetPointers(vsk->produceQ, vsk->consumeQ, &tail, &head);
+   VMCIQPair_GetProduceIndexes(vsk->qpair, &tail, &head);
    roomLeft = vsk->produceSize - tail;
    if (roomNeeded + 1 >= roomLeft) {
       /* Wraps around to current generation. */
@@ -513,7 +516,7 @@ VSockVmciHandleWrote(struct sock *sk,            // IN
    PKT_FIELD(vsk, sentWaitingRead) = FALSE;
 #endif
 
-   sk->compat_sk_data_ready(sk, 0);
+   sk->sk_data_ready(sk, 0);
 }
 
 
@@ -540,7 +543,7 @@ VSockVmciNotifyPktSocketInit(struct sock *sk) // IN
    VSockVmciSock *vsk;
    vsk = vsock_sk(sk);
 
-   PKT_FIELD(vsk, writeNotifyWindow) = 0;
+   PKT_FIELD(vsk, writeNotifyWindow) = PAGE_SIZE;
    PKT_FIELD(vsk, writeNotifyMinWindow) = PAGE_SIZE;
    PKT_FIELD(vsk, peerWaitingRead) = FALSE;
    PKT_FIELD(vsk, peerWaitingWrite) = FALSE;
@@ -617,7 +620,7 @@ VSockVmciNotifyPktPollIn(struct sock *sk,    // IN
        * We can't read right now because there is nothing in the queue.
        * Ask for notifications when there is something to read.
        */
-      if (sk->compat_sk_state == SS_CONNECTED) {
+      if (sk->sk_state == SS_CONNECTED) {
          if (!VSockVmciSendWaitingRead(sk, 1)) {
             return -1;
          }
@@ -769,13 +772,11 @@ VSockVmciNotifyPktRecvPreBlock(struct sock *sk,               // IN
                                int target,                    // IN
                                VSockVmciRecvNotifyData *data) // IN
 {
-   VSockVmciSock *vsk;
    int err;
 
    ASSERT(sk);
    ASSERT(data);
 
-   vsk = vsock_sk(sk);
    err = 0;
 
    /* Notify our peer that we are waiting for data to read. */
@@ -831,8 +832,9 @@ VSockVmciNotifyPktRecvPreDequeue(struct sock *sk,               // IN
     * socket locked we should copy at least ready bytes.
     */
 #if defined(VSOCK_OPTIMIZATION_WAITING_NOTIFY)
-   VMCIQueue_GetPointers(vsk->consumeQ, vsk->produceQ,
-                         &data->produceTail, &data->consumeHead);
+   VMCIQPair_GetConsumeIndexes(vsk->qpair,
+                               &data->produceTail,
+                               &data->consumeHead);
 #endif
 
    return 0;
@@ -989,8 +991,9 @@ VSockVmciNotifyPktSendPreEnqueue(struct sock *sk,               // IN
    vsk = vsock_sk(sk);
 
 #if defined(VSOCK_OPTIMIZATION_WAITING_NOTIFY)
-      VMCIQueue_GetPointers(vsk->produceQ, vsk->consumeQ,
-                            &data->produceTail, &data->consumeHead);
+      VMCIQPair_GetProduceIndexes(vsk->qpair,
+                                  &data->produceTail,
+                                  &data->consumeHead);
 #endif
 
    return 0;;
@@ -1124,6 +1127,71 @@ VSockVmciNotifyPktHandlePkt(struct sock *sk,         // IN
    }
 }
 
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * VSockVmciNotifyPktProcessRequest
+ *
+ *      Called near the end of process request.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static void
+VSockVmciNotifyPktProcessRequest(struct sock *sk) // IN
+{
+   VSockVmciSock *vsk;
+
+   ASSERT(sk);
+
+   vsk = vsock_sk(sk);
+
+   PKT_FIELD(vsk, writeNotifyWindow) = vsk->consumeSize;
+   if (vsk->consumeSize < PKT_FIELD(vsk, writeNotifyMinWindow)) {
+      PKT_FIELD(vsk, writeNotifyMinWindow) = vsk->consumeSize;
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * VSockVmciNotifyPktProcessNegotiate
+ *
+ *      Called near the end of process negotiate.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static void
+VSockVmciNotifyPktProcessNegotiate(struct sock *sk) // IN
+{
+   VSockVmciSock *vsk;
+
+   ASSERT(sk);
+
+   vsk = vsock_sk(sk);
+
+   PKT_FIELD(vsk, writeNotifyWindow) = vsk->consumeSize;
+   if (vsk->consumeSize < PKT_FIELD(vsk, writeNotifyMinWindow)) {
+      PKT_FIELD(vsk, writeNotifyMinWindow) = vsk->consumeSize;
+   }
+}
+
+
 /* Socket control packet based operations. */
 VSockVmciNotifyOps vSockVmciNotifyPktOps = {
    VSockVmciNotifyPktSocketInit,
@@ -1138,5 +1206,7 @@ VSockVmciNotifyOps vSockVmciNotifyPktOps = {
    VSockVmciNotifyPktSendInit,
    VSockVmciNotifyPktSendPreBlock,
    VSockVmciNotifyPktSendPreEnqueue,
-   VSockVmciNotifyPktSendPostEnqueue
+   VSockVmciNotifyPktSendPostEnqueue,
+   VSockVmciNotifyPktProcessRequest,
+   VSockVmciNotifyPktProcessNegotiate,
 };

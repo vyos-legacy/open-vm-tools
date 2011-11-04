@@ -21,9 +21,6 @@ INCLUDE += -I$(SRCROOT)/include
 
 EXTRA_CFLAGS := $(CC_OPTS) $(INCLUDE)
 
-EXTRA_CFLAGS += $(call vm_check_build, $(AUTOCONF_DIR)/setnice.c, -DVMW_HAVE_SET_USER_NICE, )
-EXTRA_CFLAGS += $(call vm_check_build, $(AUTOCONF_DIR)/epoll.c,   -DVMW_HAVE_EPOLL, )
-EXTRA_CFLAGS += $(call vm_check_build, $(AUTOCONF_DIR)/skas1.c,   -DVMW_SKAS_MMAP, )
 EXTRA_CFLAGS += $(call vm_check_build, $(AUTOCONF_DIR)/cachecreate.c, -DVMW_KMEMCR_HAS_DTOR, )
 EXTRA_CFLAGS += $(call vm_check_build, $(AUTOCONF_DIR)/cachector.c,   -DVMW_KMEMCR_CTOR_HAS_3_ARGS, )
 EXTRA_CFLAGS += $(call vm_check_build, $(AUTOCONF_DIR)/cachector1.c,  -DVMW_KMEMCR_CTOR_HAS_2_ARGS, )
@@ -36,6 +33,25 @@ EXTRA_CFLAGS += $(call vm_check_build, $(AUTOCONF_DIR)/filldir1.c, , -DVMW_FILLD
 obj-m += $(DRIVER).o
 
 $(DRIVER)-y := $(subst $(SRCROOT)/, , $(patsubst %.c, %.o, $(wildcard $(SRCROOT)/linux/*.c)))
+
+#
+# In open-vm-tools, need to compile the common sources from the shared directories.
+#
+ifdef OVT_SOURCE_DIR
+VMBLOCK_PATH        := $(shell cd $(SRCROOT) && pwd)
+VMBLOCK_SHARED_PATH := $(OVT_SOURCE_DIR)/modules/shared/vmblock
+
+VMBLOCK_SHARED      := block.o
+VMBLOCK_SHARED      += stubs.o
+
+EXTRA_CFLAGS        += -I$(VMBLOCK_PATH)/linux
+EXTRA_CFLAGS        += -I$(VMBLOCK_SHARED_PATH)
+
+$(addprefix $(VMBLOCK_PATH)/,$(VMBLOCK_SHARED)): $(VMBLOCK_PATH)/%.o: $(VMBLOCK_SHARED_PATH)/%.c
+	$(Q)$(rule_cc_o_c)
+
+$(DRIVER)-y += $(VMBLOCK_SHARED)
+endif
 
 clean:
 	rm -rf $(wildcard $(DRIVER).mod.c $(DRIVER).ko .tmp_versions \

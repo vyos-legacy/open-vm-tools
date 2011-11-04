@@ -25,33 +25,55 @@
  *    Internal functions for the tools daemon.
  */
 
-#define G_LOG_DOMAIN    "vmtoolsd"
+#define VMW_TEXT_DOMAIN    "vmtoolsd"
+#define G_LOG_DOMAIN       VMW_TEXT_DOMAIN
+#define TOOLSCORE_COMMON   "common"
 
 #include <glib-object.h>
 #include <gmodule.h>
 #include <time.h>
-#include "vmrpcdbg.h"
-#include "vmtoolsApp.h"
+#include "vmware/tools/plugin.h"
+#include "vmware/tools/rpcdebug.h"
 
 /* Used by the Windows implementation to communicate with other processes. */
 #if defined(G_PLATFORM_WIN32)
-#  define QUIT_EVENT_NAME_FMT         L"Global\\VMwareToolsQuitEvent_%s"
-#  define DUMP_STATE_EVENT_NAME_FMT   L"Global\\VMwareToolsDumpStateEvent_%s"
+#  define QUIT_EVENT_NAME_FMT         L"%S\\VMwareToolsQuitEvent_%s"
+#  define DUMP_STATE_EVENT_NAME_FMT   L"%S\\VMwareToolsDumpStateEvent_%s"
 #endif
 
-/** Defines the internal data about a plugin. */
-typedef struct ToolsPlugin {
-   GModule          *module;
-   ToolsPluginData  *data;
-} ToolsPlugin;
+/* On Mac OS, G_MODULE_SUFFIX seems to be defined to "so"... */
+#if defined(__APPLE__)
+#  if defined(G_MODULE_SUFFIX)
+#     undef G_MODULE_SUFFIX
+#  endif
+#  define G_MODULE_SUFFIX "dylib"
+#endif
+
+/** State of app providers. */
+typedef enum {
+   TOOLS_PROVIDER_IDLE,
+   TOOLS_PROVIDER_ACTIVE,
+   TOOLS_PROVIDER_ERROR,
+
+   /* Keep this as the last one, always. */
+   TOOLS_PROVIDER_MAX
+} ToolsAppProviderState;
+
+/** Defines the internal app provider data. */
+typedef struct ToolsAppProviderReg {
+   ToolsAppProvider       *prov;
+   ToolsAppProviderState   state;
+} ToolsAppProviderReg;
 
 /** Defines internal service state. */
 typedef struct ToolsServiceState {
    gchar         *name;
    gchar         *configFile;
    time_t         configMtime;
-   gboolean       log;
+   guint          configCheckTask;
    gboolean       mainService;
+   gboolean       capsRegistered;
+   gchar         *commonPath;
    gchar         *pluginPath;
    GPtrArray     *plugins;
 #if defined(_WIN32)
@@ -63,6 +85,7 @@ typedef struct ToolsServiceState {
    gchar         *debugPlugin;
    RpcDebugLibData  *debugData;
    ToolsAppCtx    ctx;
+   GArray        *providers;
 } ToolsServiceState;
 
 
@@ -72,7 +95,7 @@ ToolsCore_ParseCommandLine(ToolsServiceState *state,
                            char *argv[]);
 
 void
-ToolsCore_Cleanup(ToolsServiceState *state);
+ToolsCore_DumpPluginInfo(ToolsServiceState *state);
 
 void
 ToolsCore_DumpState(ToolsServiceState *state);
@@ -83,7 +106,7 @@ ToolsCore_GetTcloName(ToolsServiceState *state);
 int
 ToolsCore_Run(ToolsServiceState *state);
 
-gboolean
+void
 ToolsCore_Setup(ToolsServiceState *state);
 
 gboolean
@@ -91,6 +114,10 @@ ToolsCore_InitRpc(ToolsServiceState *state);
 
 gboolean
 ToolsCore_LoadPlugins(ToolsServiceState *state);
+
+void
+ToolsCore_ReloadConfig(ToolsServiceState *state,
+                       gboolean reset);
 
 void
 ToolsCore_RegisterPlugins(ToolsServiceState *state);
@@ -107,6 +134,12 @@ ToolsCore_UnloadPlugins(ToolsServiceState *state);
 void
 ToolsCore_CFRunLoop(ToolsServiceState *state);
 #endif
+
+void
+ToolsCorePool_Init(ToolsAppCtx *ctx);
+
+void
+ToolsCorePool_Shutdown(ToolsAppCtx *ctx);
 
 #endif /* _TOOLSCOREINT_H_ */
 

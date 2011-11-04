@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 1998-2008 VMware, Inc. All rights reserved.
+ * Copyright (C) 1998-2011 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -21,14 +21,13 @@
 
 #define INCLUDE_ALLOW_USERLEVEL
 #define INCLUDE_ALLOW_VMMON
-#define INCLUDE_ALLOW_VMNIXMOD
 #define INCLUDE_ALLOW_VMCORE
 #define INCLUDE_ALLOW_VMKERNEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #include "includeCheck.h"
 
 #include "vm_basic_asm.h"
-#include "x86cpuid.h"
+#include "x86cpuid_asm.h"
 
 
 typedef struct CPUID0 {
@@ -101,8 +100,7 @@ CPUIDSummary_RegsFromCpuid0(CPUID0* id0In,
  *
  *      Determines whether it is safe to write to the MCE control
  *      register MC0_CTL.
- *      Known safe:     P4, Nahalem, All AMD.
- *      Known not safe: P6, Core, Core2, Penryn
+ *      Known safe:     P4, All AMD, all family 6 model > 0x1a, except core/atom
  *      Don't know:     P2, P3
  *
  * Results:
@@ -121,13 +119,26 @@ CPUIDSummary_SafeToUseMC0_CTL(CPUIDSummary* cpuidSummary)
    CPUIDSummary_RegsFromCpuid0(&cpuidSummary->id0, &id0);   
    return CPUID_IsVendorAMD(&id0) ||
       (CPUID_IsVendorIntel(&id0) &&
-       (CPUID_FAMILY_IS_PENTIUM4(id0.eax) ||
-        CPUID_UARCH_IS_NEHALEM(cpuidSummary->id1.version)));
+       (CPUID_FAMILY_IS_PENTIUM4(cpuidSummary->id1.version) ||
+        (CPUID_FAMILY_IS_P6(cpuidSummary->id1.version) &&
+         (CPUID_EFFECTIVE_MODEL(cpuidSummary->id1.version) ==
+            CPUID_MODEL_NEHALEM_1A ||
+          CPUID_EFFECTIVE_MODEL(cpuidSummary->id1.version) >=
+            CPUID_MODEL_NEHALEM_1E))));
 }
 
 
-/* The following two functions return the number of cores per package
+/* The following functions return the number of cores per package
    and set *numThreadsPerCore to the number of hardware threads per core. */ 
+static INLINE uint32
+CPUIDSummary_VIACoresPerPackage(CPUIDSummary *cpuid,
+                                uint32 *numThreadsPerCore)
+{
+   (void) cpuid;
+   *numThreadsPerCore = 1;
+   return 1;
+}
+
 static INLINE uint32 
 CPUIDSummary_AMDCoresPerPackage(CPUIDSummary *cpuid,
                                 uint32 *numThreadsPerCore)
@@ -149,8 +160,8 @@ CPUIDSummary_IntelCoresPerPackage(CPUIDSummary *cpuid,
     * Multi-core processors have the HT feature bit set even if they don't
     * support HT.  The reported number of HT is the total, not per core.
     */
-   if (cpuid->id1.edxFeatures & CPUID_FEATURE_COMMON_ID1EDX_HT) {
-      *numThreadsPerCore = CPUID_LCPU_COUNT(cpuid->id1.ebx);
+   if (CPUID_ISSET(1, EDX, HTT, cpuid->id1.edxFeatures)) {
+      *numThreadsPerCore = CPUID_GET(1, EBX, LCPU_COUNT, cpuid->id1.ebx);
        if (cpuid->id0.numEntries >= 4) {
          numCoresPerPackage =
             CPUID_IntelCoresPerPackage(__GET_EAX_FROM_CPUID4(0));

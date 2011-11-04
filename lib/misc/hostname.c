@@ -88,6 +88,7 @@ Hostinfo_HostName(void)
 
       if (!dllHandle) {
          Warning("%s Failed to wsock32.\n", __FUNCTION__);
+
          return NULL;
       }
    }
@@ -97,12 +98,14 @@ Hostinfo_HostName(void)
    if (!GetHostNameFn) {
       Warning("%s Failed to find gethostname.\n", __FUNCTION__);
       FreeLibrary(dllHandle);
+
       return NULL;
    }
 
    if ((*GetHostNameFn)(hostName, sizeof hostName) == SOCKET_ERROR) {
       Warning("%s gethostname failed.\n", __FUNCTION__);
       FreeLibrary(dllHandle);
+
       return NULL;
    }
 
@@ -111,6 +114,7 @@ Hostinfo_HostName(void)
    if (!GetHostByNameFn) {
       Warning("%s Failed to find gethostbyname.\n", __FUNCTION__);
       FreeLibrary(dllHandle);
+
       return Unicode_Alloc(hostName, STRING_ENCODING_DEFAULT);
    }
 
@@ -227,17 +231,13 @@ Hostinfo_HostName(void)
  *
  * Hostinfo_HostName --
  *
- *      Return the fully qualified host name of the host.
+ *      Stub for uncoded OSen
  *
  * Results:
- *      The host name on success; must be freed
- *      NULL on failure
+ *      NULL
  *
  * Side effects:
- *       None
- *
- * Note:
- *	This is a dummy catcher for uncoded OSen.
+ *      None
  *
  *-----------------------------------------------------------------------------
  */
@@ -245,7 +245,6 @@ Hostinfo_HostName(void)
 Unicode
 Hostinfo_HostName(void)
 {
-   return Unicode_Alloc("Hostinfo_HostName: unimplemented for OS", 
-                        STRING_ENCODING_US_ASCII);
+   return NULL;
 }
 #endif

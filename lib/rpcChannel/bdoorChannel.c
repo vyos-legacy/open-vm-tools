@@ -25,6 +25,7 @@
 
 #include "vm_assert.h"
 #include "rpcChannelInt.h"
+#include "rpcin.h"
 #include "rpcout.h"
 #include "util.h"
 
@@ -32,88 +33,111 @@
 #define RPCIN_MAX_DELAY    10
 
 typedef struct BackdoorChannel {
-   RpcIn   *in;
-   RpcOut  *out;
-   gboolean inStarted;
-   gboolean outStarted;
+   GMainContext  *mainCtx;
+   GStaticMutex   outLock;
+   RpcIn         *in;
+   RpcOut        *out;
+   gboolean       inStarted;
+   gboolean       outStarted;
 } BackdoorChannel;
 
 
 /**
- * Stops a channel, optionally destroying the channel. It's safe to call
- * this function more than once.
- *
- * @internal This function does a best effort at tearing down the host-side
- *           channels, but if the host returns any failure, it still shuts
- *           down the guest channels. See bug 388777 for details.
+ * Initializes internal state for the inbound channel.
  *
  * @param[in]  chan     The RPC channel instance.
- * @param[in]  destroy  Whether to destroy the channels.
+ * @param[in]  ctx      Main application context.
+ * @param[in]  appName  Unused.
+ * @param[in]  appCtx   Unused.
  */
 
 static void
-RpcInStopChannel(RpcChannel *chan,
-                 gboolean destroy)
+RpcInSetup(RpcChannel *chan,
+           GMainContext *ctx,
+           const char *appName,
+           gpointer appCtx)
 {
    BackdoorChannel *bdoor = chan->_private;
-
-   ASSERT(chan->appName != NULL);
-   if (bdoor->out != NULL) {
-      if (bdoor->outStarted) {
-         RpcOut_stop(bdoor->out);
-      }
-      if (destroy) {
-         RpcOut_Destruct(bdoor->out);
-         bdoor->out = NULL;
-      }
-      bdoor->outStarted = FALSE;
-   } else {
-      ASSERT(!bdoor->outStarted);
-   }
-
-   if (bdoor->in != NULL) {
-      if (bdoor->inStarted) {
-         RpcIn_stop(bdoor->in);
-      }
-      if (destroy) {
-         RpcIn_Destruct(bdoor->in);
-         bdoor->in = NULL;
-      }
-      bdoor->inStarted = FALSE;
-   } else {
-      ASSERT(!bdoor->inStarted);
-   }
+   bdoor->mainCtx = g_main_context_ref(ctx);
+   bdoor->in = RpcIn_Construct(ctx, RpcChannel_Dispatch, chan);
+   ASSERT(bdoor->in != NULL);
 }
 
 
 /**
  * Starts the RpcIn loop and the RpcOut channel.
  *
+ * No-op if channels are already started.
+ *
  * @param[in]  chan     The RPC channel instance.
  *
  * @return TRUE on success.
  */
 
-static Bool
+static gboolean
 RpcInStart(RpcChannel *chan)
 {
-   gboolean ret;
+   gboolean ret = TRUE;
    BackdoorChannel *bdoor = chan->_private;
 
-   ASSERT(chan->appName != NULL);
-   ASSERT(!bdoor->inStarted);
-   ASSERT(!bdoor->outStarted);
+   if (bdoor->outStarted) {
+      /* Already started. Make sure both channels are in sync and return. */
+      ASSERT(bdoor->in == NULL || bdoor->inStarted);
+      return ret;
+   } else {
+      ASSERT(bdoor->in == NULL || !bdoor->inStarted);
+   }
 
-   ret = RpcIn_start(bdoor->in, RPCIN_MAX_DELAY, RpcChannel_Error, chan);
+   if (bdoor->in != NULL) {
+      ret = RpcIn_start(bdoor->in, RPCIN_MAX_DELAY, RpcChannel_Error, chan);
+   }
    if (ret) {
       ret = RpcOut_start(bdoor->out);
       if (!ret) {
          RpcIn_stop(bdoor->in);
       }
    }
-   bdoor->inStarted = TRUE;
+   bdoor->inStarted = (bdoor->in != NULL);
    bdoor->outStarted = TRUE;
    return ret;
+}
+
+
+/**
+ * Stops a channel, keeping internal state so that it can be restarted later.
+ * It's safe to call this function more than once.
+ *
+ * @internal This function does a best effort at tearing down the host-side
+ *           channels, but if the host returns any failure, it still shuts
+ *           down the guest channels. See bug 388777 for details.
+ *
+ * @param[in]  chan     The RPC channel instance.
+ */
+
+static void
+RpcInStop(RpcChannel *chan)
+{
+   BackdoorChannel *bdoor = chan->_private;
+
+   g_static_mutex_lock(&bdoor->outLock);
+   if (bdoor->out != NULL) {
+      if (bdoor->outStarted) {
+         RpcOut_stop(bdoor->out);
+      }
+      bdoor->outStarted = FALSE;
+   } else {
+      ASSERT(!bdoor->outStarted);
+   }
+   g_static_mutex_unlock(&bdoor->outLock);
+
+   if (bdoor->in != NULL) {
+      if (bdoor->inStarted) {
+         RpcIn_stop(bdoor->in);
+      }
+      bdoor->inStarted = FALSE;
+   } else {
+      ASSERT(!bdoor->inStarted);
+   }
 }
 
 
@@ -128,25 +152,17 @@ RpcInStart(RpcChannel *chan)
 static void
 RpcInShutdown(RpcChannel *chan)
 {
-   RpcInStopChannel(chan, TRUE);
-}
-
-
-/**
- * Stops the channel from receiving messages and releases the channel, but
- * don't clean up the internal channel state. This allows the channel to be
- * restarted later if needed. The "out" channel is also stopped, so sending
- * a message on the channel while it's stopped will fail.
- *
- * @param[in]  chan     The RPC channel instance.
- *
- * @return TRUE on success.
- */
-
-static void
-RpcInStop(RpcChannel *chan)
-{
-   RpcInStopChannel(chan, FALSE);
+   BackdoorChannel *bdoor = chan->_private;
+   RpcInStop(chan);
+   if (bdoor->in != NULL) {
+      RpcIn_Destruct(bdoor->in);
+   }
+   RpcOut_Destruct(bdoor->out);
+   g_static_mutex_free(&bdoor->outLock);
+   if (bdoor->mainCtx != NULL) {
+      g_main_context_unref(bdoor->mainCtx);
+   }
+   g_free(bdoor);
 }
 
 
@@ -162,22 +178,21 @@ RpcInStop(RpcChannel *chan)
  * @return The status from the remote end (TRUE if call was successful).
  */
 
-static Bool
+static gboolean
 RpcInSend(RpcChannel *chan,
-          char *data,
+          char const *data,
           size_t dataLen,
           char **result,
           size_t *resultLen)
 {
-   gboolean ret;
+   gboolean ret = FALSE;
    const char *reply;
    size_t replyLen;
    BackdoorChannel *bdoor = chan->_private;
 
-   ASSERT(chan->appName != NULL);
-
+   g_static_mutex_lock(&bdoor->outLock);
    if (!bdoor->outStarted) {
-      return FALSE;
+      goto exit;
    }
 
    ret = RpcOut_send(bdoor->out, data, dataLen, &reply, &replyLen);
@@ -232,30 +247,28 @@ RpcInSend(RpcChannel *chan,
       *resultLen = replyLen;
    }
 
+exit:
+   g_static_mutex_unlock(&bdoor->outLock);
    return ret;
 }
 
 
 /**
- * Creates a new RpcIn channel.
- *
- * @param[in]  mainCtx     The app's main context.
+ * Creates a new RpcChannel channel that uses the backdoor for communication.
  *
  * @return A new channel instance (never NULL).
  */
 
 RpcChannel *
-RpcChannel_NewBackdoorChannel(GMainContext *mainCtx)
+BackdoorChannel_New(void)
 {
    RpcChannel *ret;
    BackdoorChannel *bdoor;
 
-   ret = g_malloc0(sizeof *ret);
+   ret = RpcChannel_Create();
+   bdoor = g_malloc0(sizeof *bdoor);
 
-   bdoor = g_malloc(sizeof *bdoor);
-   bdoor->in = RpcIn_Construct(mainCtx, RpcChannel_Dispatch, ret);
-   ASSERT(bdoor->in != NULL);
-
+   g_static_mutex_init(&bdoor->outLock);
    bdoor->out = RpcOut_Construct();
    ASSERT(bdoor->out != NULL);
 
@@ -265,6 +278,7 @@ RpcChannel_NewBackdoorChannel(GMainContext *mainCtx)
    ret->start = RpcInStart;
    ret->stop = RpcInStop;
    ret->send = RpcInSend;
+   ret->setup = RpcInSetup;
    ret->shutdown = RpcInShutdown;
    ret->_private = bdoor;
 

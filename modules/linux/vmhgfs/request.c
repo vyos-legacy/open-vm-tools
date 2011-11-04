@@ -41,14 +41,43 @@
 #include "fsutil.h"
 #include "vm_assert.h"
 
-static uint64 hgfsIdCounter = 0;
+/*
+ *----------------------------------------------------------------------
+ *
+ * HgfsRequestInit --
+ *
+ *    Initializes new request structure.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static void
+HgfsRequestInit(HgfsReq *req,       // IN: request to initialize
+                int requestId)      // IN: ID assigned to the request
+{
+   ASSERT(req);
+
+   kref_init(&req->kref);
+   INIT_LIST_HEAD(&req->list);
+   init_waitqueue_head(&req->queue);
+   req->id = requestId;
+   req->payloadSize = 0;
+   req->state = HGFS_REQ_STATE_ALLOCATED;
+   req->numEntries = 0;
+}
 
 /*
  *----------------------------------------------------------------------
  *
  * HgfsGetNewRequest --
  *
- *    Get a new request structure off the free list and initialize it.
+ *    Allocates and initializes new request structure.
  *
  * Results:
  *    On success the new struct is returned with all fields
@@ -64,28 +93,62 @@ HgfsReq *
 HgfsGetNewRequest(void)
 {
    static atomic_t hgfsIdCounter = ATOMIC_INIT(0);
-   HgfsReq *req = NULL;
+   HgfsReq *req;
 
-   req = kmem_cache_alloc(hgfsReqCache, GFP_KERNEL);
+   req = HgfsTransportAllocateRequest(HGFS_PACKET_MAX);
    if (req == NULL) {
-      LOG(4, (KERN_DEBUG "VMware hgfs: HgfsGetNewRequest: "
-              "can't allocate memory\n"));
+      LOG(4, (KERN_DEBUG "VMware hgfs: %s: can't allocate memory\n", __func__));
       return NULL;
    }
 
-   INIT_LIST_HEAD(&req->list);
-   init_waitqueue_head(&req->queue);
-   req->payloadSize = 0;
-   req->state = HGFS_REQ_STATE_ALLOCATED;
-   /* Setup the packet prefix. */
-   memcpy(req->packet, HGFS_SYNC_REQREP_CLIENT_CMD,
-          HGFS_SYNC_REQREP_CLIENT_CMD_LEN);
-
-   req->id = atomic_inc_return(&hgfsIdCounter) - 1;
+   HgfsRequestInit(req, atomic_inc_return(&hgfsIdCounter) - 1);
 
    return req;
 }
 
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HgfsCopyRequest --
+ *
+ *    Allocates and initializes new request structure and copies
+ *    existing request into it.
+ *
+ * Results:
+ *    On success the new struct is returned with all fields
+ *    initialized. Returns NULL on failure.
+ *
+ * Side effects:
+ *    None
+ *
+ *----------------------------------------------------------------------
+ */
+
+HgfsReq *
+HgfsCopyRequest(HgfsReq *req)   // IN: request to be copied
+{
+   HgfsReq *newReq;
+
+   ASSERT(req);
+
+   newReq = HgfsTransportAllocateRequest(req->bufferSize);
+   if (newReq == NULL) {
+      LOG(4, (KERN_DEBUG "VMware hgfs: %s: can't allocate memory\n", __func__));
+      return NULL;
+   }
+
+   HgfsRequestInit(newReq, req->id);
+
+   memcpy(newReq->dataPacket, req->dataPacket,
+          req->numEntries * sizeof (req->dataPacket[0]));
+
+   newReq->numEntries = req->numEntries;
+   newReq->payloadSize = req->payloadSize;
+   memcpy(newReq->payload, req->payload, req->payloadSize);
+
+   return newReq;
+}
 
 /*
  *----------------------------------------------------------------------
@@ -109,8 +172,8 @@ HgfsSendRequest(HgfsReq *req)       // IN/OUT: Outgoing request
    int ret;
 
    ASSERT(req);
-   ASSERT(req->payloadSize <= HGFS_PACKET_MAX);
-
+   ASSERT(req->payloadSize <= req->bufferSize);
+   LOG(4, (KERN_WARNING "Size of buffer %Zu\n", req->bufferSize));
    req->state = HGFS_REQ_STATE_UNSENT;
 
    LOG(8, (KERN_DEBUG "VMware hgfs: HgfsSendRequest: Sending request id %d\n",
@@ -118,16 +181,16 @@ HgfsSendRequest(HgfsReq *req)       // IN/OUT: Outgoing request
    ret = HgfsTransportSendRequest(req);
    LOG(8, (KERN_DEBUG "VMware hgfs: HgfsSendRequest: request finished, "
            "return %d\n", ret));
+
    return ret;
 }
-
 
 /*
  *----------------------------------------------------------------------
  *
- * HgfsFreeRequest --
+ * HgfsRequestFreeMemory --
  *
- *    Free an HGFS request.
+ *    Frees memory allocated for a request.
  *
  * Results:
  *    None
@@ -138,14 +201,68 @@ HgfsSendRequest(HgfsReq *req)       // IN/OUT: Outgoing request
  *----------------------------------------------------------------------
  */
 
-void
-HgfsFreeRequest(HgfsReq *req) // IN: Request to free
+static void HgfsRequestFreeMemory(struct kref *kref)
 {
-   ASSERT(hgfsReqCache);
+   HgfsReq *req = container_of(kref, HgfsReq, kref);
 
-   if (req != NULL) {
-      kmem_cache_free(hgfsReqCache, req);
+   LOG(10, (KERN_DEBUG "VMware hgfs: %s: freeing request %d\n",
+            __func__, req->id));
+   HgfsTransportFreeRequest(req);
+}
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HgfsRequestPutRef --
+ *
+ *    Decrease reference count of HGFS request.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    May cause request to be destroyed.
+ *
+ *----------------------------------------------------------------------
+ */
+
+void
+HgfsRequestPutRef(HgfsReq *req) // IN: Request
+{
+   if (req) {
+      LOG(10, (KERN_DEBUG "VMware hgfs: %s: request %d\n",
+               __func__, req->id));
+      kref_put(&req->kref, HgfsRequestFreeMemory);
    }
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HgfsRequestGetRef --
+ *
+ *    Increment reference count of HGFS request.
+ *
+ * Results:
+ *    Pointer to the same HGFS request.
+ *
+ * Side effects:
+ *    None
+ *
+ *----------------------------------------------------------------------
+ */
+
+HgfsReq *
+HgfsRequestGetRef(HgfsReq *req) // IN: Request
+{
+   if (req) {
+      LOG(10, (KERN_DEBUG "VMware hgfs: %s: request %d\n",
+               __func__, req->id));
+      kref_get(&req->kref);
+   }
+
+   return req;
 }
 
 
@@ -182,8 +299,7 @@ HgfsReplyStatus(HgfsReq *req)  // IN
  *
  * HgfsCompleteReq --
  *
- *    Copies the reply packet into the request structure and wakes up
- *    the associated client.
+ *    Marks request as completed and wakes up sender.
  *
  * Results:
  *    None
@@ -195,20 +311,41 @@ HgfsReplyStatus(HgfsReq *req)  // IN
  */
 
 void
-HgfsCompleteReq(HgfsReq *req,       // IN: Request
-                char const *reply,  // IN: Reply packet
-                size_t replySize)   // IN: Size of reply packet
+HgfsCompleteReq(HgfsReq *req)       // IN: Request
 {
    ASSERT(req);
-   ASSERT(reply);
-   ASSERT(replySize <= HGFS_PACKET_MAX);
 
-   memcpy(HGFS_REQ_PAYLOAD(req), reply, replySize);
-   req->payloadSize = replySize;
    req->state = HGFS_REQ_STATE_COMPLETED;
-   if (!list_empty(&req->list)) {
-      list_del_init(&req->list);
-   }
    /* Wake up the client process waiting for the reply to this request. */
    wake_up(&req->queue);
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HgfsFailReq --
+ *
+ *    Marks request as failed and calls HgfsCompleteReq to wake up
+ *    sender.
+ *
+ * Results:
+ *    None
+ *
+ * Side effects:
+ *    None
+ *
+ *----------------------------------------------------------------------
+ */
+
+void HgfsFailReq(HgfsReq *req,   // IN: erequest to be marked failed
+                 int error)     // IN: error code
+{
+   HgfsReply *reply = req->payload;
+
+   reply->id = req->id;
+   reply->status = error;
+
+   req->payloadSize = sizeof *reply;
+   HgfsCompleteReq(req);
 }

@@ -28,9 +28,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include "conf.h"
+#include "file.h"
+#include "guestApp.h"
 #include "system.h"
 #include "toolboxCmdInt.h"
-#include "vmtools.h"
+#include "vmware/tools/i18n.h"
+#include "vmware/tools/utils.h"
 
 
 #define SCRIPT_SUSPEND "suspend"
@@ -42,10 +46,6 @@ typedef enum ScriptType {
    Default,
    Current
 } ScriptType;
-
-static int ScriptToggle(const char *apm, Bool enable, int quiet_flag);
-static const char* GetConfName(const char *apm);
-static int GetConfEntry(const char *apm, ScriptType type);
 
 
 /*
@@ -101,19 +101,17 @@ GetConfName(const char *apm) // IN: apm name.
 static GKeyFile *
 LoadConfFile(void)
 {
-   gchar *confPath;
-   GKeyFile *confDict;
+   GKeyFile *confDict = NULL;
 
-   confPath = VMTools_GetToolsConfFile();
-   confDict = VMTools_LoadConfig(confPath,
-                                 G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
-                                 System_IsUserAdmin());
+   VMTools_LoadConfig(NULL,
+                      G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                      &confDict,
+                      NULL);
 
    if (confDict == NULL) {
       confDict = g_key_file_new();
    }
 
-   g_free(confPath);
    return confDict;
 }
 
@@ -135,36 +133,67 @@ LoadConfFile(void)
  */
 
 static int
-GetConfEntry(const char *apm,  // IN: apm name
-             ScriptType type)  // IN: Script type (default or current)
+GetConfEntry(const char *progName,  // IN: program name (argv[0])
+             const char *apm,       // IN: apm name
+             ScriptType type)       // IN: Script type (default or current)
 {
-   gchar *entry = NULL;
-   GKeyFile *confDict = NULL;
+   gchar *entry;
+   GKeyFile *confDict;
    const char *confName;
+   int len;
    int ret;
 
    confName = GetConfName(apm);
    if (!confName) {
-      fprintf(stderr, "Unknown operation\n");
+      ToolsCmd_UnknownEntityError(progName,
+                                  SU_(script.operation, "operation"),
+                                  apm);
       return EX_USAGE;
    }
 
    confDict = LoadConfFile();
 
-   if (type == Default) {
-      entry = g_strdup(GuestApp_GetDefaultScript(confName));
-   } else if (type == Current) {
+   switch (type) {
+   case Current:
       entry = g_key_file_get_string(confDict, "powerops", confName, NULL);
-      if (entry == NULL) {
-         entry = g_strdup(GuestApp_GetDefaultScript(confName));
+      if (entry) {
+         break;
       }
+      /* Fall through */
+
+   default:
+      entry = g_strdup(GuestApp_GetDefaultScript(confName));
+      break;
    }
 
-   if (strlen(entry) > 0) {
-      printf("%s\n", entry);
+   len = strlen(entry);
+   if (len > 0) {
+
+      /* If script path is not absolute, assume the Tools install path. */
+      if (!g_path_is_absolute(entry)) {
+         char *defaultPath = GuestApp_GetInstallPath();
+         char *tmp;
+         Bool quoted;
+
+         ASSERT(defaultPath != NULL);
+
+         /* Cope with old configs that added quotes around script paths. */
+         quoted = (entry[0] == '"' && entry[len - 1] == '"');
+         tmp = g_strdup_printf("%s%c%.*s", defaultPath, DIRSEPC,
+                                quoted ? len - 2 : len,
+                                quoted ? entry + 1 : entry);
+
+         vm_free(defaultPath);
+
+         g_free(entry);
+         entry = tmp;
+      }
+
+      g_print("%s\n", entry);
       ret = EXIT_SUCCESS;
    } else {
-      fprintf(stderr, "No script for operation %s\n", apm);
+      ToolsCmd_PrintErr(SU_(script.unknownop, "No script for operation %s.\n"),
+                        apm);
       ret = EX_TEMPFAIL;
    }
 
@@ -177,7 +206,7 @@ GetConfEntry(const char *apm,  // IN: apm name
 /*
  *-----------------------------------------------------------------------------
  *
- * Script_GetDefault  --
+ * ScriptGetDefault  --
  *
  *      Gets the path to default script.
  *
@@ -192,17 +221,18 @@ GetConfEntry(const char *apm,  // IN: apm name
  *-----------------------------------------------------------------------------
  */
 
-int
-Script_GetDefault(const char *apm) // IN: APM name
+static int
+ScriptGetDefault(const char *progName, // IN: program name (argv[0])
+                 const char *apm)      // IN: APM name
 {
-   return GetConfEntry(apm, Default);
+   return GetConfEntry(progName, apm, Default);
 }
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * Script_GetCurrent  --
+ * ScriptGetCurrent  --
  *
  *      Gets the path to Current script.
  *
@@ -217,10 +247,11 @@ Script_GetDefault(const char *apm) // IN: APM name
  *-----------------------------------------------------------------------------
  */
 
-int
-Script_GetCurrent(const char *apm) // IN: apm function name
+static int
+ScriptGetCurrent(const char *progName, // IN: program name (argv[0])
+                 const char *apm)      // IN: apm function name
 {
-   return GetConfEntry(apm, Current);
+   return GetConfEntry(progName, apm, Current);
 }
 
 
@@ -244,13 +275,12 @@ Script_GetCurrent(const char *apm) // IN: apm function name
  */
 
 static int
-ScriptToggle(const char *apm, // IN: APM name
-             Bool enable,     // IN: status
-             int quiet_flag)  // IN: Verbosity flag
+ScriptToggle(const char *progName,  // IN: program name (argv[0])
+             const char *apm,       // IN: APM name
+             Bool enable)           // IN: status
 {
    const char *path;
    const char *confName;
-   gchar *confPath;
    int ret = EXIT_SUCCESS;
    GKeyFile *confDict;
    GError *err = NULL;
@@ -258,7 +288,9 @@ ScriptToggle(const char *apm, // IN: APM name
    confName = GetConfName(apm);
 
    if (!confName) {
-      fprintf(stderr, "Unknown operation\n");
+      ToolsCmd_UnknownEntityError(progName,
+                                  SU_(script.operation, "operation"),
+                                  apm);
       return EX_USAGE;
    }
 
@@ -271,15 +303,14 @@ ScriptToggle(const char *apm, // IN: APM name
    }
 
    g_key_file_set_string(confDict, "powerops", confName, path);
-   confPath = VMTools_GetToolsConfFile();
-   if (!VMTools_WriteConfig(confPath, confDict, &err)) {
-      fprintf(stderr, "Error writing config: %s\n", err->message);
+   if (!VMTools_WriteConfig(NULL, confDict, &err)) {
+      ToolsCmd_PrintErr(SU_(script.write.error, "Error writing config: %s\n"),
+                        err->message);
       g_clear_error(&err);
       ret = EX_TEMPFAIL;
    }
 
    g_key_file_free(confDict);
-   g_free(confPath);
    return ret;
 }
 
@@ -287,59 +318,12 @@ ScriptToggle(const char *apm, // IN: APM name
 /*
  *-----------------------------------------------------------------------------
  *
- * Script_Enable  --
+ * ScriptSet  --
  *
- *      enables script.
- *
- * Results:
- *      Same as ScriptToggle.
- *
- * Side effects:
- *      Same as ScriptToggle.
- *
- *-----------------------------------------------------------------------------
- */
-
-int
-Script_Enable(const char *apm,   // IN: APM name
-              int quiet_flag)    // IN: Verbosity flag
-{
-   return ScriptToggle(apm, TRUE, quiet_flag);
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * Script_Disable  --
- *
- *      disable script
+ *      Sets a script to the given path.
  *
  * Results:
- *      Same as ScriptToggle.
- *
- * Side effects:
- *      Same as ScriptToggle.
- *
- *-----------------------------------------------------------------------------
- */
-
-int
-Script_Disable(const char *apm,  // IN: APM name
-               int quiet_flag)   // IN: Verbosity Flag
-{
-   return ScriptToggle(apm, FALSE, quiet_flag);
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * sets a script to the given path  --
- *
- *      disable script.
- *
- * Results:
+ *      EX_OSFILE if path doesn't exist.
  *      EXIT_SUCCESS on success.
  *      EX_USAGE on parse errors.
  *      EX_TEMPFAIL on failure.
@@ -351,41 +335,40 @@ Script_Disable(const char *apm,  // IN: APM name
  *-----------------------------------------------------------------------------
  */
 
-int
-Script_Set(const char *apm,   // IN: APM name
-           const char *path,  // IN: path to script
-           int quiet_flag)    // IN: Verbosity flag
+static int
+ScriptSet(const char *progName,  // IN: program name (argv[0])
+          const char *apm,       // IN: APM name
+          const char *path)      // IN: Verbosity flag
 {
    const char *confName;
    int ret = EXIT_SUCCESS;
-   gchar *confPath = NULL;
    GKeyFile *confDict = NULL;
    GError *err = NULL;
 
    if (!File_Exists(path)) {
-      fprintf(stderr, "%s doesn't exist\n", path);
+      ToolsCmd_PrintErr(SU_(script.notfound, "%s doesn't exist.\n"), path);
       return EX_OSFILE;
    }
 
    confName = GetConfName(apm);
    if (!confName) {
-      fprintf(stderr, "Unknown operation\n");
+      ToolsCmd_UnknownEntityError(progName,
+                                  SU_(script.operation, "operation"),
+                                  apm);
       return EX_USAGE;
    }
 
-   confPath = VMTools_GetToolsConfFile();
    confDict = LoadConfFile();
-
    g_key_file_set_string(confDict, "powerops", confName, path);
 
-   if (!VMTools_WriteConfig(confPath, confDict, &err)) {
-      fprintf(stderr, "Error writing config: %s\n", err->message);
+   if (!VMTools_WriteConfig(NULL, confDict, &err)) {
+      ToolsCmd_PrintErr(SU_(script.write.error, "Error writing config: %s\n"),
+                        err->message);
       g_clear_error(&err);
       ret = EX_TEMPFAIL;
    }
 
    g_key_file_free(confDict);
-   g_free(confPath);
    return ret;
 }
 
@@ -393,7 +376,7 @@ Script_Set(const char *apm,   // IN: APM name
 /*
  *-----------------------------------------------------------------------------
  *
- * Script_CheckName  --
+ * ScriptCheckName  --
  *
  *      Check if it is known script
  *
@@ -406,8 +389,106 @@ Script_Set(const char *apm,   // IN: APM name
  *-----------------------------------------------------------------------------
  */
 
-Bool
-Script_CheckName(const char *apm) // IN: script name
+static Bool
+ScriptCheckName(const char *apm) // IN: script name
 {
    return GetConfName(apm) != NULL;
 }
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Script_Command --
+ *
+ *      Handle and parse script commands.
+ *
+ * Results:
+ *      Returns EXIT_SUCCESS on success.
+ *      Returns the exit code on errors.
+ *
+ * Side effects:
+ *      Might enables, disables, or change APM scripts.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+Script_Command(char **argv,    // IN: command line arguments.
+               int argc,       // IN: the length of the command line arguments.
+               gboolean quiet) // IN
+{
+   const char *apm;
+
+   if (++optind >= argc) {
+      ToolsCmd_MissingEntityError(argv[0], SU_(arg.scripttype, "script type"));
+      return EX_USAGE;
+   }
+
+   apm = argv[optind++];
+
+   if (!ScriptCheckName(apm)) {
+      ToolsCmd_UnknownEntityError(argv[0], SU_(arg.scripttype, "script type"), apm);
+      return EX_USAGE;
+   }
+
+   if (optind >= argc) {
+      ToolsCmd_MissingEntityError(argv[0], SU_(arg.subcommand, "subcommand"));
+      return EX_USAGE;
+   }
+
+   if (toolbox_strcmp(argv[optind], "default") == 0) {
+      return ScriptGetDefault(argv[0], apm);
+   } else if (toolbox_strcmp(argv[optind], "current") == 0) {
+      return ScriptGetCurrent(argv[0], apm);
+   } else if (toolbox_strcmp(argv[optind], "set") == 0) {
+      if (++optind >= argc) {
+         ToolsCmd_MissingEntityError(argv[0], SU_(arg.scriptpath, "script path"));
+         return EX_USAGE;
+      }
+      return ScriptSet(argv[0], apm, argv[optind]);
+   } else if (toolbox_strcmp(argv[optind], "enable") == 0) {
+      return ScriptToggle(argv[0], apm, TRUE);
+   } else if (toolbox_strcmp(argv[optind], "disable") == 0) {
+      return ScriptToggle(argv[0], apm, FALSE);
+   } else {
+      ToolsCmd_UnknownEntityError(argv[0],
+                                  SU_(arg.subcommand, "subcommand"),
+                                  argv[optind]);
+      return EX_USAGE;
+   }
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Script_Help --
+ *
+ *      Prints the help for the script command.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+Script_Help(const char *progName, // IN: The name of the program obtained from argv[0]
+            const char *cmd)      // IN
+{
+   g_print(SU_(help.script,
+               "%s: control the scripts run in response to power operations\n"
+               "Usage: %s %s <power|resume|suspend|shutdown> <subcommand> [args]\n\n"
+               "Subcommands:\n"
+               "   enable: enable the given script and restore its path to the default\n"
+               "   disable: disable the given script\n"
+               "   set <full_path>: set the given script to the given path\n"
+               "   default: print the default path of the given script\n"
+               "   current: print the current path of the given script\n"),
+           cmd, progName, cmd);
+}
+

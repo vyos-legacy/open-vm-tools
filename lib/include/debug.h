@@ -30,10 +30,5 @@
 #   include "vm_basic_types.h"
 
 void Debug(char const *fmt, ...) PRINTF_DECL(1, 2);
-void Debug_Set(Bool enable, const char *prefix);
-Bool Debug_IsEnabled(void);
-void Debug_EnableToFile(const char *file, Bool backup);
-Bool Debug_EnableIfFile(const char *enableFile, const char *toFileFile);
-
 
 #endif /* __DEBUG_H__ */

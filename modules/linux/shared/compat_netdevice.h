@@ -180,88 +180,21 @@ compat_alloc_netdev(int priv_size,
 #endif
 
 /*
- * All compat_* business is good but when we can we should just provide
- * missing implementation to ease upstreaming task.
+ * In 3.1 merge window feature maros were removed from mainline,
+ * so let's add back ones we care about.
  */
-#ifndef HAVE_ALLOC_NETDEV
-#define alloc_netdev(sz, name, setup)  compat_alloc_netdev(sz, name, setup)
-#define alloc_etherdev(sz)             compat_alloc_etherdev(sz)
+#if !defined(HAVE_NET_DEVICE_OPS) && \
+         LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0)
+#   define HAVE_NET_DEVICE_OPS 1
 #endif
 
-#ifndef HAVE_FREE_NETDEV
-#define free_netdev(dev)               kfree(dev)
-#endif
-
-#ifndef HAVE_NETDEV_PRIV
-#define netdev_priv(dev)               ((dev)->priv)
-#endif
-
-#if defined(NETDEV_TX_OK)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 9)
 #   define COMPAT_NETDEV_TX_OK    NETDEV_TX_OK
 #   define COMPAT_NETDEV_TX_BUSY  NETDEV_TX_BUSY
 #else
 #   define COMPAT_NETDEV_TX_OK    0
 #   define COMPAT_NETDEV_TX_BUSY  1
 #endif
-
-#ifndef HAVE_NETIF_QUEUE
-static inline void
-netif_start_queue(struct device *dev)
-{
-   clear_bit(0, &dev->tbusy);
-}
-
-static inline void
-netif_stop_queue(struct device *dev)
-{
-   set_bit(0, &dev->tbusy);
-}
-
-static inline int
-netif_queue_stopped(struct device *dev)
-{
-   return test_bit(0, &dev->tbusy);
-}
-
-static inline void
-netif_wake_queue(struct device *dev)
-{
-   clear_bit(0, &dev->tbusy);
-   mark_bh(NET_BH);
-}
-
-static inline int
-netif_running(struct device *dev)
-{
-   return dev->start == 0;
-}
-
-static inline int
-netif_carrier_ok(struct device *dev)
-{
-   return 1;
-}
-
-static inline void
-netif_carrier_on(struct device *dev)
-{
-}
-
-static inline void
-netif_carrier_off(struct device *dev)
-{
-}
-#endif
-
-/* Keep compat_* defines for now */
-#define compat_netif_start_queue(dev)   netif_start_queue(dev)
-#define compat_netif_stop_queue(dev)    netif_stop_queue(dev)
-#define compat_netif_queue_stopped(dev) netif_queue_stopped(dev)
-#define compat_netif_wake_queue(dev)    netif_wake_queue(dev)
-#define compat_netif_running(dev)       netif_running(dev)
-#define compat_netif_carrier_ok(dev)    netif_carrier_ok(dev)
-#define compat_netif_carrier_on(dev)    netif_carrier_on(dev)
-#define compat_netif_carrier_off(dev)   netif_carrier_off(dev)
 
 /* unregister_netdevice_notifier was not safe prior to 2.6.17 */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 17) && \
@@ -390,6 +323,12 @@ compat_multiqueue_allowed(struct pci_dev *dev)
 #   else
 #      define compat_multiqueue_allowed(dev) (0)
 #   endif
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)
+#   define compat_vlan_get_protocol(skb) vlan_get_protocol(skb)
+#else
+#   define compat_vlan_get_protocol(skb) (skb->protocol)
 #endif
 
 #endif /* __COMPAT_NETDEVICE_H__ */

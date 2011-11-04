@@ -15,9 +15,11 @@
 ### Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ################################################################################
 
-noinst_LTLIBRARIES = libtestDebug.la
+plugindir = @TEST_PLUGIN_INSTALLDIR@
+plugin_LTLIBRARIES = libtestDebug.la
 
 libtestDebug_la_CPPFLAGS =
+libtestDebug_la_CPPFLAGS += @CUNIT_CPPFLAGS@
 libtestDebug_la_CPPFLAGS += @GOBJECT_CPPFLAGS@
 libtestDebug_la_CPPFLAGS += @PLUGIN_CPPFLAGS@
 
@@ -25,10 +27,29 @@ libtestDebug_la_LDFLAGS =
 libtestDebug_la_LDFLAGS += @PLUGIN_LDFLAGS@
 
 libtestDebug_la_LIBADD =
+libtestDebug_la_LIBADD += @CUNIT_LIBS@
 libtestDebug_la_LIBADD += @GOBJECT_LIBS@
 libtestDebug_la_LIBADD += @VMTOOLS_LIBS@
 libtestDebug_la_LIBADD += ../vmrpcdbg/libvmrpcdbg.la
 
 libtestDebug_la_SOURCES =
 libtestDebug_la_SOURCES += testDebug.c
+libtestDebug_la_SOURCES += testData_xdr.c
+
+BUILT_SOURCES =
+BUILT_SOURCES += testData_xdr.c
+BUILT_SOURCES += testData.h
+
+# XXX: see explanation in lib/guestRpc/Makefile.am
+CFLAGS += -Wno-unused
+
+CLEANFILES =
+CLEANFILES += testData_xdr.c
+CLEANFILES += testData.h
+
+testData.h: $(top_srcdir)/tests/testPlugin/testData.x
+	@RPCGEN_WRAPPER@ tests/testPlugin/testData.x $@
+
+testData_xdr.c: testData.h
+	@RPCGEN_WRAPPER@ tests/testPlugin/testData.x $@
 

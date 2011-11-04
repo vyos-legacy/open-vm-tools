@@ -40,10 +40,9 @@
 //#define FAKE_ATOMIC /* defined if true atomic not needed */
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMMON
-#define INCLUDE_ALLOW_VMNIXMOD
 #define INCLUDE_ALLOW_VMKDRIVERS
 #define INCLUDE_ALLOW_VMK_MODULE
 #define INCLUDE_ALLOW_VMKERNEL
@@ -66,35 +65,6 @@ typedef struct  Atomic_uint64 {
    volatile uint64 value;
 } Atomic_uint64 ALIGNED(8);
 
-#ifdef __arm__
-#ifndef NOT_IMPLEMENTED
-#error NOT_IMPLEMENTED undefined
-#endif
-#ifdef __GNUC__
-EXTERN Atomic_uint32 atomicLocked64bit;
-#ifndef FAKE_ATOMIC
-   /*
-    * Definitions for kernel function call which attempts an
-    * atomic exchange, returning 0 only upon success.
-    * The code actually called is put in memory by the kernel,
-    * and is in fact what the kernel uses for this atomic
-    * instruction.  This does not work for Linux versions
-    * before 2.6 or (obviously) for non-Linux implementations.
-    * For other implementations on ARMv6 and up, use
-    * LDREX/SUBS/STREXEQ/LDRNE/ADDS/BNE spin-lock; for pre-ARMv6,
-    * use SWP-based spin-lock.
-    */
-#if !defined(__linux__)
-#define __kernel_cmpxchg(x, y, z) NOT_IMPLEMENTED()
-#else
-   typedef int (__kernel_cmpxchg_t)(uint32 oldVal,
-                                    uint32 newVal,
-                                    volatile uint32 *mem);
-#define __kernel_cmpxchg (*(__kernel_cmpxchg_t *)0xffff0fc0)
-#endif
-#endif // FAKE_ATOMIC
-#endif // __GNUC__
-#endif // __arm__
 
 /*
  * Prototypes for msft atomics.  These are defined & inlined by the
@@ -103,11 +73,11 @@ EXTERN Atomic_uint32 atomicLocked64bit;
  * have to use these.  Unfortunately, we still have to use some inline asm
  * for the 32 bit code since the and/or/xor implementations didn't show up
  * untill xp or 2k3.
- * 
+ *
  * The declarations for the intrinsic functions were taken from ntddk.h
  * in the DDK. The declarations must match otherwise the 64-bit c++
  * compiler will complain about second linkage of the intrinsic functions.
- * We define the intrinsic using the basic types corresponding to the 
+ * We define the intrinsic using the basic types corresponding to the
  * Windows typedefs. This avoids having to include windows header files
  * to get to the windows types.
  */
@@ -151,12 +121,35 @@ __int64  _InterlockedCompareExchange64(__int64 volatile*, __int64, __int64);
 #endif
 #endif /* _MSC_VER */
 
+#ifdef __arm__
+#   if defined(__ARM_ARCH_7__) || defined(__ARM_ARCH_7A__) ||  \
+       defined(__ARM_ARCH_7R__)|| defined(__ARM_ARCH_7M__)
+#      define VM_ARM_V7
+#   else
+#     error Only ARMv7 extends the synchronization primitives ldrex/strex.   \
+            For the lower ARM version, please implement the atomic functions \
+            by kernel APIs.
+#   endif
+#endif
 
-/* Convert a volatile int to Atomic_uint32. */
+/* Data Memory Barrier */
+#ifdef VM_ARM_V7
+#define dmb() __asm__ __volatile__("dmb" : : : "memory")
+#endif
+
+
+/* Convert a volatile uint32 to Atomic_uint32. */
 static INLINE Atomic_uint32 *
 Atomic_VolatileToAtomic(volatile uint32 *var)
 {
    return (Atomic_uint32 *)var;
+}
+
+/* Convert a volatile uint64 to Atomic_uint64. */
+static INLINE Atomic_uint64 *
+Atomic_VolatileToAtomic64(volatile uint64 *var)
+{
+   return (Atomic_uint64 *)var;
 }
 
 /*
@@ -167,7 +160,7 @@ Atomic_VolatileToAtomic(volatile uint32 *var)
  *      Determine whether an lfence intruction is executed after
  *	every locked instruction.
  *
- *	Certain AMD processes have a bug (see bug 107024) that
+ *	Certain AMD processors have a bug (see bug 107024) that
  *	requires an lfence after every locked instruction.
  *
  *	The global variable AtomicUseFence controls whether lfence
@@ -175,7 +168,7 @@ Atomic_VolatileToAtomic(volatile uint32 *var)
  *
  *	Atomic_SetFence sets AtomicUseFence to the given value.
  *
- *	Atomic_Init computes and sets AtomicUseFence.
+ *	Atomic_Init computes and sets AtomicUseFence for x86.
  *	It does not take into account the number of processors.
  *
  *	The rationale for all this complexity is that Atomic_Init
@@ -247,15 +240,8 @@ AtomicEpilogue(void)
                  "lfence\n\t"
                  "2:\n\t"
                  ".pushsection .patchtext\n\t"
-#ifdef VMM32
-                 ".long 1b\n\t"
-                 ".long 0\n\t"
-                 ".long 2b\n\t"
-                 ".long 0\n\t"
-#else
                  ".quad 1b\n\t"
                  ".quad 2b\n\t"
-#endif
                  ".popsection\n\t" ::: "memory");
 #else
    if (UNLIKELY(AtomicUseFence)) {
@@ -371,37 +357,37 @@ static INLINE uint32
 Atomic_ReadWrite(Atomic_uint32 *var, // IN
                  uint32 val)         // IN
 {
-#ifdef FAKE_ATOMIC
-   uint32 retval = var->value;
-   var->value = val;
-   return retval;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   register uint32 retval;
-   register volatile uint32 *mem = &(var->value);
-   /* XXX - ARMv5 only: for ARMv6, use LDREX/STREX/CMP/BEQ spin-lock */
-   __asm__ __volatile__("swp %0, %1, [%2]"
-			: "=&r,&r" (retval)
-			: "r,0" (val), "r,r" (mem) : "memory");
-   return retval;
-#else // __arm__ (assume x86*)
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register volatile uint32 retVal;
+   register volatile uint32 res;
+
+   dmb();
+
+   __asm__ __volatile__(
+   "1: ldrex %[retVal], [%[var]] \n\t"
+      "strex %[res], %[val], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [retVal] "=&r" (retVal), [res] "=&r" (res)
+      : [var] "r" (&var->value), [val] "r" (val)
+      : "memory", "cc"
+   );
+
+   dmb();
+
+   return retVal;
+#else // __VM_ARM_V7 (assume x86*)
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "xchgl %0, %1"
-#   if VM_ASM_PLUS
       : "=r" (val),
 	"+m" (var->value)
       : "0" (val)
-#   else
-      : "=r" (val),
-	"=m" (var->value)
-      : "0" (val),
-	"1" (var->value)
-#   endif
    );
    AtomicEpilogue();
    return val;
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if _MSC_VER >= 1310
    return _InterlockedExchange((long *)&var->value, (long)val);
@@ -415,10 +401,10 @@ Atomic_ReadWrite(Atomic_uint32 *var, // IN
       // eax is the return value, this is documented to work - edward
    }
 #pragma warning(pop)
-#endif
+#endif // _MSC_VER >= 1310
 #else
 #error No compiler defined for Atomic_ReadWrite
-#endif
+#endif // __GNUC__
 }
 #define Atomic_ReadWrite32 Atomic_ReadWrite
 
@@ -444,57 +430,43 @@ Atomic_ReadIfEqualWrite(Atomic_uint32 *var, // IN
                         uint32 oldVal,      // IN
                         uint32 newVal)      // IN
 {
-#ifdef FAKE_ATOMIC
-   uint32 readVal = var->value;
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register uint32 retVal;
+   register uint32 res;
 
-   if (oldVal == readVal) {
-     var->value = newVal;
-   }
-   return oldVal;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   uint32 readVal;
-   register volatile uint32 *mem = &(var->value);
+   dmb();
 
-   // loop until var not oldVal or var successfully replaced when var oldVal
-   do {
-      readVal = Atomic_Read(var);
-      if (oldVal != readVal) {
-         return readVal;
-      }
-   } while (__kernel_cmpxchg(oldVal, newVal, mem) != 0);
-   return oldVal; // success
-#else // __arm__ (assume x86*)
+   __asm__ __volatile__(
+   "1: ldrex %[retVal], [%[var]] \n\t"
+      "mov %[res], #1 \n\t"
+      "teq %[retVal], %[oldVal] \n\t"
+      "strexeq %[res], %[newVal], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [retVal] "=&r" (retVal), [res] "=&r" (res)
+      : [var] "r" (&var->value), [oldVal] "r" (oldVal), [newVal] "r" (newVal)
+      : "memory", "cc"
+   );
+
+   dmb();
+
+   return retVal;
+#else // VM_ARM_V7 (assume x86*)
    uint32 val;
 
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; cmpxchgl %2, %1"
-#   if VM_ASM_PLUS
       : "=a" (val),
 	"+m" (var->value)
       : "r" (newVal),
 	"0" (oldVal)
-#   else
-      : "=a" (val),
-	"=m" (var->value)
-      : "r" (newVal),
-	"0" (oldVal)
-     /*
-      * "1" (var->value): results in inconsistent constraints on gcc 2.7.2.3
-      * when compiling enterprise-2.2.17-14-RH7.0-update.
-      * The constraint has been commented out for now. We may consider doing
-      * this systematically, but we need to be sure it is the right thing to
-      * do. However, it is also possible that the offending use of this asm
-      * function will be removed in the near future in which case we may
-      * decide to reintroduce the constraint instead. hpreg & agesen.
-      */
-#   endif
       : "cc"
    );
    AtomicEpilogue();
    return val;
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if _MSC_VER >= 1310
    return _InterlockedCompareExchange((long *)&var->value,
@@ -586,33 +558,35 @@ static INLINE void
 Atomic_And(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef FAKE_ATOMIC
-   var->value &= val;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   /* same as Atomic_FetchAndAnd without return value */
-   uint32 res;
-   register volatile uint32 *mem = &(var->value);
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register volatile uint32 res;
+   register volatile uint32 tmp;
 
-   do {
-     res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res & val, mem) != 0);
-#else // __arm__
+   dmb();
+
+   __asm__ __volatile__(
+   "1: ldrex %[tmp], [%[var]] \n\t"
+      "and %[tmp], %[val] \n\t"
+      "strex %[res], %[tmp], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [res] "=&r" (res), [tmp] "=&r" (tmp)
+      : [var] "r" (&var->value), [val] "r" (val)
+      : "memory", "cc"
+   );
+
+   dmb();
+#else /* VM_ARM_V7 */
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; andl %1, %0"
-#   if VM_ASM_PLUS
       : "+m" (var->value)
       : "ri" (val)
-#   else
-      : "=m" (var->value)
-      : "ri" (val),
-        "0" (var->value)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if defined(__x86_64__)
    _InterlockedAnd((long *)&var->value, (long)val);
@@ -626,45 +600,6 @@ Atomic_And(Atomic_uint32 *var, // IN
 #endif
 }
 #define Atomic_And32 Atomic_And
-
-
-#if defined(__x86_64__)
-/*
- *-----------------------------------------------------------------------------
- *
- * Atomic_And64 --
- *
- *      Atomic read, bitwise AND with a value, write.
- *
- * Results:
- *      None
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-static INLINE void
-Atomic_And64(Atomic_uint64 *var, // IN
-             uint64 val)         // IN
-{
-#if defined(__GNUC__)
-   /* Checked against the AMD manual and GCC --hpreg */
-   __asm__ __volatile__(
-      "lock; andq %1, %0"
-      : "+m" (var->value)
-      : "ri" (val)
-      : "cc"
-   );
-   AtomicEpilogue();
-#elif defined _MSC_VER
-   _InterlockedAnd64((__int64 *)&var->value, (__int64)val);
-#else
-#error No compiler defined for Atomic_And64
-#endif
-}
-#endif
 
 
 /*
@@ -687,33 +622,35 @@ static INLINE void
 Atomic_Or(Atomic_uint32 *var, // IN
           uint32 val)         // IN
 {
-#ifdef FAKE_ATOMIC
-   var->value |= val;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   /* same as Atomic_FetchAndOr without return value */
-   uint32 res;
-   register volatile uint32 *mem = &(var->value);
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register volatile uint32 res;
+   register volatile uint32 tmp;
 
-   do {
-     res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res | val, mem) != 0);
-#else // __arm__
+   dmb();
+
+   __asm__ __volatile__(
+   "1: ldrex %[tmp], [%[var]] \n\t"
+      "orr %[tmp], %[val] \n\t"
+      "strex %[res], %[tmp], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [res] "=&r" (res), [tmp] "=&r" (tmp)
+      : [var] "r" (&var->value), [val] "r" (val)
+      : "memory", "cc"
+   );
+
+   dmb();
+#else // VM_ARM_V7
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; orl %1, %0"
-#   if VM_ASM_PLUS
       : "+m" (var->value)
       : "ri" (val)
-#   else
-      : "=m" (var->value)
-      : "ri" (val),
-        "0" (var->value)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if defined(__x86_64__)
    _InterlockedOr((long *)&var->value, (long)val);
@@ -727,45 +664,6 @@ Atomic_Or(Atomic_uint32 *var, // IN
 #endif
 }
 #define Atomic_Or32 Atomic_Or
-
-
-#if defined(__x86_64__)
-/*
- *-----------------------------------------------------------------------------
- *
- * Atomic_Or64 --
- *
- *      Atomic read, bitwise OR with a value, write.
- *
- * Results:
- *      None
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-static INLINE void
-Atomic_Or64(Atomic_uint64 *var, // IN
-            uint64 val)         // IN
-{
-#if defined(__GNUC__)
-   /* Checked against the AMD manual and GCC --hpreg */
-   __asm__ __volatile__(
-      "lock; orq %1, %0"
-      : "+m" (var->value)
-      : "ri" (val)
-      : "cc"
-   );
-   AtomicEpilogue();
-#elif defined _MSC_VER
-   _InterlockedOr64((__int64 *)&var->value, (__int64)val);
-#else
-#error No compiler defined for Atomic_Or64
-#endif
-}
-#endif
 
 
 /*
@@ -788,32 +686,35 @@ static INLINE void
 Atomic_Xor(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef FAKE_ATOMIC
-   var->value ^= val;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   uint32 res;
-   register volatile uint32 *mem = &(var->value);
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register volatile uint32 res;
+   register volatile uint32 tmp;
 
-   do {
-     res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res ^ val, mem) != 0);
-#else // __arm__
+   dmb();
+
+   __asm__ __volatile__(
+   "1: ldrex %[tmp], [%[var]] \n\t"
+      "eor %[tmp], %[val] \n\t"
+      "strex %[res], %[tmp], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [res] "=&r" (res), [tmp] "=&r" (tmp)
+      : [var] "r" (&var->value), [val] "r" (val)
+      : "memory", "cc"
+   );
+
+   dmb();
+#else // VM_ARM_V7
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; xorl %1, %0"
-#   if VM_ASM_PLUS
       : "+m" (var->value)
       : "ri" (val)
-#   else
-      : "=m" (var->value)
-      : "ri" (val),
-        "0" (var->value)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if defined(__x86_64__)
    _InterlockedXor((long *)&var->value, (long)val);
@@ -888,33 +789,35 @@ static INLINE void
 Atomic_Add(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef FAKE_ATOMIC
-   var->value += val;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   /* same as Atomic_FetchAndAddUnfenced without return value */
-   uint32 res;
-   register volatile uint32 *mem = &(var->value);
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register volatile uint32 res;
+   register volatile uint32 tmp;
 
-   do {
-     res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res + val, mem) != 0);
-#else // __arm__
+   dmb();
+
+   __asm__ __volatile__(
+   "1: ldrex %[tmp], [%[var]] \n\t"
+      "add %[tmp], %[val] \n\t"
+      "strex %[res], %[tmp], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [res] "=&r" (res), [tmp] "=&r" (tmp)
+      : [var] "r" (&var->value), [val] "r" (val)
+      : "memory", "cc"
+   );
+
+   dmb();
+#else // VM_ARM_V7
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; addl %1, %0"
-#   if VM_ASM_PLUS
       : "+m" (var->value)
       : "ri" (val)
-#   else
-      : "=m" (var->value)
-      : "ri" (val),
-        "0" (var->value)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if _MSC_VER >= 1310
    _InterlockedExchangeAdd((long *)&var->value, (long)val);
@@ -989,32 +892,35 @@ static INLINE void
 Atomic_Sub(Atomic_uint32 *var, // IN
            uint32 val)         // IN
 {
-#ifdef FAKE_ATOMIC
-   var->value -= val;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   uint32 res;
-   register volatile uint32 *mem = &(var->value);
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register volatile uint32 res;
+   register volatile uint32 tmp;
 
-   do {
-     res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res - val, mem) != 0);
-#else // __arm__
+   dmb();
+
+   __asm__ __volatile__(
+      "1: ldrex %[tmp], [%[var]] \n\t"
+      "sub %[tmp], %[val] \n\t"
+      "strex %[res], %[tmp], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [res] "=&r" (res), [tmp] "=&r" (tmp)
+      : [var] "r" (&var->value), [val] "r" (val)
+      : "memory", "cc"
+   );
+
+   dmb();
+#else // VM_ARM_V7
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; subl %1, %0"
-#   if VM_ASM_PLUS
       : "+m" (var->value)
       : "ri" (val)
-#   else
-      : "=m" (var->value)
-      : "ri" (val),
-        "0" (var->value)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if _MSC_VER >= 1310
    _InterlockedExchangeAdd((long *)&var->value, (long)-val);
@@ -1089,24 +995,18 @@ static INLINE void
 Atomic_Inc(Atomic_uint32 *var) // IN
 {
 #ifdef __GNUC__
-#ifdef __arm__
-   /* just use Atomic_Add */
+#ifdef VM_ARM_V7
    Atomic_Add(var, 1);
-#else // __arm__
+#else // VM_ARM_V7
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; incl %0"
-#   if VM_ASM_PLUS
       : "+m" (var->value)
       :
-#   else
-      : "=m" (var->value)
-      : "0" (var->value)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if _MSC_VER >= 1310
    _InterlockedIncrement((long *)&var->value);
@@ -1141,24 +1041,18 @@ static INLINE void
 Atomic_Dec(Atomic_uint32 *var) // IN
 {
 #ifdef __GNUC__
-#ifdef __arm__
-   /* just use Atomic_Sub */
+#ifdef VM_ARM_V7
    Atomic_Sub(var, 1);
-#else // __arm__
+#else // VM_ARM_V7
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
       "lock; decl %0"
-#   if VM_ASM_PLUS
       : "+m" (var->value)
       :
-#   else
-      : "=m" (var->value)
-      : "0" (var->value)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if _MSC_VER >= 1310
    _InterlockedDecrement((long *)&var->value);
@@ -1201,16 +1095,10 @@ Atomic_FetchAndOr(Atomic_uint32 *var, // IN
 {
    uint32 res;
 
-#if defined(__arm__) && !defined(FAKE_ATOMIC)
-   register volatile uint32 *mem = &(var->value);
-   do {
-      res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res | val, mem) != 0);
-#else
    do {
       res = Atomic_Read(var);
    } while (res != Atomic_ReadIfEqualWrite(var, res, res | val));
-#endif
+
    return res;
 }
 
@@ -1237,16 +1125,10 @@ Atomic_FetchAndAnd(Atomic_uint32 *var, // IN
 {
    uint32 res;
 
-#if defined(__arm__) && !defined(FAKE_ATOMIC)
-   register volatile uint32 *mem = &(var->value);
-   do {
-      res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res & val, mem) != 0);
-#else
    do {
       res = Atomic_Read(var);
    } while (res != Atomic_ReadIfEqualWrite(var, res, res & val));
-#endif
+
    return res;
 }
 #define Atomic_ReadOr32 Atomic_FetchAndOr
@@ -1281,7 +1163,37 @@ Atomic_ReadOr64(Atomic_uint64 *var, // IN
 
    return res;
 }
-#endif
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Atomic_ReadAnd64 --
+ *
+ *      Atomic read (returned), bitwise AND with a value, write.
+ *
+ * Results:
+ *      The value of the variable before the operation.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static INLINE uint64
+Atomic_ReadAnd64(Atomic_uint64 *var, // IN
+                 uint64 val)         // IN
+{
+   uint64 res;
+
+   do {
+      res = var->value;
+   } while (res != Atomic_ReadIfEqualWrite64(var, res, res & val));
+
+   return res;
+}
+#endif // __x86_64__
 
 
 /*
@@ -1311,39 +1223,38 @@ static INLINE uint32
 Atomic_FetchAndAddUnfenced(Atomic_uint32 *var, // IN
                            uint32 val)         // IN
 {
-#ifdef FAKE_ATOMIC
-   uint32 res = var->value;
-   var->value = res + val;
-   return res;
-#elif defined(__GNUC__)
-#ifdef __arm__
-   uint32 res;
+#ifdef __GNUC__
+#ifdef VM_ARM_V7
+   register volatile uint32 res;
+   register volatile uint32 retVal;
 
-   register volatile uint32 *mem = &(var->value);
-   do {
-      res = Atomic_Read(var);
-   } while (__kernel_cmpxchg(res, res + val, mem) != 0);
+   dmb();
 
-   return res;
-#else // __arm__
+   __asm__ __volatile__(
+      "1: ldrex %[retVal], [%[var]] \n\t"
+      "add %[val], %[retVal] \n\t"
+      "strex %[res], %[val], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [res] "=&r" (res), [retVal] "=&r" (retVal)
+      : [var] "r" (&var->value), [val] "r" (val)
+      : "memory", "cc"
+   );
+
+   dmb();
+
+   return retVal;
+#else // VM_ARM_V7
    /* Checked against the Intel manual and GCC --walken */
    __asm__ __volatile__(
-#   if VM_ASM_PLUS
       "lock; xaddl %0, %1"
       : "=r" (val),
 	"+m" (var->value)
       : "0" (val)
       : "cc"
-#   else
-      "lock; xaddl %0, (%1)"
-      : "=r" (val)
-      : "r" (&var->value),
-	"0" (val)
-      : "cc", "memory"
-#   endif
    );
    return val;
-#endif // __arm__
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if _MSC_VER >= 1310
    return _InterlockedExchangeAdd((long *)&var->value, (long)val);
@@ -1391,7 +1302,7 @@ static INLINE uint32
 Atomic_FetchAndAdd(Atomic_uint32 *var, // IN
                    uint32 val)         // IN
 {
-#if defined(__GNUC__) && !defined(__arm__)
+#if defined(__GNUC__) && !defined(VM_ARM_V7)
    val = Atomic_FetchAndAddUnfenced(var, val);
    AtomicEpilogue();
    return val;
@@ -1605,9 +1516,6 @@ typedef struct {
  *-----------------------------------------------------------------------------
  */
 
-#ifdef __arm__
-#define Atomic_CMPXCHG64(x, y, z) NOT_IMPLEMENTED()
-#else // __arm__
 #if defined(__GNUC__) && __GNUC__ < 3
 static Bool
 #else
@@ -1617,18 +1525,11 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
                  uint64 const *oldVal, // IN
                  uint64 const *newVal) // IN
 {
-#ifdef FAKE_ATOMIC
-   uint64 readVal = var->value;
-
-   if (*oldVal == readVal) {
-     var->value = *newVal;
-   }
-   return (*oldVal == readVal);
-#elif defined(__GNUC__)
+#ifdef __GNUC__
    Bool equal;
 
    /* Checked against the Intel manual and GCC --walken */
-#ifdef VMM64
+#if defined(__x86_64__)
    uint64 dummy;
    __asm__ __volatile__(
       "lock; cmpxchgq %3, %0" "\n\t"
@@ -1640,9 +1541,9 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
         "2" (*oldVal)
       : "cc"
    );
-#else /* 32-bit version */
+#elif !defined(VM_ARM_V7) /* 32-bit version for non-ARM */
    int dummy1, dummy2;
-#   if defined __PIC__ && !vm_x86_64
+#   if defined __PIC__
    /*
     * Rules for __asm__ statements in __PIC__ code
     * --------------------------------------------
@@ -1710,11 +1611,7 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
    __asm__ __volatile__(
       "lock; cmpxchg8b %0" "\n\t"
       "sete %1"
-#      if VM_ASM_PLUS
       : "+m" (*var),
-#      else
-      : "=m" (*var),
-#      endif
 	"=qm" (equal),
 	"=a" (dummy1),
 	"=d" (dummy2)
@@ -1725,14 +1622,35 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
       : "cc"
    );
 #   endif
-#endif /* 32-bit version */
+#elif defined(VM_ARM_V7)
+   volatile uint64 tmp;
+
+   dmb();
+
+   __asm__ __volatile__(
+      "ldrexd %[tmp], %H[tmp], [%[var]] \n\t"
+      "mov %[equal], #1 \n\t"
+      "teq %[tmp], %[oldVal] \n\t"
+      "teqeq %H[tmp], %H[oldVal] \n\t"
+      "strexdeq  %[equal], %[newVal], %H[newVal], [%[var]]"
+      : [equal] "=&r" (equal), [tmp] "=&r" (tmp)
+      : [var] "r" (&var->value), [oldVal] "r" (*oldVal), [newVal] "r" (*newVal)
+      : "memory", "cc"
+   );
+
+   dmb();
+
+   return !equal;
+#endif
+#ifndef VM_ARM_V7
    AtomicEpilogue();
    return equal;
+#endif // VM_ARM_V7
 #elif defined _MSC_VER
 #if defined(__x86_64__)
-   return *oldVal == _InterlockedCompareExchange64((__int64 *)&var->value,
-                                                   (__int64)*newVal,
-						   (__int64)*oldVal);
+   return (__int64)*oldVal == _InterlockedCompareExchange64((__int64 *)&var->value,
+                                                            (__int64)*newVal,
+                                                            (__int64)*oldVal);
 #else
 #pragma warning(push)
 #pragma warning(disable : 4035)		// disable no-return warning
@@ -1753,9 +1671,8 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
 #endif
 #else
 #error No compiler defined for Atomic_CMPXCHG64
-#endif
+#endif // !GNUC
 }
-#endif // __arm__
 
 
 /*
@@ -1779,62 +1696,47 @@ Atomic_CMPXCHG32(Atomic_uint32 *var,   // IN/OUT
                  uint32 oldVal, // IN
                  uint32 newVal) // IN
 {
-#ifdef FAKE_ATOMIC
-   uint32 readVal = var->value;
-
-   if (oldVal == readVal) {
-     var->value = newVal;
-   }
-   return (oldVal == readVal);
-#elif defined(__GNUC__)
-#ifdef __arm__
-   register volatile uint32 *mem = &(var->value);
-
-   return !__kernel_cmpxchg(oldVal, newVal, mem);
-#else // __arm__
+#ifdef __GNUC__
    Bool equal;
+#ifdef VM_ARM_V7
+   volatile uint64 tmp;
 
+   dmb();
+
+   __asm__ __volatile__(
+      "ldrex %[tmp], [%[var]] \n\t"
+      "mov %[equal], #1 \n\t"
+      "teq %[tmp], %[oldVal] \n\t"
+      "strexeq  %[equal], %[newVal], [%[var]]"
+      : [equal] "=&r" (equal), [tmp] "=&r" (tmp)
+      : [var] "r" (&var->value), [oldVal] "r" (oldVal), [newVal] "r" (newVal)
+      : "memory", "cc"
+   );
+
+   dmb();
+
+   return !equal;
+#else // VM_ARM_V7
    uint32 dummy;
+
    __asm__ __volatile__(
       "lock; cmpxchgl %3, %0" "\n\t"
       "sete %1"
-#   if VM_ASM_PLUS
       : "+m" (*var),
 	"=qm" (equal),
 	"=a" (dummy)
       : "r" (newVal),
         "2" (oldVal)
-#   else
-      : "=m" (*var),
-	"=qm" (equal),
-	"=a" (dummy)
-      : /*"0" (*var), */
-        "r" (newVal),
-        "2" (oldVal)
-#   endif
       : "cc"
    );
    AtomicEpilogue();
    return equal;
-#endif // __arm__
+#endif // VM_ARM_V7
 #else // defined(__GNUC__)
    return (Atomic_ReadIfEqualWrite(var, oldVal, newVal) == oldVal);
-#endif // defined(__GNUC__)
+#endif // !defined(__GNUC__)
 }
 
-
-#ifdef __arm__
-
-#define Atomic_Read64(x)          NOT_IMPLEMENTED()
-#define Atomic_FetchAndAdd64(x,y) NOT_IMPLEMENTED()
-#define Atomic_FetchAndInc64(x)   NOT_IMPLEMENTED()
-#define Atomic_FetchAndDec64(x)   NOT_IMPLEMENTED()
-#define Atomic_Inc64(x)           NOT_IMPLEMENTED()
-#define Atomic_Dec64(x)           NOT_IMPLEMENTED()
-#define Atomic_ReadWrite64(x,y)   NOT_IMPLEMENTED()
-#define Atomic_Write64(x,y)       NOT_IMPLEMENTED()
-
-#else // __arm__
 
 /*
  *-----------------------------------------------------------------------------
@@ -1855,11 +1757,22 @@ Atomic_CMPXCHG32(Atomic_uint32 *var,   // IN/OUT
 static INLINE uint64
 Atomic_Read64(Atomic_uint64 const *var) // IN
 {
-#if defined(FAKE_ATOMIC)
-   return var->value;
-#elif defined(__x86_64__)
-   return var->value;
-#elif defined(__GNUC__) && defined(__i386__) /* GCC on x86 */
+#if defined(__GNUC__) && defined(__x86_64__)
+   uint64 value;
+
+#ifdef VMM
+   ASSERT((uintptr_t)var % 8 == 0);
+#endif
+   /*
+    * Use asm to ensure we emit a single load.
+    */
+   __asm__ __volatile__(
+      "movq %1, %0"
+      : "=r" (value)
+      : "m" (var->value)
+   );
+   return value;
+#elif defined(__GNUC__) && defined(__i386__)
    uint64 value;
    /*
     * Since cmpxchg8b will replace the contents of EDX:EAX with the
@@ -1880,7 +1793,16 @@ Atomic_Read64(Atomic_uint64 const *var) // IN
    );
    AtomicEpilogue();
    return value;
-#elif defined _MSC_VER /* MSC (assume on x86 for now) */
+#elif defined (_MSC_VER) && defined(__x86_64__)
+   /*
+    * Microsoft docs guarantee "Simple reads and writes to properly
+    * aligned 64-bit variables are atomic on 64-bit Windows."
+    * http://msdn.microsoft.com/en-us/library/ms684122%28VS.85%29.aspx
+    *
+    * XXX Verify that value is properly aligned. Bug 61315.
+    */
+   return var->value;
+#elif defined (_MSC_VER) && defined(__i386__)
 #   pragma warning(push)
 #   pragma warning(disable : 4035)		// disable no-return warning
    {
@@ -1891,10 +1813,47 @@ Atomic_Read64(Atomic_uint64 const *var) // IN
       // edx:eax is the return value; this is documented to work. --mann
    }
 #   pragma warning(pop)
-#else
-#   error No compiler defined for Atomic_Read64
+#elif defined(__GNUC__) && defined (VM_ARM_V7)
+   uint64 value;
+
+   __asm__ __volatile__(
+      "ldrexd %[value], %H[value], [%[var]] \n\t"
+      : [value] "=&r" (value)
+      : [var] "r" (&var->value)
+   );
+
+   return value;
 #endif
 }
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Atomic_ReadUnaligned64 --
+ *
+ *      Atomically read a 64 bit integer, possibly misaligned.
+ *      This function can be *very* expensive, costing over 50 kcycles
+ *      on Nehalem.
+ * 
+ *      Note that "var" needs to be writable, even though it will not
+ *      be modified.
+ *
+ * Results:
+ *      The value of the atomic variable.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+#if defined(__x86_64__)
+static INLINE uint64
+Atomic_ReadUnaligned64(Atomic_uint64 const *var)
+{
+   return Atomic_ReadIfEqualWrite64((Atomic_uint64*)var, 0, 0);
+}
+#endif
 
 
 /*
@@ -2129,6 +2088,10 @@ Atomic_Write64(Atomic_uint64 *var, // IN
 {
 #if defined(__x86_64__)
 #if defined(__GNUC__)
+
+#ifdef VMM
+   ASSERT((uintptr_t)var % 8 == 0);
+#endif
    /*
     * There is no move instruction for 64-bit immediate to memory, so unless
     * the immediate value fits in 32-bit (i.e. can be sign-extended), GCC
@@ -2146,6 +2109,8 @@ Atomic_Write64(Atomic_uint64 *var, // IN
     * Microsoft docs guarantee "Simple reads and writes to properly aligned 
     * 64-bit variables are atomic on 64-bit Windows."
     * http://msdn.microsoft.com/en-us/library/ms684122%28VS.85%29.aspx
+    *
+    * XXX Verify that value is properly aligned. Bug 61315.
     */
 
    var->value = val;
@@ -2156,13 +2121,248 @@ Atomic_Write64(Atomic_uint64 *var, // IN
    (void)Atomic_ReadWrite64(var, val);
 #endif
 }
-#endif // __arm__
 
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Atomic_Or64 --
+ *
+ *      Atomic read, bitwise OR with a 64-bit value, write.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static INLINE void
+Atomic_Or64(Atomic_uint64 *var, // IN
+            uint64 val)         // IN
+{
+#if defined(__x86_64__)
+#if defined(__GNUC__)
+   /* Checked against the AMD manual and GCC --hpreg */
+   __asm__ __volatile__(
+      "lock; orq %1, %0"
+      : "+m" (var->value)
+      : "ri" (val)
+      : "cc"
+   );
+   AtomicEpilogue();
+#elif defined _MSC_VER
+   _InterlockedOr64((__int64 *)&var->value, (__int64)val);
+#else
+#error No compiler defined for Atomic_Or64
+#endif
+#else // __x86_64__
+   uint64 oldVal;
+   uint64 newVal;
+   do {
+      oldVal = var->value;
+      newVal = oldVal | val;
+   } while (!Atomic_CMPXCHG64(var, &oldVal, &newVal));
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Atomic_And64 --
+ *
+ *      Atomic read, bitwise AND with a 64-bit value, write.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static INLINE void
+Atomic_And64(Atomic_uint64 *var, // IN
+             uint64 val)         // IN
+{
+#if defined(__x86_64__)
+#if defined(__GNUC__)
+   /* Checked against the AMD manual and GCC --hpreg */
+   __asm__ __volatile__(
+      "lock; andq %1, %0"
+      : "+m" (var->value)
+      : "ri" (val)
+      : "cc"
+   );
+   AtomicEpilogue();
+#elif defined _MSC_VER
+   _InterlockedAnd64((__int64 *)&var->value, (__int64)val);
+#else
+#error No compiler defined for Atomic_And64
+#endif
+#else // __x86_64__
+   uint64 oldVal;
+   uint64 newVal;
+   do {
+      oldVal = var->value;
+      newVal = oldVal & val;
+   } while (!Atomic_CMPXCHG64(var, &oldVal, &newVal));
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Atomic_SetBit64 --
+ *
+ *      Atomic read, set bit N, and write.
+ *      Be careful: if bit is in a register (not in an immediate), then it 
+ *      can specify a bit offset above 63 or even a negative offset.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+static INLINE void
+Atomic_SetBit64(Atomic_uint64 *var, // IN/OUT
+                uint64 bit)         // IN
+{
+#if defined(__x86_64__)
+#if defined(__GNUC__)
+   __asm__ __volatile__(
+      "lock; bts %1, %0"
+      : "+m" (var->value)
+      : "ri" (bit)
+      : "cc"
+   );
+   AtomicEpilogue();
+#elif defined _MSC_VER
+   uint64 oldVal;
+   uint64 newVal;
+   do {
+      oldVal = var->value;
+      newVal = oldVal | (CONST64U(1) << bit);
+   } while (!Atomic_CMPXCHG64(var, &oldVal, &newVal));
+#else
+#error No compiler defined for Atomic_SetBit64
+#endif
+#else // __x86_64__
+   uint64 oldVal;
+   uint64 newVal;
+   do {
+      oldVal = var->value;
+      newVal = oldVal | (CONST64U(1) << bit);
+   } while (!Atomic_CMPXCHG64(var, &oldVal, &newVal));
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Atomic_ClearBit64 --
+ *
+ *      Atomic read, clear bit N, and write.
+ *      Be careful: if bit is in a register (not in an immediate), then it 
+ *      can specify a bit offset above 63 or even a negative offset.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+static INLINE void
+Atomic_ClearBit64(Atomic_uint64 *var, // IN/OUT
+                  uint64 bit)         // IN
+{
+#if defined(__x86_64__)
+#if defined(__GNUC__)
+   __asm__ __volatile__(
+      "lock; btr %1, %0"
+      : "+m" (var->value)
+      : "ri" (bit)
+      : "cc"
+   );
+   AtomicEpilogue();
+#elif defined _MSC_VER
+   uint64 oldVal;
+   uint64 newVal;
+   do {
+      oldVal = var->value;
+      newVal = oldVal & ~(CONST64U(1) << bit);
+   } while (!Atomic_CMPXCHG64(var, &oldVal, &newVal));
+#else
+#error No compiler defined for Atomic_ClearBit64
+#endif
+#else // __x86_64__
+   uint64 oldVal;
+   uint64 newVal;
+   do {
+      oldVal = var->value;
+      newVal = oldVal & ~(CONST64U(1) << bit);
+   } while (!Atomic_CMPXCHG64(var, &oldVal, &newVal));
+#endif
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Atomic_TestBit64 --
+ *
+ *      Read a bit.
+ *      Be careful: if bit is in a register (not in an immediate), then it 
+ *      can specify a bit offset above 63 or even a negative offset.
+ *
+ * Results:
+ *      TRUE if the tested bit was set; else FALSE.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+static INLINE Bool
+Atomic_TestBit64(Atomic_uint64 *var, // IN
+                 uint64 bit)         // IN
+{
+#if defined(__x86_64__)
+#if defined(__GNUC__)
+   Bool out = FALSE;
+   __asm__ __volatile__(
+      "bt %2, %1; setc %0"
+      : "=rm"(out)
+      : "m" (var->value),
+        "ri" (bit)
+      : "cc"
+   );
+   return out;
+#elif defined _MSC_VER
+   return (var->value & (CONST64U(1) << bit)) != 0;
+#else
+#error No compiler defined for Atomic_TestBit64
+#endif
+#else // __x86_64__
+   return (var->value & (CONST64U(1) << bit)) != 0;
+#endif
+}
 
 /*
  * Template code for the Atomic_<name> type and its operators.
  *
- * The cast argument is an intermedia type cast to make some
+ * The cast argument is an intermediate type cast to make some
  * compilers stop complaining about casting uint32 <-> void *,
  * even though we only do it in the 32-bit case so they are always
  * the same size.  So for val of type uint32, instead of

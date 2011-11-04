@@ -83,6 +83,7 @@ extern "C"{
 #ifndef VIX_HIDE_BORA_DEPENDENCIES
 VixError Vix_TranslateSystemError(int systemError);
 VixError Vix_TranslateCryptoError(CryptoError cryptoError);
+VixError Vix_TranslateErrno(int systemError);
 
 #ifdef _WIN32
 VixError Vix_TranslateCOMError(HRESULT comError);
@@ -97,6 +98,12 @@ VixError Vix_TranslateCOMError(HRESULT comError);
  */
 enum {
    VIX_E_OP_NOT_SUPPORTED_ON_NON_VMWARE_VM         = 3038,
+
+   VIX_E_VI_OP_NOT_SUPPORTED_ON_GUEST              = 3048,
+   VIX_E_INVALID_LOGIN_CREDENTIALS                 = 3050,
+
+   /* File Errors */
+   VIX_E_DIRECTORY_NOT_EMPTY                       = 20006,
 
    /* Reg Errors*/
    VIX_E_REG_INCORRECT_VALUE_TYPE                  = 25000
@@ -125,7 +132,7 @@ enum {
    /* VMX properties. */
    VIX_PROPERTY_VMX_VERSION                           = 4400,
    VIX_PROPERTY_VMX_PRODUCT_NAME                      = 4401,
-   VIX_PROPERTY_VMX_VIX_FEATURES                      = 4402,
+   /* DEPRECTATED VIX_PROPERTY_VMX_VIX_FEATURES                      = 4402, */
 
    /* GuestOS and Tools properties. */
    VIX_PROPERTY_GUEST_TOOLS_VERSION                   = 4500,
@@ -148,6 +155,32 @@ enum {
    VIX_PROPERTY_VM_DNS_SERVER                         = 4518,
    VIX_PROPERTY_GUEST_TOOLS_WORD_SIZE                 = 4519,
    VIX_PROPERTY_GUEST_OS_VERSION_SHORT                = 4520,
+
+   VIX_PROPERTY_GUEST_AUTH_SSPI_TOKEN                 = 4531,
+   VIX_PROPERTY_GUEST_AUTH_SSPI_SESSION_ID            = 4532,
+   VIX_PROPERTY_GUEST_AUTH_SESSION_TICKET             = 4533,
+
+   /* VI guest operation status */
+   VIX_PROPERTY_GUEST_START_PROGRAM_ENABLED           = 4540,
+   VIX_PROPERTY_GUEST_LIST_PROCESSES_ENABLED          = 4541,
+   VIX_PROPERTY_GUEST_TERMINATE_PROCESS_ENABLED       = 4542,
+   VIX_PROPERTY_GUEST_READ_ENVIRONMENT_VARIABLE_ENABLED      = 4543,
+
+   VIX_PROPERTY_GUEST_VALIDATE_CREDENTIALS_ENABLED     = 4544,
+   VIX_PROPERTY_GUEST_ACQUIRE_CREDENTIALS_ENABLED      = 4545,
+   VIX_PROPERTY_GUEST_RELEASE_CREDENTIALS_ENABLED      = 4546,
+
+   VIX_PROPERTY_GUEST_MAKE_DIRECTORY_ENABLED           = 4547,
+   VIX_PROPERTY_GUEST_DELETE_FILE_ENABLED              = 4548,
+   VIX_PROPERTY_GUEST_DELETE_DIRECTORY_ENABLED         = 4549,
+   VIX_PROPERTY_GUEST_MOVE_DIRECTORY_ENABLED           = 4550,
+   VIX_PROPERTY_GUEST_MOVE_FILE_ENABLED                = 4551,
+   VIX_PROPERTY_GUEST_CREATE_TEMP_FILE_ENABLED         = 4552,
+   VIX_PROPERTY_GUEST_CREATE_TEMP_DIRECTORY_ENABLED    = 4553,
+   VIX_PROPERTY_GUEST_LIST_FILES_ENABLED               = 4554,
+   VIX_PROPERTY_GUEST_CHANGE_FILE_ATTRIBUTES_ENABLED   = 4555,
+   VIX_PROPERTY_GUEST_INITIATE_FILE_TRANSFER_FROM_GUEST_ENABLED   = 4556,
+   VIX_PROPERTY_GUEST_INITIATE_FILE_TRANSFER_TO_GUEST_ENABLED   = 4557,
 };
 
 
@@ -213,6 +246,33 @@ typedef struct VixPropertyListImpl
 } VixPropertyListImpl;
 
 
+/*
+ * This defines what action Deserialize should take when it encounters
+ * a string that is not UTF-8.
+ */
+typedef enum VixPropertyListBadEncodingAction {
+   /*
+    * Abort the deserialization and return an error. This is the recommended
+    * value since it is the strictest; you don't have to think about how
+    * any clients or library code will handle escaped values.
+    * This should always be used when parsing property lists passing arguments
+    * to RPCs since we should be very strict in terms of actions we take
+    * based on arguments.
+    */
+   VIX_PROPERTY_LIST_BAD_ENCODING_ERROR,
+
+   /*
+    * Escape any non-UTF-8 characters in the string, add the result to the
+    * property list, and continue deserializing. This should only be used
+    * when there are likely to be applications generated non-ASCII values
+    * for the property list in question (e.g., the Tools properties sent by
+    * pre-i18n Tools) and the properties are more informative then
+    * actionable (something like the hostname of a guest, maybe).
+    */
+   VIX_PROPERTY_LIST_BAD_ENCODING_ESCAPE,
+} VixPropertyListBadEncodingAction;
+
+
 void VixPropertyList_Initialize(VixPropertyListImpl *propList);
 
 void VixPropertyList_RemoveAllWithoutHandles(VixPropertyListImpl *propList);
@@ -224,11 +284,14 @@ VixError VixPropertyList_Serialize(VixPropertyListImpl *propListImpl,
 
 VixError VixPropertyList_Deserialize(VixPropertyListImpl *propListImpl,
                                      const char *buffer,
-                                     size_t bufferSize);
+                                     size_t bufferSize,
+                                     VixPropertyListBadEncodingAction action);
  
-VixError VixPropertyList_DeserializeNoClobber(VixPropertyListImpl *propListImpl,
-                                              const char *buffer,
-                                              size_t bufferSize);
+VixError
+VixPropertyList_DeserializeNoClobber(VixPropertyListImpl *propListImpl,
+                                     const char *buffer,
+                                     size_t bufferSize,
+                                     VixPropertyListBadEncodingAction action);
 
 VixError VixPropertyList_GetString(struct VixPropertyListImpl *propList,
                                    int propertyID,
@@ -336,6 +399,9 @@ VixError VixPropertyList_SetPtr(VixPropertyListImpl *propList,
                                 int propertyID,
                                 void *value);
 
+int VixPropertyList_NumItems(VixPropertyListImpl *propList);
+
+Bool VixPropertyList_Empty(VixPropertyListImpl *propList);
 
 
 #endif   // VIX_HIDE_FROM_JAVA
@@ -377,6 +443,41 @@ enum {
 
 
 /*
+ * Options for VixVM_ListFileSystemsInGuest()
+ */
+enum {
+   VIX_FILESYSTEMS_SHOW_ALL     = 0x000,
+};
+
+
+/*
+ * These are the property flags for each file.  This is a superset
+ * of the values defined in the public header.
+ */
+
+enum {
+   //VIX_FILE_ATTRIBUTES_DIRECTORY     = 0x0001,
+   //VIX_FILE_ATTRIBUTES_SYMLINK       = 0x0002,
+   VIX_FILE_ATTRIBUTES_HIDDEN          = 0x0004,
+   VIX_FILE_ATTRIBUTES_READONLY        = 0x0008,
+};
+
+/*
+ * These are the propery flags for SetGuestFileAttributes request.
+ */
+
+enum {
+   VIX_FILE_ATTRIBUTE_SET_ACCESS_DATE        = 0x0001,
+   VIX_FILE_ATTRIBUTE_SET_MODIFY_DATE        = 0x0002,
+   VIX_FILE_ATTRIBUTE_SET_READONLY           = 0x0004,
+   VIX_FILE_ATTRIBUTE_SET_HIDDEN             = 0x0008,
+   VIX_FILE_ATTRIBUTE_SET_UNIX_OWNERID       = 0x0010,
+   VIX_FILE_ATTRIBUTE_SET_UNIX_GROUPID       = 0x0020,
+   VIX_FILE_ATTRIBUTE_SET_UNIX_PERMISSIONS   = 0x0040,
+};
+
+
+/*
  *-----------------------------------------------------------------------------
  *
  * VixDebug --
@@ -388,11 +489,11 @@ enum {
  *
  *      VIX_DEBUG(("test debug message: %s %d\n", stringArg, intArg));
  *       
- *       Output will got to logfile if VIX_DEBUG_PREFERNCE_NAME is non-zero
+ *       Output will go to logfile if VIX_DEBUG_PREFERENCE_NAME is non-zero
  *
  *      VIX_DEBUG_LEVEL(3, ("test debug message: %s %d\n", stringArg, intArg));
  *
- *       Output will got to logfile if VIX_DEBUG_PREFERNCE_NAME is >=
+ *       Output will go to logfile if VIX_DEBUG_PREFERENCE_NAME is >=
  *       the first argument to the macro.
  * 
  *-----------------------------------------------------------------------------

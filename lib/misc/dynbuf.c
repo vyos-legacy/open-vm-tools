@@ -48,7 +48,7 @@
  */
 
 void
-DynBuf_Init(DynBuf *b) // IN
+DynBuf_Init(DynBuf *b)  // OUT:
 {
    ASSERT(b);
 
@@ -75,13 +75,12 @@ DynBuf_Init(DynBuf *b) // IN
  */
 
 void
-DynBuf_Destroy(DynBuf *b) // IN
+DynBuf_Destroy(DynBuf *b)  // IN/OUT:
 {
    ASSERT(b);
 
    free(b->data);
-   b->data = NULL;
-   b->allocated = 0;
+   DynBuf_Init(b);
 }
 
 
@@ -205,24 +204,10 @@ DynBufRealloc(DynBuf *b,            // IN
 
    ASSERT(b);
 
-   if (b->data != NULL && new_allocated != 0) {
-      new_data = realloc(b->data, new_allocated);
-      if (new_data == NULL) {
-         /* Not enough memory */
-         return FALSE;
-      }
-   } else {
-      free(b->data);
-      if (new_allocated != 0) {
-         new_data = malloc(new_allocated);
-         if (new_data == NULL) {
-            /* Not enough memory */
-            return FALSE;
-         }
-      } else {
-         /* We now have no buffer. */
-         new_data = NULL;
-      }
+   new_data = realloc(b->data, new_allocated);
+   if (new_data == NULL && new_allocated) {
+      /* Not enough memory */
+      return FALSE;
    }
 
    b->data = new_data;
@@ -336,6 +321,38 @@ DynBuf_Append(DynBuf *b,        // IN
    b->size = new_size;
 
    return TRUE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * DynBuf_SafeInternalAppend --
+ *
+ *      Append data at the end of a dynamic buffer. Memory allocation failure
+ *      are handled the same way as Util_SafeMalloc, that is to say, with a
+ *      Panic.
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+void
+DynBuf_SafeInternalAppend(DynBuf *b,            // IN
+                          void const *data,     // IN
+                          size_t size,          // IN
+                          char const *file,     // IN
+                          unsigned int lineno)  // IN
+{
+   if (!DynBuf_Append(b, data, size)) {
+      Panic("Unrecoverable memory allocation failure at %s:%u\n",
+            file, lineno);
+   }
 }
 
 

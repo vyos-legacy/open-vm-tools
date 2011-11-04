@@ -71,7 +71,6 @@
 #define CodeSetOld_IsEncodingSupported CodeSet_IsEncodingSupported
 #define CodeSetOld_Validate CodeSet_Validate
 #define CodeSetOld_Init CodeSet_Init
-#define CodeSetOld_DontUseIcu CodeSet_DontUseIcu
 #endif
 
 Bool
@@ -206,6 +205,5 @@ CodeSetOld_Validate(const char *buf,   // IN: the string
 
 Bool
 CodeSetOld_Init(const char *dataDir);  // UNUSED
-
 
 #endif /* __CODESET_OLD_H__ */

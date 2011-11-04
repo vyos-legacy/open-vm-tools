@@ -28,17 +28,36 @@
 
 #include <glib-object.h>
 #include <gmodule.h>
+#include <CUnit/CUnit.h>
+
 #include "testData.h"
 #include "util.h"
-#include "vmtoolsApp.h"
-#include "vm_app.h"
-#include "vmtools.h"
-#include "guestrpc/ghiGetBinaryHandlers.h"
+#include "vmware/tools/log.h"
+#include "vmware/tools/plugin.h"
+#include "vmware/tools/rpcdebug.h"
+#include "vmware/tools/utils.h"
+
+#define TEST_APP_PROVIDER        "TestProvider"
+#define TEST_APP_NAME            "TestProviderApp1"
+#define TEST_APP_ERROR           "TestProviderError"
+#define TEST_APP_DONT_REGISTER   "TestProviderDontRegister"
+
+#define TEST_SIG_INVALID   "TestInvalidSignal"
+
+typedef struct TestApp {
+   const char *name;
+} TestApp;
+
+
+static gboolean gInvalidAppError = FALSE;
+static gboolean gInvalidAppProvider = FALSE;
+static gboolean gInvalidSigError = FALSE;
+static gboolean gValidAppRegistration = FALSE;
 
 
 /**
  * Handles a "test.rpcin.msg1" RPC message. The incoming data should be an
- * XDR-encoded GHIBinaryHandlersIconDetails struct; the struct is written back
+ * XDR-encoded TestPluginData struct; the struct is written back
  * to the RPC channel using RpcChannel_Send (command "test.rpcout.msg1").
  *
  * Also emits a "test-signal", to test custom signal registration.
@@ -48,35 +67,35 @@
  * @return TRUE on success.
  */
 
-static Bool
+static gboolean
 TestPluginRpc1(RpcInData *data)
 {
    ToolsAppCtx *ctx = data->appCtx;
-   GHIBinaryHandlersIconDetails *details = (GHIBinaryHandlersIconDetails *) data->args;
+   TestPluginData *testdata = (TestPluginData *) data->args;
    char *cmd;
    size_t cmdLen;
 
-   g_assert(details->width == 100);
-   g_assert(details->height == 200);
-   g_assert(strcmp(details->identifier, "rpc1test") == 0);
+   CU_ASSERT_STRING_EQUAL(testdata->data, "rpc1test");
+   CU_ASSERT_EQUAL(testdata->f_int, 1357);
+   CU_ASSERT(testdata->f_bool);
 
    g_signal_emit_by_name(ctx->serviceObj, "test-signal");
 
    if (!RpcChannel_BuildXdrCommand("test.rpcout.msg1",
-                                   xdr_GHIBinaryHandlersIconDetails,
-                                   details,
+                                   xdr_TestPluginData,
+                                   testdata,
                                    &cmd,
                                    &cmdLen)) {
-      g_error("Failed to create test.rpcout.msg1 command.\n");
+      vm_error("Failed to create test.rpcout.msg1 command.");
    }
 
    if (!RpcChannel_Send(ctx->rpc, cmd, cmdLen, NULL, NULL)) {
-      g_error("Failed to send 'test.rpcout.msg1' message.\n");
+      vm_error("Failed to send 'test.rpcout.msg1' message.");
    }
 
    vm_free(cmd);
 
-   g_debug("Successfully handled rpc %s\n", data->name);
+   vm_debug("Successfully handled rpc %s", data->name);
    return RPCIN_SETRETVALS(data, "", TRUE);
 }
 
@@ -89,10 +108,10 @@ TestPluginRpc1(RpcInData *data)
  * @return TRUE on success.
  */
 
-static Bool
+static gboolean
 TestPluginRpc2(RpcInData *data)
 {
-   g_debug("%s: %s\n", __FUNCTION__, data->name);
+   vm_debug("%s", data->name);
    return RPCIN_SETRETVALS(data, "", TRUE);
 }
 
@@ -106,14 +125,16 @@ TestPluginRpc2(RpcInData *data)
  * @return TRUE on success.
  */
 
-static Bool
+static gboolean
 TestPluginRpc3(RpcInData *data)
 {
    TestPluginData *ret;
-   g_debug("%s: %s\n", __FUNCTION__, data->name);
+   vm_debug("%s", data->name);
 
    ret = g_malloc(sizeof *ret);
    ret->data = Util_SafeStrdup("Hello World!");
+   ret->f_int = 8642;
+   ret->f_bool = TRUE;
 
    data->result = (char *) ret;
    return TRUE;
@@ -145,7 +166,7 @@ TestPluginCapabilities(gpointer src,
       { TOOLS_CAP_NEW, NULL, GHI_CAP_SHELL_ACTION_BROWSE, 1 }
    };
 
-   g_debug("%s: got capability signal, setting = %d.\n", __FUNCTION__, set);
+   vm_debug("got capability signal, setting = %d.", set);
    return VMTools_WrapArray(caps, sizeof *caps, ARRAYSIZE(caps));
 }
 
@@ -169,55 +190,39 @@ TestPluginReset(gpointer src,
                 ToolsAppCtx *ctx,
                 ToolsPluginData *plugin)
 {
-   g_assert(ctx != NULL);
-   g_debug("%s: reset signal for app %s\n", __FUNCTION__, ctx->name);
+   RPCDEBUG_ASSERT(ctx != NULL, FALSE);
+   vm_debug("reset signal for app %s", ctx->name);
    return TRUE;
 }
 
 
 #if defined(G_PLATFORM_WIN32)
 /**
- * Handles a session state change callback; this is only called on Windows,
- * from both the "vmsvc" instance (handled by SCM notifications) and from
- * "vmusr" with the "fast user switch" plugin.
+ * Handles a service control signal; this is only called on Windows.
  *
- * @param[in]  src      The source object.
- * @param[in]  ctx      The application context.
- * @param[in]  code     Session state change code.
- * @param[in]  id       Session ID.
- * @param[in]  data     Client data.
+ * @param[in] src                    The source object.
+ * @param[in] ctx                    The application context.
+ * @param[in] serviceStatusHandle    Handle of type SERVICE_STATUS_HANDLE.
+ * @param[in] controlCode            Control code.
+ * @param[in] eventType              Unused.
+ * @param[in] eventData              Unused.
+ * @param[in] data                   Unused.
+ *
+ * @retval ERROR_CALL_NOT_IMPLEMENTED
  */
 
-static void
-TestPluginSessionChange(gpointer src,
-                        ToolsAppCtx *ctx,
-                        DWORD code,
-                        DWORD sessionId,
-                        ToolsPluginData *plugin)
+static DWORD
+TestPluginServiceControl(gpointer src,
+                         ToolsAppCtx *ctx,
+                         gpointer serviceStatusHandle,
+                         guint controlCode,
+                         guint eventType,
+                         gpointer eventData,
+                         gpointer data)
 {
-   g_debug("Got session state change signal, code = %u, id = %u\n", code, sessionId);
-}
-
-
-/**
- * Handles the preshutdown callback; this is only called on Windows Vista & up,
- * from the "vmsvc" instance. This is called only "upgrade at powercycle" flag is
- * set in the UI. If the upgrader is launched, the service waits for upgrader
- * to terminate before shutting down.
- *
- * @param[in]  src      The source object.
- * @param[in]  ctx      ToolsAppCtx *: The application context.
- * @param[in]  serviceStatusHandle     A handle of type SERVICE_STATUS_HANDLE
- * @param[in]  data     Client data.
- */
-
-static void
-TestPluginPreShutdownChange(gpointer src,
-                            ToolsAppCtx *ctx,
-                            gpointer serviceStatusHandle,
-                            gpointer data)
-{
-   g_debug("%s: Got preshutdown signal for app %s\n", __FUNCTION__, ctx->name);
+   vm_debug("Got service control signal, code = %u, event = %u",
+            controlCode, eventType);
+   return ERROR_CALL_NOT_IMPLEMENTED;
 }
 #endif
 
@@ -237,7 +242,11 @@ TestPluginShutdown(gpointer src,
                    ToolsAppCtx *ctx,
                    ToolsPluginData *plugin)
 {
-   g_debug("%s: shutdown signal.\n", __FUNCTION__);
+   vm_debug("shutdown signal.");
+   CU_ASSERT(gInvalidSigError);
+   CU_ASSERT(gInvalidAppError);
+   CU_ASSERT(gInvalidAppProvider);
+   CU_ASSERT(gValidAppRegistration);
 }
 
 
@@ -262,7 +271,73 @@ TestPluginSetOption(gpointer src,
                     const gchar *value,
                     ToolsPluginData *plugin)
 {
-   g_debug("%s: set '%s' to '%s'\n", __FUNCTION__, option, value);
+   vm_debug("set '%s' to '%s'", option, value);
+   return TRUE;
+}
+
+
+/**
+ * Prints out the registration data for the test provider.
+ *
+ * @param[in] ctx     Unused.
+ * @param[in] prov    Unused.
+ * @param[in] plugin  Unused.
+ * @param[in] reg     Registration data (should be a string).
+ *
+ * @retval FALSE if registration value is TEST_APP_ERROR.
+ * @retval TRUE otherwise.
+ */
+
+static gboolean
+TestProviderRegisterApp(ToolsAppCtx *ctx,
+                        ToolsAppProvider *prov,
+                        ToolsPluginData *plugin,
+                        gpointer reg)
+{
+   TestApp *app = reg;
+   vm_debug("registration data is '%s'", app->name);
+   gValidAppRegistration |= strcmp(app->name, TEST_APP_NAME) == 0;
+   CU_ASSERT(strcmp(app->name, TEST_APP_DONT_REGISTER) != 0);
+   return (strcmp(app->name, TEST_APP_ERROR) != 0);
+}
+
+
+/**
+ * Registration error callback; make sure it's called for the errors we expect.
+ *
+ * @see plugin.h (for parameter descriptions)
+ *
+ * @retval FALSE for TEST_APP_ERROR.
+ * @retval TRUE otherwise.
+ */
+
+static gboolean
+TestPluginErrorCb(ToolsAppCtx *ctx,
+                  ToolsAppType type,
+                  gpointer data,
+                  ToolsPluginData *plugin)
+{
+   /* Make sure the non-existant signal we tried to register fires an error. */
+   if (type == TOOLS_APP_SIGNALS) {
+      ToolsPluginSignalCb *sig = data;
+      CU_ASSERT(strcmp(sig->signame, TEST_SIG_INVALID) == 0);
+      gInvalidSigError = TRUE;
+   }
+
+   /* Make sure we're notified about the "error" app we tried to register. */
+   if (type == 42) {
+      TestApp *app = data;
+      CU_ASSERT(strcmp(app->name, TEST_APP_ERROR) == 0);
+      gInvalidAppError = TRUE;
+      return FALSE;
+   }
+
+   /* Make sure we're notified about a non-existant app provider. */
+   if (type == 43) {
+      CU_ASSERT(data == NULL);
+      gInvalidAppProvider = TRUE;
+   }
+
    return TRUE;
 }
 
@@ -282,17 +357,21 @@ ToolsOnLoad(ToolsAppCtx *ctx)
    static ToolsPluginData regData = {
       "testPlugin",
       NULL,
+      TestPluginErrorCb,
       NULL
    };
 
    RpcChannelCallback rpcs[] = {
       { "test.rpcin.msg1",
-         TestPluginRpc1, NULL, xdr_GHIBinaryHandlersIconDetails, NULL,
-         sizeof (GHIBinaryHandlersIconDetails) },
+         TestPluginRpc1, NULL, xdr_TestPluginData, NULL,
+         sizeof (TestPluginData) },
       { "test.rpcin.msg2",
          TestPluginRpc2, NULL, NULL, NULL, 0 },
       { "test.rpcin.msg3",
             TestPluginRpc3, NULL, NULL, xdr_TestPluginData, 0 }
+   };
+   ToolsAppProvider provs[] = {
+      { TEST_APP_PROVIDER, 42, sizeof (char *), NULL, TestProviderRegisterApp, NULL, NULL }
    };
    ToolsPluginSignalCb sigs[] = {
       { TOOLS_CORE_SIG_RESET, TestPluginReset, &regData },
@@ -300,14 +379,27 @@ ToolsOnLoad(ToolsAppCtx *ctx)
       { TOOLS_CORE_SIG_CAPABILITIES, TestPluginCapabilities, &regData },
       { TOOLS_CORE_SIG_SET_OPTION, TestPluginSetOption, &regData },
 #if defined(G_PLATFORM_WIN32)
-      { TOOLS_CORE_SIG_SESSION_CHANGE, TestPluginSessionChange, &regData },
-      { TOOLS_CORE_SIG_PRESHUTDOWN, TestPluginPreShutdownChange, &regData },
+      { TOOLS_CORE_SIG_SERVICE_CONTROL, TestPluginServiceControl, &regData },
 #endif
+      { TEST_SIG_INVALID, TestPluginReset, &regData },
+   };
+   TestApp tapp[] = {
+      { TEST_APP_NAME },
+      { TEST_APP_ERROR },
+      { TEST_APP_DONT_REGISTER }
+   };
+   TestApp tnoprov[] = {
+      { "TestAppNoProvider" }
    };
    ToolsAppReg regs[] = {
-      { TOOLS_APP_GUESTRPC, VMTools_WrapArray(rpcs, sizeof *rpcs, ARRAYSIZE(rpcs)) },
-      { TOOLS_APP_SIGNALS, VMTools_WrapArray(sigs, sizeof *sigs, ARRAYSIZE(sigs)) }
+      { TOOLS_APP_GUESTRPC, VMTOOLS_WRAP_ARRAY(rpcs) },
+      { TOOLS_APP_PROVIDER, VMTOOLS_WRAP_ARRAY(provs) },
+      { TOOLS_APP_SIGNALS,  VMTOOLS_WRAP_ARRAY(sigs) },
+      { 42,                 VMTOOLS_WRAP_ARRAY(tapp) },
+      { 43,                 VMTOOLS_WRAP_ARRAY(tnoprov) },
    };
+
+   vm_info("loading test plugin...");
 
    g_signal_new("test-signal",
                 G_OBJECT_TYPE(ctx->serviceObj),
@@ -319,7 +411,7 @@ ToolsOnLoad(ToolsAppCtx *ctx)
                 G_TYPE_NONE,
                 0);
 
-   regData.regs = VMTools_WrapArray(regs, sizeof *regs, ARRAYSIZE(regs));
+   regData.regs = VMTOOLS_WRAP_ARRAY(regs);
    return &regData;
 }
 

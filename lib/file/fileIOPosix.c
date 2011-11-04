@@ -32,11 +32,14 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#if defined __ANDROID__
+#include <asm/unistd.h> // for __NR_SYSCALL_BASE
+#endif
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
 #include <dirent.h>
-#if !defined(N_PLAT_NLM) && defined(linux)
+#if defined(linux)
 /*
  * These headers are needed to get __USE_LARGEFILE, __USE_LARGEFILE64,
  * and SYS__llseek.
@@ -66,7 +69,6 @@
 #include <sys/param.h>
 #include <sys/mount.h>
 #else
-#if !defined(N_PLAT_NLM)
 #include <sys/statfs.h>
 #if !defined(sun)
 #include <mntent.h>
@@ -74,11 +76,11 @@
 #endif
 #endif
 #endif
-#endif
 
 /* Check for non-matching prototypes */
 #include "vmware.h"
 #include "str.h"
+#include "err.h"
 #include "posix.h"
 #include "file.h"
 #include "fileIO.h"
@@ -86,14 +88,47 @@
 #include "config.h"
 #include "util.h"
 #include "iovector.h"
-#include "stats_file.h"
+#include "hostType.h"
 
 #include "unicodeOperations.h"
 #include "memaligned.h"
+#include "userlock.h"
+
+#include "hostinfo.h"
 
 #if defined(__APPLE__)
-#include "hostinfo.h"
-#define XATTR_BACKUP_REENABLED "com.vmware.backupReenabled"
+#include <sys/sysctl.h>
+
+/*
+ * F_NODIRECT was added in Mac OS 10.7.0 "Lion".  We test at runtime for the
+ * right version before using it, but we also need to get the definition.
+ */
+
+#include <sys/fcntl.h>
+
+#ifndef F_NODIRECT
+#define F_NODIRECT 62
+#endif
+
+#endif
+
+/*
+ * fallocate() is only supported since the glibc-2.8 and
+ * linux kernel-2.6.23. Presently the glibc in our toolchain is 2.3.
+ */
+#if defined(__linux__)
+   #if !defined(SYS_fallocate)
+      #if defined(__i386__)
+         #define SYS_fallocate 324
+      #elif __x86_64__
+         #define SYS_fallocate 285
+      #elif __arm__
+         #define SYS_fallocate (__NR_SYSCALL_BASE+352) // newer glibc value
+      #endif
+   #endif
+   #if !defined(FALLOC_FL_KEEP_SIZE)
+      #define FALLOC_FL_KEEP_SIZE 1
+   #endif
 #endif
 
 static const unsigned int FileIO_SeekOrigins[] = {
@@ -119,17 +154,47 @@ typedef struct FilePosixOptions {
    Bool enabled;
    int countThreshold;
    int sizeThreshold;
+   int aioNumThreads;
 } FilePosixOptions;
-
-#if defined(__APPLE__)
-typedef OSStatus CSBackupSetItemExcludedFunction(CFURLRef item,
-                                                 Boolean exclude,
-                                                 Boolean excludeByPath);
-#endif
 
 
 static FilePosixOptions filePosixOptions;
 
+/*
+ * Data structures for FileIOAligned_* functions; only used on
+ * hosted (see fileInt.h for rationale).
+ */
+#if !defined(VMX86_TOOLS) && !defined(VMX86_SERVER)
+#define ALIGNEDPOOL_FREELIST_SIZE 30
+#define ALIGNEDPOOL_BUFSZ         (1024 * 1024)
+#define ALIGNEDPOOL_OLD_AGE       ((VmTimeType)1000 * 1000 * 1000) /* nanoseconds */
+
+typedef struct AlignedPool {
+   MXUserExclLock *lock;
+
+   /*
+    * list: Array of allocated buffers.
+    *        0 .. numBusy-1 : busy buffers (in use by a caller).
+    * numBusy .. numAlloc-1 : allocated but not busy.
+    *    numAlloc .. SIZE-1 : unused.
+    */
+   void           *list[ALIGNEDPOOL_FREELIST_SIZE];
+
+   /*
+    * timestamp: Array of release timestamps.
+    *        0 .. numBusy-1 : unused.
+    * numBusy .. numAlloc-1 : last time we had N buffers outstanding.
+    *    numAlloc .. SIZE-1 : unused.
+    */
+   VmTimeType      timestamp[ALIGNEDPOOL_FREELIST_SIZE];
+
+   /* invariant: 0 <= numBusy <= numAlloc <= ALIGNEDPOOL_FREELIST_SIZE */
+   unsigned        numAlloc;
+   unsigned        numBusy;
+} AlignedPool;
+
+static AlignedPool alignedPool;
+#endif
 
 /*
  *-----------------------------------------------------------------------------
@@ -148,7 +213,7 @@ static FilePosixOptions filePosixOptions;
  */
 
 static FileIOResult
-FileIOErrno2Result(int error) // IN: errno to convert
+FileIOErrno2Result(int error)  // IN: errno to convert
 {
    switch (error) {
    case EEXIST:
@@ -172,6 +237,8 @@ FileIOErrno2Result(int error) // IN: errno to convert
       return FILEIO_WRITE_ERROR_DQUOT;
 #endif
    default:
+      Log("%s: Unexpected errno=%d, %s\n", __FUNCTION__,
+          error, Err_Errno2String(error));
       return FILEIO_ERROR;
    }
 }
@@ -205,14 +272,28 @@ FileIO_OptionalSafeInitialize(void)
 {
    if (!filePosixOptions.initialized) {
       filePosixOptions.enabled =
-         Config_GetBool(TRUE, "filePosix.coalesce.enable");
+                            Config_GetBool(TRUE, "filePosix.coalesce.enable");
+
+      /*
+       * Aligned malloc starts failing to allocate memory during heavy I/O on
+       * Linux. We're not sure why -- maybe we are running out of mmaps?
+       * Turn it off by default for now.
+       */
+
       filePosixOptions.aligned =
-         Config_GetBool(FALSE, "filePosix.coalesce.aligned");
+                           Config_GetBool(FALSE, "filePosix.coalesce.aligned");
+
       filePosixOptions.countThreshold =
-         Config_GetLong(5, "filePosix.coalesce.count");
+                           Config_GetLong(5, "filePosix.coalesce.count");
+
       filePosixOptions.sizeThreshold =
-         Config_GetLong(16*1024, "filePosix.coalesce.size");
+                           Config_GetLong(16*1024, "filePosix.coalesce.size");
+
+      filePosixOptions.aioNumThreads =
+                           Config_GetLong(0, "aiomgr.numThreads");
+
       filePosixOptions.initialized = TRUE;
+      FileIOAligned_PoolInit();
    }
 }
 
@@ -234,7 +315,7 @@ FileIO_OptionalSafeInitialize(void)
  */
 
 void
-FileIO_Invalidate(FileIODescriptor *fd) // OUT
+FileIO_Invalidate(FileIODescriptor *fd)  // OUT:
 {
    ASSERT(fd);
 
@@ -260,7 +341,7 @@ FileIO_Invalidate(FileIODescriptor *fd) // OUT
  */
 
 Bool
-FileIO_IsValid(const FileIODescriptor *fd)      // IN
+FileIO_IsValid(const FileIODescriptor *fd)  // IN:
 {
    ASSERT(fd);
 
@@ -298,17 +379,19 @@ FileIO_CreateFDPosix(int posix,  // IN: UNIX file descriptor
 
    FileIO_Invalidate(&fd);
 
-#if defined(VMX86_STATS)
-   STATS_USER_INIT_MODULE_ONCE();
-   fd.stats = STATS_USER_INIT_INST("Created");
-#endif
-
-   if (flags & O_RDWR) {
+   switch (flags & O_ACCMODE) {
+   case O_RDWR:
       fd.flags |= (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_ACCESS_WRITE);
-   } else if (flags & O_WRONLY) {
+      break;
+   case O_WRONLY:
       fd.flags |= FILEIO_OPEN_ACCESS_WRITE;
-   } else if (flags & O_RDONLY) {
+      break;
+   default:
+      ASSERT(FALSE);
+      /* FALLTHRU */
+   case O_RDONLY:
       fd.flags |= FILEIO_OPEN_ACCESS_READ;
+      break;
    }
 
 #if defined(O_SYNC) // Not available in FreeBSD tools build
@@ -316,8 +399,12 @@ FileIO_CreateFDPosix(int posix,  // IN: UNIX file descriptor
       fd.flags |= FILEIO_OPEN_SYNC;
    }
 #endif
+   if (flags & O_APPEND) {
+      fd.flags |= FILEIO_OPEN_APPEND;
+   }
 
    fd.posix = posix;
+
    return fd;
 }
 
@@ -370,9 +457,9 @@ FileIO_GetVolumeSectorSize(ConstUnicode pathName,  // IN:
  */
 
 static void
-ProxySendResults(int sock_fd,    // IN:
-                 int send_fd,    // IN:
-                 int send_errno) // IN:
+ProxySendResults(int sock_fd,     // IN:
+                 int send_fd,     // IN:
+                 int send_errno)  // IN:
 {
    struct iovec iov;
    struct msghdr msg;
@@ -428,9 +515,9 @@ ProxySendResults(int sock_fd,    // IN:
  */
 
 static void
-ProxyReceiveResults(int sock_fd,     // IN:
-                    int *recv_fd,    // OUT:
-                    int *recv_errno) // OUT:
+ProxyReceiveResults(int sock_fd,      // IN:
+                    int *recv_fd,     // OUT:
+                    int *recv_errno)  // OUT:
 {
    int err;
    struct iovec iov;
@@ -577,6 +664,7 @@ ProxyUse(ConstUnicode pathName,  // IN:
    if ((Posix_Lstat(pathName, &statbuf) == 0) &&
        S_ISLNK(statbuf.st_mode)) {
       *useProxy = TRUE;
+
       return 0;
    }
 
@@ -628,7 +716,7 @@ ProxyUse(ConstUnicode pathName,  // IN:
  *
  *      Open a file. Use a proxy when creating a file or on NFS.
  *
- *      Why a proxy? The MacOS X 10.4.* NFS client interacts with our
+ *      Why a proxy? The Mac OS X 10.4.* NFS client interacts with our
  *      use of settid() and doesn't send the proper credentials on opens.
  *      This leads to files being written without error but containing no
  *      data. The proxy avoids all of this unhappiness.
@@ -660,6 +748,7 @@ PosixFileOpener(ConstUnicode pathName,  // IN:
       err = ProxyUse(pathName, &useProxy);
       if (err != 0) {
          errno = err;
+
          return -1;
       }
    } else {
@@ -679,9 +768,10 @@ PosixFileOpener(ConstUnicode pathName,  // IN:
 /*
  *----------------------------------------------------------------------
  *
- * FileIO_Create --
+ * FileIOCreateRetry --
  *
  *      Open/create a file; specify creation mode
+ *      May perform retries to deal with certain OS conditions
  *
  * Results:
  *      FILEIO_SUCCESS on success: 'file' is set
@@ -696,11 +786,12 @@ PosixFileOpener(ConstUnicode pathName,  // IN:
  */
 
 FileIOResult
-FileIO_Create(FileIODescriptor *file,    // OUT:
-              ConstUnicode pathName,     // IN:
-              int access,                // IN:
-              FileIOOpenAction action,   // IN:
-              int mode)                  // IN: mode_t for creation
+FileIOCreateRetry(FileIODescriptor *file,   // OUT:
+                  ConstUnicode pathName,    // IN:
+                  int access,               // IN:
+                  FileIOOpenAction action,  // IN:
+                  int mode,                 // IN: mode_t for creation
+                  uint32 msecMaxWaitTime)   // IN: Ignored
 {
    uid_t uid = -1;
    int fd = -1;
@@ -712,44 +803,25 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
 
    if (pathName == NULL) {
       errno = EFAULT;
+
       return FILEIO_ERROR;
    }
-
-#if defined(VMX86_STATS)
-   {
-      Unicode tmp;
-      File_SplitName(pathName, NULL, NULL, &tmp);
-      STATS_USER_INIT_MODULE_ONCE();
-      file->stats = STATS_USER_INIT_INST(tmp);
-      Unicode_Free(tmp);
-   }
-#endif
 
    ASSERT(!FileIO_IsValid(file));
    ASSERT(file->lockToken == NULL);
    ASSERT_ON_COMPILE(FILEIO_ERROR_LAST < 16); /* See comment in fileIO.h */
 
 #if defined(__APPLE__)
-   /*
-    * O_EXLOCK, O_SHLOCK behavior tested on Mac OS X Server 10.6, kernel 10.0.0.
-    *
-    * |                      | Block devices      | Regular files
-    * |----------------------|--------------------|----------------
-    * | Locking behavior     | mandatory          | advisory
-    * |                      |                    |
-    * | If O_NONBLOCK absent | open doesn't block | open blocks
-    * |                      | on conflicts       | on conflicts
-    */
    if (access & FILEIO_OPEN_EXCLUSIVE_LOCK_MACOS) {
       flags |= O_EXLOCK;
    }
-#elif !defined(__FreeBSD__) && !defined(sun) && !defined(N_PLAT_NLM)
+#elif !defined(__FreeBSD__) && !defined(sun)
    /*
     * If FILEIO_OPEN_EXCLUSIVE_LOCK or FILEIO_OPEN_MULTIWRITER_LOCK or
     * (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_LOCKED) are passed, and we are
     * on VMFS, then pass in special flags to get exclusive, multiwriter, or
     * cross-host read-only mode.  The first if statement is to avoid calling
-    * File_OnVMFS() unless really necessary.
+    * HostType_OSIsVMK() unless really necessary.
     *
     * If the above conditions are met FILEIO_OPEN_LOCKED, is filtered out --
     * vmfs will be handling the locking, so there is no need to create
@@ -760,8 +832,9 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
        (access & (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_ACCESS_WRITE |
                   FILEIO_OPEN_LOCKED)) ==
        (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_LOCKED)) {
-      if (File_OnVMFS(pathName)) {
+      if (HostType_OSIsVMK()) {
          access &= ~FILEIO_OPEN_LOCKED;
+
          if ((access & FILEIO_OPEN_MULTIWRITER_LOCK) != 0) {
             flags |= O_MULTIWRITER_LOCK;
          } else {
@@ -805,17 +878,35 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
       flags |= O_NONBLOCK;
    }
 
+   if (access & FILEIO_OPEN_APPEND) {
+      flags |= O_APPEND;
+   }
+
+#if defined(O_NOFOLLOW)
+   if (access & FILEIO_OPEN_ACCESS_NOFOLLOW) {
+      flags |= O_NOFOLLOW;
+   }
+#endif
+
+#if defined(linux)
+   if (access & FILEIO_OPEN_SYNC) {
+      flags |= O_SYNC;
+   }
+#endif
+
+#if defined(O_NOFOLLOW)
+   if (access & FILEIO_OPEN_ACCESS_NOFOLLOW) {
+      flags |= O_NOFOLLOW;
+   }
+#endif
+
+   flags |= FileIO_OpenActions[action];
+
    file->flags = access;
 
    if (access & FILEIO_OPEN_PRIVILEGED) {
       uid = Id_BeginSuperUser();
    }
-
-   flags |= 
-#if defined(linux) && !defined(N_PLAT_NLM)
-            ((access & FILEIO_OPEN_SYNC) ? O_SYNC : 0) |
-#endif
-            FileIO_OpenActions[action];
 
    fd = PosixFileOpener(pathName, flags, mode);
 
@@ -839,30 +930,20 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
          ret = FileIOErrno2Result(errno);
          goto error;
       }
-   }
 
-   /*
-    * Fix for Bug 202805:
-    *   Time Machine backs up EVERY file unless explicitly told not to, so this
-    *   option uses the API to exclude the file that was just opened.
-    */
-   if ((access & FILEIO_OPEN_NO_TIME_MACHINE)) {
-      if (!FileIO_SetExcludedFromTimeMachine(pathName, TRUE)) {
-         ret = FILEIO_ERROR;
-         goto error;
+      if (!(access & FILEIO_OPEN_SYNC)) {
+         /*
+          * F_NODIRECT was added in Mac OS 10.7.0 "Lion" which has Darwin
+          * kernel 11.0.0.
+          */
+         if (Hostinfo_OSVersion(0) >= 11) {
+            error = fcntl(fd, F_NODIRECT, 1);
+            if (error == -1) {
+               ret = FileIOErrno2Result(errno);
+               goto error;
+            }
+         }
       }
-   } else {
-      /*
-       * Fix for Bug 248644:
-       *   The issue with Time Machine that was causing hangs has been fixed in
-       *   10.5.2, so if the user is in 10.5.2 and the option isn't set, then
-       *   we want to reset the exclusion of the file.
-       *
-       *   Note that this call ignores errors because there are some files (like
-       *   raw devices) that will fail checking xattrs and Time Machine Exclusion
-       *   status, but we can't detect them at this point.
-       */
-      FileIO_ResetExcludedFromTimeMachine(pathName);
    }
 #endif
 
@@ -871,6 +952,7 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
        * Remove the name from the name space. The file remains laid out on the
        * disk and accessible through the file descriptor until it is closed.
        */
+
       if (Posix_Unlink(pathName) == -1) {
          ret = FileIOErrno2Result(errno);
          goto error;
@@ -878,8 +960,6 @@ FileIO_Create(FileIODescriptor *file,    // OUT:
    }
 
    file->posix = fd;
-
-   FileIO_StatsInit(file);
 
    return FILEIO_SUCCESS;
 
@@ -895,6 +975,36 @@ error:
    errno = error;
 
    return ret;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileIO_Create --
+ *
+ *      Open/create a file; specify creation mode
+ *
+ * Results:
+ *      FILEIO_SUCCESS on success: 'file' is set
+ *      FILEIO_OPEN_ERROR_EXIST if the file already exists
+ *      FILEIO_FILE_NOT_FOUND if the file is not present
+ *      FILEIO_ERROR for other errors
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+FileIOResult
+FileIO_Create(FileIODescriptor *file,   // OUT:
+              ConstUnicode pathName,    // IN:
+              int access,               // IN:
+              FileIOOpenAction action,  // IN:
+              int mode)                 // IN: mode_t for creation
+{
+   return FileIOCreateRetry(file, pathName, access, action, mode, 0);
 }
 
 
@@ -923,7 +1033,8 @@ FileIO_Open(FileIODescriptor *file,   // OUT:
             int access,               // IN:
             FileIOOpenAction action)  // IN:
 {
-   return FileIO_Create(file, pathName, access, action, S_IRUSR | S_IWUSR);
+   return FileIOCreateRetry(file, pathName, access, action,
+                            S_IRUSR | S_IWUSR, 0);
 }
 
 
@@ -946,7 +1057,7 @@ FileIO_Open(FileIODescriptor *file,   // OUT:
  *----------------------------------------------------------------------
  */
 
-#if defined(linux) && !defined(N_PLAT_NLM) && defined(SYS__llseek)
+#if defined(linux) && defined(SYS__llseek)
 /*
  * If the llseek system call exists, use it to provide a version of 64-bit
  * lseek() functionality, for FileIO_Seek() to use if appropriate.
@@ -966,9 +1077,9 @@ _llseek(unsigned int fd,
 #endif
 
 uint64
-FileIO_Seek(const FileIODescriptor *file, // IN
-            int64 distance,               // IN
-            FileIOSeekOrigin origin)      // IN
+FileIO_Seek(const FileIODescriptor *file,  // IN:
+            int64 distance,                // IN:
+            FileIOSeekOrigin origin)       // IN:
 {
    ASSERT(file);
 
@@ -995,12 +1106,13 @@ FileIO_Seek(const FileIODescriptor *file, // IN
     */
 
    loff_t res;
+
    if (_llseek(file->posix, distance >> 32, distance & 0xFFFFFFFF,
                &res, FileIO_SeekOrigins[origin]) == -1) {
       res = -1;
    }
-   return res;
 
+   return res;
 #elif defined(__USE_LARGEFILE64) && !defined(__USE_LARGEFILE)
    /*
     * This is a Linux system with glibc that has lseek64 available, but not a
@@ -1011,7 +1123,6 @@ FileIO_Seek(const FileIODescriptor *file, // IN
     */
 
     return lseek64(file->posix, distance, FileIO_SeekOrigins[origin]);
-
 #else
     /*
      * We're taking this route because either we know lseek() can support
@@ -1023,7 +1134,6 @@ FileIO_Seek(const FileIODescriptor *file, // IN
      */
 
     return lseek(file->posix, distance, FileIO_SeekOrigins[origin]);
-
 #endif
 }
 
@@ -1054,10 +1164,10 @@ FileIO_Seek(const FileIODescriptor *file, // IN
  */
 
 FileIOResult
-FileIO_Write(FileIODescriptor *fd,      // IN
-             const void *bufIn,         // IN
-             size_t requested,          // IN
-             size_t *actual)            // OUT
+FileIO_Write(FileIODescriptor *fd,  // IN:
+             const void *bufIn,     // IN:
+             size_t requested,      // IN:
+             size_t *actual)        // OUT:
 {
    const uint8 *buf = (const uint8 *)bufIn;
    size_t initial_requested;
@@ -1065,20 +1175,12 @@ FileIO_Write(FileIODescriptor *fd,      // IN
 
    ASSERT(fd);
 
-   STAT_INST_INC(fd->stats, NumWrites);
-   STAT_INST_INC_BY(fd->stats, BytesWritten, requested);
-   STATS_ONLY({
-      fd->writeIn++;
-      fd->bytesWritten += requested;
-   })
-
    ASSERT_NOT_IMPLEMENTED(requested < 0x80000000);
 
    initial_requested = requested;
    while (requested > 0) {
       ssize_t res;
 
-      STATS_ONLY(fd->writeDirect++;)
       res = write(fd->posix, buf, requested);
 
       if (res == -1) {
@@ -1125,23 +1227,16 @@ FileIO_Write(FileIODescriptor *fd,      // IN
  */
 
 FileIOResult
-FileIO_Read(FileIODescriptor *fd,       // IN
-            void *bufIn,                // OUT
-            size_t requested,           // IN
-            size_t *actual)             // OUT
+FileIO_Read(FileIODescriptor *fd,  // IN:
+            void *bufIn,           // OUT:
+            size_t requested,      // IN:
+            size_t *actual)        // OUT:
 {
-   uint8 *buf = (uint8 *)bufIn;
+   uint8 *buf = (uint8 *) bufIn;
    size_t initial_requested;
    FileIOResult fret = FILEIO_SUCCESS;
 
    ASSERT(fd);
-
-   STAT_INST_INC(fd->stats, NumReads);
-   STAT_INST_INC_BY(fd->stats, BytesRead, requested);
-   STATS_ONLY({
-      fd->readIn++;
-      fd->bytesRead += requested;
-   })
 
    ASSERT_NOT_IMPLEMENTED(requested < 0x80000000);
 
@@ -1149,7 +1244,6 @@ FileIO_Read(FileIODescriptor *fd,       // IN
    while (requested > 0) {
       ssize_t res;
 
-      STATS_ONLY(fd->readDirect++;)
       res = read(fd->posix, buf, requested);
       if (res == -1) {
          if (errno == EINTR) {
@@ -1158,7 +1252,7 @@ FileIO_Read(FileIODescriptor *fd,       // IN
          }
          fret = FileIOErrno2Result(errno);
          if (FILEIO_ERROR == fret) {
-            Log("read failed, errno=%d, %s\n", errno, strerror(errno));
+            Log("read failed, errno=%d, %s\n", errno, Err_Errno2String(errno));
          }
          break;
       }
@@ -1179,7 +1273,6 @@ FileIO_Read(FileIODescriptor *fd,       // IN
 }
 
 
-#if !defined(N_PLAT_NLM)
 /*
  *----------------------------------------------------------------------
  *
@@ -1197,14 +1290,13 @@ FileIO_Read(FileIODescriptor *fd,       // IN
  */
 
 Bool
-FileIO_Truncate(FileIODescriptor *file, // IN
-                uint64 newLength)       // IN
+FileIO_Truncate(FileIODescriptor *file,  // IN:
+                uint64 newLength)        // IN:
 {
    ASSERT(file);
 
    return ftruncate(file->posix, newLength) == 0;
 }
-#endif /* !defined(N_PLAT_NLM) */
 
 
 /*
@@ -1225,15 +1317,13 @@ FileIO_Truncate(FileIODescriptor *file, // IN
  */
 
 Bool
-FileIO_Close(FileIODescriptor *file) // IN
+FileIO_Close(FileIODescriptor *file)  // IN:
 {
    int err;
 
    ASSERT(file);
 
    err = (close(file->posix) == -1) ? errno : 0;
-
-   FileIO_StatsExit(file);
 
    /* Unlock the file if it was locked */
    FileIO_Unlock(file);
@@ -1248,7 +1338,6 @@ FileIO_Close(FileIODescriptor *file) // IN
 }
 
 
-#if !defined(N_PLAT_NLM)
 /*
  *----------------------------------------------------------------------
  *
@@ -1267,7 +1356,7 @@ FileIO_Close(FileIODescriptor *file) // IN
  */
 
 int
-FileIO_Sync(const FileIODescriptor *file) // IN
+FileIO_Sync(const FileIODescriptor *file)  // IN:
 {
    ASSERT(file);
 
@@ -1299,13 +1388,13 @@ FileIO_Sync(const FileIODescriptor *file) // IN
  */
 
 static Bool
-FileIOCoalesce(struct iovec *inVec,     // IN:  Vector to coalesce from
-               int inCount,             // IN:  count for inVec
-               size_t inTotalSize,      // IN:  totalSize (bytes) in inVec
-               Bool isWrite,            // IN:  coalesce for writing (or reading)
-               Bool forceCoalesce,      // IN:  if TRUE always coalesce
-               int flags,               // IN: fileIO open flags
-               struct iovec *outVec)    // OUT: Coalesced (1-entry) iovec
+FileIOCoalesce(struct iovec *inVec,   // IN:  Vector to coalesce from
+               int inCount,           // IN:  count for inVec
+               size_t inTotalSize,    // IN:  totalSize (bytes) in inVec
+               Bool isWrite,          // IN:  coalesce for writing (or reading)
+               Bool forceCoalesce,    // IN:  if TRUE always coalesce
+               int flags,             // IN: fileIO open flags
+               struct iovec *outVec)  // OUT: Coalesced (1-entry) iovec
 {
    uint8 *cBuf;
 
@@ -1323,6 +1412,7 @@ FileIOCoalesce(struct iovec *inVec,     // IN:  Vector to coalesce from
     * Only coalesce when the number of entries is above our count threshold
     * and the average size of an entry is less than our size threshold
     */
+
    if (!forceCoalesce &&
        (!filePosixOptions.enabled ||
        inCount <= filePosixOptions.countThreshold ||
@@ -1333,8 +1423,9 @@ FileIOCoalesce(struct iovec *inVec,     // IN:  Vector to coalesce from
    // XXX: Wouldn't it be nice if we could log from here!
    //LOG(5, ("FILE: Coalescing %s of %d elements and %d size\n",
    //        isWrite ? "write" : "read", inCount, inTotalSize));
+
    if (filePosixOptions.aligned || flags & FILEIO_OPEN_UNBUFFERED) {
-      cBuf = Aligned_Malloc(sizeof(uint8) * inTotalSize);
+      cBuf = FileIOAligned_Malloc(sizeof(uint8) * inTotalSize);
    } else {
       cBuf = Util_SafeMalloc(sizeof(uint8) * inTotalSize);
    }
@@ -1348,6 +1439,7 @@ FileIOCoalesce(struct iovec *inVec,     // IN:  Vector to coalesce from
 
    outVec->iov_base = cBuf;
    outVec->iov_len = inTotalSize;
+
    return TRUE;
 }
 
@@ -1389,7 +1481,7 @@ FileIODecoalesce(struct iovec *coVec,   // IN: Coalesced (1-entry) vector
    }
 
    if (filePosixOptions.aligned || flags & FILEIO_OPEN_UNBUFFERED) {
-      Aligned_Free(coVec->iov_base);
+      FileIOAligned_Free(coVec->iov_base);
    } else {
       free(coVec->iov_base);
    }
@@ -1420,11 +1512,11 @@ FileIODecoalesce(struct iovec *coVec,   // IN: Coalesced (1-entry) vector
  */
 
 FileIOResult
-FileIO_Readv(FileIODescriptor *fd,      // IN
-             struct iovec *v,           // IN
-             int numEntries,            // IN
-             size_t totalSize,          // IN
-             size_t *actual)            // OUT
+FileIO_Readv(FileIODescriptor *fd,  // IN:
+             struct iovec *v,       // IN:
+             int numEntries,        // IN:
+             size_t totalSize,      // IN:
+             size_t *actual)        // OUT:
 {
    size_t bytesRead = 0, sum = 0;
    FileIOResult fret = FILEIO_ERROR;
@@ -1439,16 +1531,6 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
    didCoalesce = FileIOCoalesce(v, numEntries, totalSize, FALSE,
                                 FALSE, fd->flags, &coV);
 
-   STAT_INST_INC(fd->stats, NumReadvs);
-   STAT_INST_INC_BY(fd->stats, BytesReadv, totalSize);
-   STATS_ONLY({
-      fd->readvIn++;
-      fd->bytesRead += totalSize;
-      if (didCoalesce) {
-         fd->numReadCoalesced++;
-      }
-   })
-
    ASSERT_NOT_IMPLEMENTED(totalSize < 0x80000000);
 
    numVec = didCoalesce ? 1 : numEntries;
@@ -1456,9 +1538,10 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
 
    while (nRetries < maxRetries) {
       ssize_t retval;
+
       ASSERT(numVec > 0);
-      STATS_ONLY(fd->readvDirect++;)
       retval = readv(fd->posix, vPtr, numVec);
+
       if (retval == -1) {
          if (errno == EINTR) {
             NOT_TESTED();
@@ -1476,6 +1559,7 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
          fret = FILEIO_READ_ERROR_EOF;
          break;
       }
+
       /*
        * Ambigous case. Stupid Linux. If the bytesRead matches an
        * exact iovector boundary, we need to retry from the next
@@ -1484,14 +1568,17 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
        * ambiguity handling may need to change.
        * --Ganesh, 08/15/2001.
        */
+
       for (; sum <= bytesRead; vPtr++, numVec--) {
          sum += vPtr->iov_len;
+
          /*
           * In each syscall, we will process atleast one iovec
           * or get an error back. We will therefore retry atmost
           * count times. If multiple iovecs were processed before
           * an error hit, we will retry a lesser number of times.
           */
+
          nRetries++;
       }
       if (sum > bytesRead) {
@@ -1508,6 +1595,7 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
    if (actual) {
       *actual = bytesRead;
    }
+
    return fret;
 }
 
@@ -1536,11 +1624,11 @@ FileIO_Readv(FileIODescriptor *fd,      // IN
  */
 
 FileIOResult
-FileIO_Writev(FileIODescriptor *fd,     // IN
-              struct iovec *v,          // IN
-              int numEntries,           // IN
-              size_t totalSize,         // IN
-              size_t *actual)           // OUT
+FileIO_Writev(FileIODescriptor *fd,  // IN:
+              struct iovec *v,       // IN:
+              int numEntries,        // IN:
+              size_t totalSize,      // IN:
+              size_t *actual)        // OUT:
 {
    size_t bytesWritten = 0, sum = 0;
    FileIOResult fret = FILEIO_ERROR;
@@ -1555,16 +1643,6 @@ FileIO_Writev(FileIODescriptor *fd,     // IN
    didCoalesce = FileIOCoalesce(v, numEntries, totalSize, TRUE,
                                 FALSE, fd->flags, &coV);
 
-   STAT_INST_INC(fd->stats, NumWritevs);
-   STAT_INST_INC_BY(fd->stats, BytesWritev, totalSize);
-   STATS_ONLY({
-      fd->writevIn++;
-      fd->bytesWritten += totalSize;
-      if (didCoalesce) {
-         fd->numWriteCoalesced++;
-      }
-   })
-
    ASSERT_NOT_IMPLEMENTED(totalSize < 0x80000000);
 
    numVec = didCoalesce ? 1 : numEntries;
@@ -1572,9 +1650,10 @@ FileIO_Writev(FileIODescriptor *fd,     // IN
 
    while (nRetries < maxRetries) {
       ssize_t retval;
+
       ASSERT(numVec > 0);
-      STATS_ONLY(fd->writevDirect++;)
       retval = writev(fd->posix, vPtr, numVec);
+
       if (retval == -1) {
          fret = FileIOErrno2Result(errno);
          break;
@@ -1590,10 +1669,12 @@ FileIO_Writev(FileIODescriptor *fd,     // IN
          sum += vPtr->iov_len;
          nRetries++;
       }
+
       /*
        * writev only seems to produce a partial iovec when the disk is
        * out of space.  Just call it an error. --probin
        */
+
       if (sum != bytesWritten) {
          fret = FILEIO_WRITE_ERROR_NOSPC;
          break;
@@ -1607,11 +1688,13 @@ FileIO_Writev(FileIODescriptor *fd,     // IN
    if (actual) {
       *actual = bytesWritten;
    }
+
    return fret;
 }
 
 
-#if defined(GLIBC_VERSION_21) || defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) ||\
+    defined(sun)
 
 /*
  *----------------------------------------------------------------------
@@ -1633,11 +1716,11 @@ FileIO_Writev(FileIODescriptor *fd,     // IN
  */
 
 FileIOResult
-FileIO_Preadv(FileIODescriptor *fd,    // IN: File descriptor
-              struct iovec *entries,   // IN: Vector to read into
-              int numEntries,          // IN: Number of vector entries
-              uint64 offset,           // IN: Offset to start reading
-              size_t totalSize)        // IN: totalSize (bytes) in entries
+FileIO_Preadv(FileIODescriptor *fd,   // IN: File descriptor
+              struct iovec *entries,  // IN: Vector to read into
+              int numEntries,         // IN: Number of vector entries
+              uint64 offset,          // IN: Offset to start reading
+              size_t totalSize)       // IN: totalSize (bytes) in entries
 {
    size_t sum = 0;
    struct iovec *vPtr;
@@ -1658,21 +1741,10 @@ FileIO_Preadv(FileIODescriptor *fd,    // IN: File descriptor
    count = didCoalesce ? 1 : numEntries;
    vPtr = didCoalesce ? &coV : entries;
 
-   STAT_INST_INC(fd->stats, NumPreadvs);
-   STAT_INST_INC_BY(fd->stats, BytesPreadv, totalSize);
-   STATS_ONLY({
-      fd->preadvIn++;
-      fd->bytesRead += totalSize;
-      if (didCoalesce) {
-         fd->numReadCoalesced++;
-      }
-   })
-
    fileOffset = offset;
    while (count > 0) {
       size_t leftToRead = vPtr->iov_len;
-      uint8 *buf = (uint8 *)vPtr->iov_base;
-      STATS_ONLY(fd->preadDirect++;)
+      uint8 *buf = (uint8 *) vPtr->iov_base;
 
       while (leftToRead > 0) {
          ssize_t retval = pread(fd->posix, buf, leftToRead, fileOffset);
@@ -1757,21 +1829,10 @@ FileIO_Pwritev(FileIODescriptor *fd,   // IN: File descriptor
    count = didCoalesce ? 1 : numEntries;
    vPtr = didCoalesce ? &coV : entries;
 
-   STAT_INST_INC(fd->stats, NumPwritevs);
-   STAT_INST_INC_BY(fd->stats, BytesPwritev, totalSize);
-   STATS_ONLY({
-      fd->pwritevIn++;
-      fd->bytesWritten += totalSize;
-      if (didCoalesce) {
-         fd->numWriteCoalesced++;
-      }
-   })
-
    fileOffset = offset;
    while (count > 0) {
       size_t leftToWrite = vPtr->iov_len;
       uint8 *buf = (uint8 *)vPtr->iov_base;
-      STATS_ONLY(fd->pwriteDirect++;)
 
       while (leftToWrite > 0) {
          ssize_t retval = pwrite(fd->posix, buf, leftToWrite, fileOffset);
@@ -1813,34 +1874,8 @@ exit:
 
    return fret;
 }
-#endif /* defined(GLIBC_VERSION_21) || defined(__APPLE__) || defined(__FreeBSD__) */
-#endif /* !defined(N_PLAT_NLM) */
-
-/*
- *----------------------------------------------------------------------
- *
- * FileIO_GetSize --
- *
- *      Get size of file.
- *
- * Results:
- *      Size of file or -1.
- *
- * Side effects:
- *      None
- *
- *----------------------------------------------------------------------
- */
-
-int64
-FileIO_GetSize(const FileIODescriptor *fd)  // IN:
-{
-   struct stat statBuf;
-
-   ASSERT(fd);
-
-   return (fstat(fd->posix, &statBuf) == -1) ? -1 : statBuf.st_size;
-}
+#endif /* defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) ||
+          defined(sun) */
 
 
 /*
@@ -1848,10 +1883,10 @@ FileIO_GetSize(const FileIODescriptor *fd)  // IN:
  *
  * FileIO_GetAllocSize --
  *
- *      Get allocated size of file.
+ *      Get logcial and alloced size of a file.
  *
  * Results:
- *      Size of file or -1.
+ *      FileIOResult.
  *
  * Side effects:
  *      None
@@ -1859,23 +1894,32 @@ FileIO_GetSize(const FileIODescriptor *fd)  // IN:
  *----------------------------------------------------------------------
  */
 
-int64
-FileIO_GetAllocSize(const FileIODescriptor *fd)  // IN
+FileIOResult
+FileIO_GetAllocSize(const FileIODescriptor *fd,     // IN:
+                    uint64 *logicalBytes,           // OUT:
+                    uint64 *allocedBytes)           // OUT:
 {
-   struct stat s;
+   struct stat statBuf;
 
    ASSERT(fd);
 
-#if __linux__ && defined(N_PLAT_NLM)
-   /* Netware doesn't have st_blocks.  Just fall back to GetSize. */ 
-   return FileIO_GetSize(fd);
-#else
-   /*
-    * If you don't like the magic number 512, yell at the people
-    * who wrote sys/stat.h and tell them to add a #define for it.
-    */
-   return (fstat(fd->posix, &s) == -1) ? -1 : s.st_blocks * 512;
-#endif
+   if (fstat(fd->posix, &statBuf) == -1) {
+      return FileIOErrno2Result(errno);
+   }
+
+   if (logicalBytes) {
+      *logicalBytes = statBuf.st_size;
+   }
+
+   if (allocedBytes) {
+     /*
+      * If you don't like the magic number 512, yell at the people
+      * who wrote sys/stat.h and tell them to add a #define for it.
+      */
+      *allocedBytes = statBuf.st_blocks * 512;
+   }
+
+   return FILEIO_SUCCESS;
 }
 
 
@@ -1891,35 +1935,52 @@ FileIO_GetAllocSize(const FileIODescriptor *fd)  // IN
  *      TRUE on success.  Sets errno on failure.
  *
  * Side effects:
- *      None
+ *      None.
  *
  *----------------------------------------------------------------------
  */
 
 Bool
-FileIO_SetAllocSize(const FileIODescriptor *fd,  // IN
-                    uint64 size)                 // IN
+FileIO_SetAllocSize(const FileIODescriptor *fd,  // IN:
+                    uint64 size)                 // IN:
 {
-#ifdef __APPLE__
-   fstore_t prealloc;
+
+#if defined(__APPLE__) || defined(__linux__)
+   FileIOResult fret;
    uint64 curSize;
+   uint64 preallocLen;
+#if defined(__APPLE__)
+   fstore_t prealloc;
+#endif
 
-   curSize = FileIO_GetAllocSize(fd);
-
-   if (curSize > size) {
-      errno = EINVAL;
+   fret = FileIO_GetAllocSize(fd, NULL, &curSize);
+   if (!FileIO_IsSuccess(fret)) {
       return FALSE;
    }
 
+   if (curSize > size) {
+      errno = EINVAL;
+
+      return FALSE;
+   }
+   preallocLen = size - curSize;
+
+#if defined(__APPLE__)
    prealloc.fst_flags = 0;
    prealloc.fst_posmode = F_PEOFPOSMODE;
    prealloc.fst_offset = 0;
-   prealloc.fst_length = size - curSize;
+   prealloc.fst_length = preallocLen;
    prealloc.fst_bytesalloc = 0;
 
    return fcntl(fd->posix, F_PREALLOCATE, &prealloc) != -1;
+#elif __linux__
+   return syscall(SYS_fallocate, fd->posix, FALLOC_FL_KEEP_SIZE,
+                  curSize, preallocLen) == 0;
+#endif
+
 #else
-   errno = EINVAL;
+   errno = ENOSYS;
+
    return FALSE;
 #endif
 }
@@ -1928,12 +1989,12 @@ FileIO_SetAllocSize(const FileIODescriptor *fd,  // IN
 /*
  *----------------------------------------------------------------------
  *
- * FileIO_GetSizeByPath --
+ * FileIO_GetAllocSizeByPath --
  *
- *      Get size of a file specified by path. 
+ *      Get the logcial and alloced size of a file specified by path.
  *
  * Results:
- *      Size of file or -1.
+ *      FileIOResult.
  *
  * Side effects:
  *      errno is set on error
@@ -1941,15 +2002,35 @@ FileIO_SetAllocSize(const FileIODescriptor *fd,  // IN
  *----------------------------------------------------------------------
  */
 
-int64
-FileIO_GetSizeByPath(ConstUnicode pathName)  // IN:
+FileIOResult
+FileIO_GetAllocSizeByPath(ConstUnicode pathName,    // IN:
+                          uint64 *logicalBytes,     // OUT:
+                          uint64 *allocedBytes)     // OUT:
 {
-   int err;
-   struct stat statbuf;
+   struct stat statBuf;
 
-   err = Posix_Stat(pathName, &statbuf);
+   if (Posix_Stat(pathName, &statBuf) == -1) {
+      return FileIOErrno2Result(errno);
+   }
 
-   return (err == 0) ? statbuf.st_size : -1;
+   if (logicalBytes) {
+      *logicalBytes = statBuf.st_size;
+   }
+
+   if (allocedBytes) {
+#if __linux__ && defined(N_PLAT_NLM)
+      /* Netware doesn't have st_blocks.  Just fall back to GetSize. */
+      *allocedBytes = statBuf.st_size;
+#else
+     /*
+      * If you don't like the magic number 512, yell at the people
+      * who wrote sys/stat.h and tell them to add a #define for it.
+      */
+      *allocedBytes = statBuf.st_blocks * 512;
+#endif
+   }
+
+   return FILEIO_SUCCESS;
 }
 
 
@@ -1972,13 +2053,14 @@ FileIO_GetSizeByPath(ConstUnicode pathName)  // IN:
  */
 
 FileIOResult
-FileIO_Access(ConstUnicode pathName,  // IN: Path name to be tested. May be NULL.
+FileIO_Access(ConstUnicode pathName,  // IN: Path name. May be NULL.
               int accessMode)         // IN: Access modes to be asserted
 {
    int mode = 0;
 
    if (pathName == NULL) {
       errno = EFAULT;
+
       return FILEIO_ERROR;
    }
 
@@ -2016,7 +2098,7 @@ FileIO_Access(ConstUnicode pathName,  // IN: Path name to be tested. May be NULL
  */
 
 uint32
-FileIO_GetFlags(FileIODescriptor *fd)   // IN
+FileIO_GetFlags(FileIODescriptor *fd)  // IN:
 {
    ASSERT(fd);
    ASSERT(FileIO_IsValid(fd));
@@ -2045,10 +2127,7 @@ Bool
 FileIO_SupportsFileSize(const FileIODescriptor *fd,  // IN:
                         uint64 requestedSize)        // IN:
 {
-#if defined(N_PLAT_NLM)
-   /* API we use on NetWare cannot go over 2GB - 1 although filesystem could. */
-   return requestedSize <= 0x7FFFFFFF;
-#elif defined(linux)
+#if defined(linux)
    /*
     * Linux makes test on seek(), so we can do simple non-intrusive test.
     * Verified to work on 2.2.x, 2.4.x and 2.6.x, with ext2, ext3, smbfs, 
@@ -2069,12 +2148,14 @@ FileIO_SupportsFileSize(const FileIODescriptor *fd,  // IN:
       newPos = FileIO_Seek(fd, oldPos, FILEIO_SEEK_BEGIN);
       ASSERT_NOT_IMPLEMENTED(oldPos == newPos);
    }
+
    return supported;
 #elif defined(__APPLE__)
    struct statfs buf;
 
    if (fstatfs(fd->posix, &buf) == -1) {
-      Log(LGPFX" %s fstatfs failure: %s\n", __FUNCTION__, strerror(errno));
+      Log(LGPFX" %s fstatfs failure: %s\n", __FUNCTION__,
+          Err_Errno2String(errno));
       /* Be optimistic despite failure */
       return TRUE;
    }
@@ -2112,7 +2193,7 @@ FileIO_SupportsFileSize(const FileIODescriptor *fd,  // IN:
  */
 
 int64
-FileIO_GetModTime(const FileIODescriptor *fd)
+FileIO_GetModTime(const FileIODescriptor *fd)  // IN:
 {
    struct stat statbuf;
 
@@ -2150,6 +2231,7 @@ FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
 
    if (pathName == NULL) {
       errno = EFAULT;
+
       return -1;
    }
 
@@ -2190,14 +2272,11 @@ FileIO_PrivilegedPosixOpen(ConstUnicode pathName,  // IN:
  *      Return a FILE * stream equivalent to the given FileIODescriptor.
  *      This is the logical equivalent of Posix dup() then fdopen().
  *
- *      Since the passed descriptor and returned FILE * represent the same
- *      underlying file, and their cursor is shared, you should avoid
- *      interleaving uses to both.
+ *      Caller should fclose the returned descriptor when finished.
  *
  * Results:
- *      A FILE * representing the same underlying file as the passed descriptor
- *      NULL if there was an error.
- *      Caller should fclose the returned descriptor when finished.
+ *      !NULL  A FILE * associated with the file associated with the fd
+ *      NULL   Failure
  *
  * Side effects:
  *      New fd allocated.
@@ -2209,20 +2288,20 @@ FILE *
 FileIO_DescriptorToStream(FileIODescriptor *fdesc,  // IN:
                           Bool textMode)            // IN: unused
 {
-   int dupFd;
+   int dupFD;
    const char *mode;
    int tmpFlags;
    FILE *stream;
+
+   dupFD = dup(fdesc->posix);
+   if (dupFD == -1) {
+      return NULL;
+   }
 
    /* The file you pass us should be valid and opened for *something* */
    ASSERT(FileIO_IsValid(fdesc));
    ASSERT((fdesc->flags & (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_ACCESS_WRITE)) != 0);
    tmpFlags = fdesc->flags & (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_ACCESS_WRITE);
-
-   dupFd = dup(fdesc->posix);
-   if (dupFd == -1) {
-      return NULL;
-   }
 
    if (tmpFlags == (FILEIO_OPEN_ACCESS_READ | FILEIO_OPEN_ACCESS_WRITE)) {
       mode = "r+";
@@ -2232,10 +2311,10 @@ FileIO_DescriptorToStream(FileIODescriptor *fdesc,  // IN:
       mode = "r";
    }
 
-   stream = fdopen(dupFd, mode);
+   stream = fdopen(dupFD, mode);
 
    if (stream == NULL) {
-      close(dupFd);
+      close(dupFD);
    }
 
    return stream;
@@ -2243,158 +2322,402 @@ FileIO_DescriptorToStream(FileIODescriptor *fdesc,  // IN:
 
 
 #if defined(__APPLE__)
-
 /*
- *-----------------------------------------------------------------------------
+ *----------------------------------------------------------------------
  *
- * FileIO_ResetExcludedFromTimeMachine --
+ * HostSupportsPrealloc --
  *
- *      Request that the given path have its time machine exclusion reset
- *      (turned off). We use a special xattr on the file to mark that we have
- *      done this so that future calls won't clear the file if the user has
- *      explicitly marked it themselves.
+ *      Returns TRUE if the host OS is new enough to support F_PREALLOCATE
+ *      without data loss bugs.  On OSX, this has been verified fixed
+ *      on 10.6 build with kern.osrelease 10.0.0d6.
  *
  * Results:
- *      A boolean reflecting whether or not reseting the file succeeded.
+ *      TRUE if the current host OS is new enough.
+ *      FALSE if it is not or we can't tell because of an error.
  *
  * Side effects:
- *      Adds a "backup re-enabled" xattr to the file if wasn't already present
- *      and removing the Time Machine exclusion was successful.
+ *      None.
  *
- *-----------------------------------------------------------------------------
+ *----------------------------------------------------------------------
  */
 
-Bool
-FileIO_ResetExcludedFromTimeMachine(char const *pathName) // IN
+static Bool
+HostSupportsPrealloc(void)
 {
-   bool result = TRUE;
-   char xattr;
-   ssize_t gXattrResult = getxattr(pathName, XATTR_BACKUP_REENABLED,
-                                   &xattr, sizeof(xattr), 0, 0);
-   int sXattrResult;
+   static Atomic_uint32 supported = { 0 };
+   enum { PREALLOC_UNKNOWN = 0, PREALLOC_YES, PREALLOC_NO } val;
+   char curRel[32];
+   char type;
+   unsigned static const int req[] = { 10, 0, 0, 6 };
+   unsigned int cur[4], i;
+   int num;
+   size_t len = sizeof(curRel);
+   Bool ret = FALSE;
 
-   if (gXattrResult != -1) {
-      // We have already seen this file, don't touch it again.
+   val = Atomic_Read(&supported);
+   if (val != PREALLOC_UNKNOWN) {
+      return val == PREALLOC_YES;
+   }
+
+   if (sysctlbyname("kern.osrelease", (void *) &curRel, &len, NULL, 0) == -1) {
       goto exit;
    }
-   if (errno != ENOATTR) {
-      LOG_ONCE((LGPFX" %s Couldn't get xattr on path [%s]: %s.\n",
-                __func__, pathName, strerror(errno)));
-      result = FALSE;
+
+   curRel[31] = '\0';
+   Log("Current OS Release is %s\n", curRel);
+
+   /*
+    * Apple's osversion is in the format X.Y.Z which maps to the public
+    * OSX version 10.X-4.Y, and Z is incremented for each publicly
+    * released build.  The Z part is of the form A<type>B, where a and
+    * B are version numbers and <type> is either d (devel), a (alpha),
+    * b (beta), rc, or fc.  If the <type>B is missing, then its a GA build.
+    *
+    * Since we're checking for 10.0.0d6, we can just say anything without
+    * a type or with a type other than d is higher.  For d, we compare
+    * the last number.
+    */
+
+   num = sscanf(curRel, "%u.%u.%u%c%u", &cur[0], &cur[1], &cur[2], &type,
+                &cur[3]);
+
+   if (num < 3) {
       goto exit;
    }
-   result = FileIO_SetExcludedFromTimeMachine(pathName, FALSE);
-   if (!result) {
+
+   for (i = 0; i < 3; i++) {
+      if (req[i] > cur[i]) {
+         goto exit;
+      } else if (req[i] < cur[i]) {
+         ret = TRUE;
+         goto exit; 
+      }
+   }
+   if (num == 5 && type == 'd') {
+      ret = req[3] <= cur[3];
       goto exit;
    }
-   xattr = '1';
-   sXattrResult = setxattr(pathName, XATTR_BACKUP_REENABLED,
-                           &xattr, sizeof(xattr), 0, 0);
-   if (sXattrResult == -1) {
-      LOG_ONCE((LGPFX" %s Couldn't set xattr on path [%s]: %s.\n",
-                __func__, pathName, strerror(errno)));
-      result = FALSE;
-      goto exit;
-   }
+
+   /*
+    * If we get a type with no letter (num == 4), thats odd.
+    * Consider it mal-formatted and fail.
+    */
+
+   ret = num != 4;
 
 exit:
-      return result;
+   if (!ret && filePosixOptions.initialized && 
+       filePosixOptions.aioNumThreads == 1) {
+      ret = TRUE;
+   }
+
+   Atomic_Write(&supported, ret ? PREALLOC_YES : PREALLOC_NO);
+
+   return ret;
 }
 
+#else
 
 /*
- *-----------------------------------------------------------------------------
+ *----------------------------------------------------------------------
  *
- * FileIO_SetExcludedFromTimeMachine --
+ * HostSupportsPrealloc --
  *
- *      Request that the given path be excluded from Backup processes (namely
- *      Time Machine).
+ *      fallocate() is supported for ext4 and xfs since 2.6.23 kernels
  *
  * Results:
- *      A boolean reflecting whether or not excluding the file succeeded.
+ *      TRUE if the current host is linux and kernel is >= 2.6.23.
+ *      FALSE if it is not .
  *
  * Side effects:
- *      None
+ *      None.
  *
- *-----------------------------------------------------------------------------
+ *----------------------------------------------------------------------
  */
 
-Bool
-FileIO_SetExcludedFromTimeMachine(char const *pathName, // IN
-                                  Bool isExcluded)      // IN
+static Bool
+HostSupportsPrealloc(void)
 {
-   Bool result = TRUE;
-   CSBackupSetItemExcludedFunction *backupFunc;
-   const char *symbolName = "CSBackupSetItemExcluded";
-   const char *libPath = "/System/Library/Frameworks/CoreServices.framework/"
-      "Versions/Current/Frameworks/CarbonCore.framework/CarbonCore";
-   OSStatus ret = noErr;
-   CFURLRef item = NULL;
-   void *image = NULL;
-
-   if (Config_GetBool(FALSE, "fileMacos.timemachine.enable")) {
-      goto exit;
-   }
-
-   image = dlopen(libPath, RTLD_LAZY|RTLD_GLOBAL);
-
-   if (!image) {
-      LOG_ONCE((LGPFX" %s Couldn't dlopen [%s]: %s.\n",
-               __func__, libPath, strerror(errno)));
-      goto exit;
-   }
-
-   backupFunc = (CSBackupSetItemExcludedFunction *)dlsym(image,
-                                                         symbolName);
-
-   if (!backupFunc) {
-      LOG_ONCE((LGPFX" %s Couldn't dlsym [%s]: %s.\n",
-               __func__, symbolName, strerror(errno)));
-      goto exit;
-   }
-
-   item = CFURLCreateFromFileSystemRepresentation(NULL,
-                                                  pathName,
-                                                  strlen((const char *)pathName),
-                                                  FALSE);
-
-   if (!item) {
-      Warning("%s: Error creating URL\n", __func__);
-      result = FALSE;
-      goto exit;
-   }
-
-   ret = (*backupFunc)(item, isExcluded, FALSE);
-
-   if (ret != noErr) {
-      /*
-       * TODO: In testing, this only actually fails on NFS-mounted
-       * volumes. (ret == noPerm).  Perhaps we should enumerate the errors
-       * that we want to treat as soft errors versus hard errors?
-       *
-       * We could call CSBackupIsItemExcluded() to make sure this file isn't
-       * participating in backup. This needs to be tested to see if it only
-       * checks the file system extensible meta-data or if it also checks the
-       * policies of the backup daemon.
-       *
-       * Ideally, we would like to log once for every file that we fail to
-       * mark as excluded. Simply logging produces way too many log satements
-       * and logging once would only note when this fails on the first file.
-       */
-      goto exit;
-   }
-
-exit:
-   if (item) {
-      CFRelease(item);
-   }
-   if (image) {
-      dlclose(image);
-   }
-
-   return result;
+#if  (defined(__linux__ ) && !defined(VMX86_SERVER))
+    if (Hostinfo_OSVersion(0) >=2 && Hostinfo_OSVersion(1) >=6 &&
+        Hostinfo_OSVersion(2) >=23) {
+       return TRUE;
+    }
+#endif
+    return FALSE;
 }
 
 #endif
 
 
+/*
+ *----------------------------------------------------------------------------
+ *
+ * FileIO_SupportsPrealloc --
+ *
+ *      Checks if the HostOS/filesystem supports preallocation.
+ *
+ * Results:
+ *      TRUE if supported by the Host OS/filesystem.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+Bool
+FileIO_SupportsPrealloc(const char *pathName,  // IN:
+                        Bool fsCheck)          // IN:
+{
+   Bool ret = TRUE;
+
+   if (!HostSupportsPrealloc()) {
+      return FALSE;
+   }
+
+   if (!fsCheck) {
+      return ret;
+   }
+
+#if (defined( __linux__) && !defined(VMX86_SERVER))
+   {
+      struct statfs statBuf;
+      Unicode fullPath;
+
+      ret = FALSE;
+      if (!pathName) {
+         return ret;
+      }
+
+      fullPath = File_FullPath(pathName);
+      if (!fullPath) {
+         return ret;
+      }
+
+      if (Posix_Statfs(fullPath, &statBuf) == 0 &&
+         statBuf.f_type == EXT4_SUPER_MAGIC) {
+         ret = TRUE;
+      }
+      Unicode_Free(fullPath);
+   }
+#endif
+
+   return ret;
+}
+
+
+/*
+ * The FileIOAligned_* functions are only used on
+ * hosted (see fileInt.h for rationale).
+ */
+#if !defined(VMX86_TOOLS) && !defined(VMX86_SERVER)
+
+/*
+ *---------------------------------------------------------------------------
+ *
+ * FileIOAligned_PoolInit --
+ *
+ *      Initialize alignedPool.  Must be called before FileIOAligned_PoolMalloc.
+ *      This is not thread-safe and must be protected from multiple entry.
+ *
+ * Result:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *---------------------------------------------------------------------------
+ */
+
+void
+FileIOAligned_PoolInit(void)
+{
+   ASSERT(!alignedPool.lock);
+   alignedPool.lock = MXUser_CreateExclLock("alignedPoolLock", RANK_LEAF);
+}
+
+
+/*
+ *---------------------------------------------------------------------------
+ *
+ * FileIOAligned_PoolExit --
+ *
+ *      Tear down alignedPool.  Afterwards, PoolInit can be called again if
+ *      desired.
+ *
+ * Result:
+ *      None.
+ *
+ * Side effects:
+ *      None.
+ *
+ *---------------------------------------------------------------------------
+ */
+
+void
+FileIOAligned_PoolExit(void)
+{
+   if (!alignedPool.lock) {
+      LOG_ONCE(("%s called without FileIOAligned_Pool lock\n", __FUNCTION__));
+      return;
+   }
+
+   MXUser_AcquireExclLock(alignedPool.lock);
+
+   if (alignedPool.numBusy > 0) {
+      LOG_ONCE(("%s: %d busy buffers!  Proceeding with trepidation.\n",
+		__FUNCTION__, alignedPool.numBusy));
+   }
+   while (alignedPool.numAlloc > 0) {
+      alignedPool.numAlloc--;
+      Aligned_Free(alignedPool.list[alignedPool.numAlloc]);
+   }
+
+   MXUser_ReleaseExclLock(alignedPool.lock);
+   MXUser_DestroyExclLock(alignedPool.lock);
+
+   memset(&alignedPool, 0, sizeof alignedPool);
+}
+
+
+/*
+ *---------------------------------------------------------------------------
+ *
+ * FileIOAligned_PoolMalloc --
+ *
+ *      Alloc a chunk of memory aligned on a page boundary using a memory
+ *      pool.  Result needs to be freed with FileIOAligned_PoolFree.  Returns
+ *      NULL if the pool is full or the requested size cannot be satisfied from
+ *      the pool.
+ *
+ * Result:
+ *      A pointer.  NULL if requested size is too large, or on out of memory
+ *      condition.
+ *
+ * Side effects:
+ *      None.
+ *
+ *---------------------------------------------------------------------------
+ */
+
+void *
+FileIOAligned_PoolMalloc(size_t size)  // IN:
+{
+   void *buf = NULL;
+
+   if (!alignedPool.lock) {
+      LOG_ONCE(("%s called without FileIOAligned_Pool lock\n", __FUNCTION__));
+      return NULL;
+   }
+
+   if (size > ALIGNEDPOOL_BUFSZ) {
+      return NULL;
+   }
+
+   MXUser_AcquireExclLock(alignedPool.lock);
+
+   ASSERT(alignedPool.numBusy <= ARRAYSIZE(alignedPool.list));
+   ASSERT(alignedPool.numAlloc <= ARRAYSIZE(alignedPool.list));
+   ASSERT(alignedPool.numBusy <= alignedPool.numAlloc);
+
+   if (alignedPool.numBusy == ARRAYSIZE(alignedPool.list)) {
+      goto done;
+   }
+   if (alignedPool.numBusy == alignedPool.numAlloc) {
+      buf = Aligned_UnsafeMalloc(ALIGNEDPOOL_BUFSZ);
+      /* If allocation fails, just bail. */
+      if (buf) {
+         alignedPool.list[alignedPool.numAlloc] = buf;
+         alignedPool.numBusy = ++alignedPool.numAlloc;
+      }
+      goto done;
+   }
+   buf = alignedPool.list[alignedPool.numBusy];
+   alignedPool.numBusy++;
+
+done:
+   MXUser_ReleaseExclLock(alignedPool.lock);
+
+   return buf;
+}
+
+
+/*
+ *---------------------------------------------------------------------------
+ *
+ * FileIOAligned_PoolFree --
+ *
+ *      Test if a pointer was allocated from alignedPool, and if so, free it.
+ *
+ * Result:
+ *      TRUE if ptr was allocated from alignedPool.  ptr is returned to pool.
+ *      FALSE otherwise.
+ *
+ * Side effects:
+ *      Might Aligned_Free() some entries from alignedPool if the timestamp[]
+ *      entries indicate that we have not needed them for a while.
+ *
+ *---------------------------------------------------------------------------
+ */
+
+Bool
+FileIOAligned_PoolFree(void *ptr)  // IN:
+{
+   unsigned i;
+   Bool ret = FALSE;
+   VmTimeType now;
+
+   if (!alignedPool.lock) {
+      LOG_ONCE(("%s called without FileIOAligned_Pool lock\n", __FUNCTION__));
+
+      return FALSE;
+   }
+
+   MXUser_AcquireExclLock(alignedPool.lock);
+
+   ASSERT(alignedPool.numBusy <= ARRAYSIZE(alignedPool.list));
+   ASSERT(alignedPool.numAlloc <= ARRAYSIZE(alignedPool.list));
+   ASSERT(alignedPool.numBusy <= alignedPool.numAlloc);
+
+   for (i = 0; i < alignedPool.numBusy; i++) {
+      if (alignedPool.list[i] == ptr) {
+         break;
+      }
+   }
+   if (i == alignedPool.numBusy) {
+      /* The pointer wasn't allocated from our pool. */
+      goto done;
+   }
+
+   alignedPool.numBusy--;
+
+   /*
+    * At this point either i points to the "top" busy item, or i points to an
+    * earlier busy item.  If i points to the top, we're done, and the following
+    * "swap" is a noop.  If i points somewhere further down the busy list, we
+    * can simply move the newly freed item to the top of the free list by
+    * swapping its place with the not-freed item at list[numBusy].
+    */
+   alignedPool.list[i] = alignedPool.list[alignedPool.numBusy];
+   alignedPool.list[alignedPool.numBusy] = ptr;
+
+   now = Hostinfo_SystemTimerNS();
+   alignedPool.timestamp[alignedPool.numBusy] = now;
+
+   while (alignedPool.numAlloc > alignedPool.numBusy &&
+          now - alignedPool.timestamp[alignedPool.numAlloc - 1] > ALIGNEDPOOL_OLD_AGE) {
+      alignedPool.numAlloc--;
+      Aligned_Free(alignedPool.list[alignedPool.numAlloc]);
+      alignedPool.list[alignedPool.numAlloc] = NULL;
+   }
+
+   ret = TRUE;
+
+done:
+   MXUser_ReleaseExclLock(alignedPool.lock);
+
+   return ret;
+}
+
+#endif

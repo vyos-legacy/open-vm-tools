@@ -21,10 +21,9 @@
 #define VM_PRODUCT_H
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMMON
-#define INCLUDE_ALLOW_VMNIXMOD
 #define INCLUDE_ALLOW_VMKERNEL
 #define INCLUDE_ALLOW_VMCORE
 #include "includeCheck.h"
@@ -65,6 +64,7 @@
 #define PRODUCT_WORKSTATION_BRIEF_NAME "Workstation"
 #define PRODUCT_WORKSTATION_ENTERPRISE_BRIEF_NAME \
          PRODUCT_WORKSTATION_BRIEF_NAME " " "ACE Edition"
+#define PRODUCT_WORKSTATION_SERVER_BRIEF_NAME "Workstation Server"
 #define PRODUCT_PLAYER_BRIEF_NAME "Player"
 #define PRODUCT_ACE_PLAYER_BRIEF_NAME "ACE " PRODUCT_PLAYER_BRIEF_NAME
 #define PRODUCT_MAC_DESKTOP_BRIEF_NAME "Fusion"
@@ -88,6 +88,7 @@
 #define PRODUCT_GSX_SMP_NAME MAKE_NAME("Virtual SMP for GSX Server")
 #define PRODUCT_WORKSTATION_NAME MAKE_NAME(PRODUCT_WORKSTATION_BRIEF_NAME)
 #define PRODUCT_WORKSTATION_ENTERPRISE_NAME MAKE_NAME(PRODUCT_WORKSTATION_ENTERPRISE_BRIEF_NAME)
+#define PRODUCT_WORKSTATION_SERVER_NAME MAKE_NAME(PRODUCT_WORKSTATION_SERVER_BRIEF_NAME)
 #define PRODUCT_MUI_NAME MAKE_NAME("Management Interface")
 #define PRODUCT_CONSOLE_NAME MAKE_NAME("Server Console")
 #define PRODUCT_PLAYER_NAME MAKE_NAME(PRODUCT_PLAYER_BRIEF_NAME)
@@ -122,14 +123,19 @@
 
 #define PRODUCT_VPX_NAME MAKE_NAME("VirtualCenter")
 
+#define PRODUCT_VPXA_NAME PRODUCT_VPX_NAME " Agent"
+
+#define PRODUCT_FDM_NAME MAKE_NAME("Fault Domain Manager")
+
 #define PRODUCT_WBC_NAME MAKE_NAME("WebCenter")
 
 #define PRODUCT_SDK_NAME MAKE_NAME("SDK")
 
 #define PRODUCT_DDK_NAME MAKE_NAME("ESX DDK")
 
-#define PRODUCT_VDM_SHORT_NAME "VDM"
-#define PRODUCT_VDM_NAME MAKE_NAME("Virtual Desktop Manager")
+// XXX I think these are dead and can be removed -clayton
+// #define PRODUCT_VDM_SHORT_NAME "VDM"
+// #define PRODUCT_VDM_NAME MAKE_NAME("Virtual Desktop Manager")
 
 #define PRODUCT_VDDK_SHORT_NAME "VDDK"
 #define PRODUCT_VDDK_NAME MAKE_NAME("VMware Virtual Disk Development Kit")
@@ -137,11 +143,30 @@
 #define PRODUCT_VDM_CLIENT_NAME MAKE_NAME("View Client")
 #define PRODUCT_VDM_CLIENT_NAME_FOR_LICENSE PRODUCT_VDM_CLIENT_NAME
 
+#define PRODUCT_XVP_SHORT_NAME "XVP"
+#define PRODUCT_XVP_NAME MAKE_NAME("vCenter XVP Manager")
+#define PRODUCT_RMKSCONTAINER_NAME MAKE_NAME("Remote MKS Container")
+
+#define PRODUCT_BOOMERANG_NAME MAKE_NAME("Boomerang")
+
+#define PRODUCT_HBR_SERVER_NAME MAKE_NAME("vSphere Replication Server")
+
+#define PRODUCT_VIEW_SHORT_NAME "View"
+#define PRODUCT_VIEW_NAME MAKE_NAME("View")
+#define PRODUCT_VIEW_NAME_FOR_LICENSE PRODUCT_VIEW_NAME
+
+
 // XXX VMvisor is the underlying technology for possibly several products,
 // XXX not the product. Fix when names are decided.
 // #define PRODUCT_VMVISOR_NAME MAKE_NAME("VMvisor")
 // XXX Only one product for now so just hardcode it.
 #define PRODUCT_VMVISOR_NAME MAKE_NAME(PRODUCT_SCALABLE_SERVER_BRIEF_NAME "i")
+
+#if defined(__linux__) || defined(__FreeBSD__)
+#define PRODUCT_NETDUMP_NAME PRODUCT_GENERIC_NAME_LOWER "-netdumper"
+#else
+#define PRODUCT_NETDUMP_NAME PRODUCT_VMVISOR_NAME " dump collector"
+#endif
 
 /*
  * VMware Remote Console (VMRC) version definitions
@@ -155,26 +180,17 @@
 #define PRODUCT_VMRC_EXECUTABLE PRODUCT_GENERIC_NAME_LOWER "-vmrc.exe"
 #else
 #define PRODUCT_VMRC_EXECUTABLE PRODUCT_GENERIC_NAME_LOWER "-vmrc"
+#define PRODUCT_VMRC_DEVICE_EXECUTABLE PRODUCT_GENERIC_NAME_LOWER "-deviceMgr"
 #endif
 
 /*
  * VMRC ActiveX CLSIDs and ProgIDs
+ *
+ * VMRC is versioned x.y.z - ProgID is intentionally built using only x.y
  */
-#define PRODUCT_VMRC_PLUGIN_GUID_WEB           B94C2238-346E-4c5e-9B36-8CC627F35574
-#define PRODUCT_VMRC_PLUGIN_GUID_WEB_TYPELIB   84D652E1-9364-4536-B13C-24F16FBEBCFE
-#define PRODUCT_VMRC_PLUGIN_WEB_CLSID          CLSID:##PRODUCT_VMRC_PLUGIN_GUID_WEB
-#define PRODUCT_VMRC_PLUGIN_WEB_PROGID_BASE    "VMware.web.VMwareRemoteConsole"
-#define PRODUCT_VMRC_PLUGIN_WEB_PROGID         PRODUCT_VMRC_PLUGIN_WEB_PROGID_BASE "." \
-                                               XSTR(VMRC_PLUGIN_VERSION_BASE)
-
-#define PRODUCT_VMRC_PLUGIN_GUID               B94C2248-346E-4C5E-9B36-8CC627F35574
-#define PRODUCT_VMRC_PLUGIN_GUID_EMBEDDED      B94C2249-346E-4C5E-9B36-8CC627F35574
-#define PRODUCT_VMRC_PLUGIN_GUID_QUICKMKSAXCTL 338095E4-1806-4BA3-AB51-38A3179200E9
-#define PRODUCT_VMRC_PLUGIN_GUID_TYPELIB       A51B0CB2-1545-43AD-B66E-AD322009406C
-#define PRODUCT_VMRC_PLUGIN_PROGID_BASE        "VMware.hosted.VMwareRemoteConsole"
-#define PRODUCT_VMRC_PLUGIN_PROGID             PRODUCT_VMRC_PLUGIN_PROGID_BASE "." \
-                                               XSTR(VMRC_PLUGIN_VERSION_BASE)
-#define PRODUCT_VMRC_PLUGIN_PROGID_EMBEDDED_BASE "VMware.hosted.VMwareEmbeddedRemoteConsole"
+#define PRODUCT_VMRC_PLUGIN_GUID_EMBEDDED      6FB1850B-AC2A-4AEA-9847-EBCE6AB2A62E
+#define PRODUCT_VMRC_PLUGIN_GUID_TYPELIB       EC950991-C7CE-455C-ABF3-12FC11F9C136
+#define PRODUCT_VMRC_PLUGIN_PROGID_EMBEDDED_BASE "VMware.RemoteConsole"
 #define PRODUCT_VMRC_PLUGIN_PROGID_EMBEDDED    PRODUCT_VMRC_PLUGIN_PROGID_EMBEDDED_BASE "." \
                                                XSTR(VMRC_PLUGIN_VERSION_BASE)
 
@@ -190,26 +206,16 @@
 #endif
 
 #define PRODUCT_VMRC_PLUGIN_CURRENT_MIMETYPE \
-   "application/x-vmware-vmrc;version=" VMRC_PLUGIN_VERSION
-
-/*
- * previously shipped plugin mimetypes (updated as we ship them)
- *
- * XXX It is important that the mimetypes be listed in strictly decreasing
- *     order by version. Server 2.0 Web Access (WBC) only checks the first VMRC
- *     mimetype for compatibility, and others might make the same mistake in
- *     the future.
- */
-#define PRODUCT_VMRC_PLUGIN_PREVIOUS_MIMETYPES \
-   "application/x-vmware-vmrc;version=2.5.0.199067" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-vmrc;version=2.5.0.158248" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-vmrc;version=2.5.0.116460" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-vmrc;version=2.5.0.0"
+   "application/x-vmware-remote-console"
 
 /*
  * legacy plugin mimetypes (currently unused but here for reference)
  */
 #define PRODUCT_VMRC_PLUGIN_LEGACY_MIMETYPES \
+   "application/x-vmware-vmrc;version=2.5.0.199067" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
+   "application/x-vmware-vmrc;version=2.5.0.158248" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
+   "application/x-vmware-vmrc;version=2.5.0.116460" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
+   "application/x-vmware-vmrc;version=2.5.0.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
    "application/x-vmware-mks;version=2.1.0.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
    "application/x-vmware-mks;version=2.0.1.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
    "application/x-vmware-mks;version=2.0.0.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR
@@ -220,8 +226,19 @@
  * NB: See above for constraints on the ordering of this list.
  */
 #define PRODUCT_VMRC_PLUGIN_MIMETYPES \
-   PRODUCT_VMRC_PLUGIN_CURRENT_MIMETYPE PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   PRODUCT_VMRC_PLUGIN_PREVIOUS_MIMETYPES PRODUCT_VMRC_MIMETYPE_TERMINATOR
+   PRODUCT_VMRC_PLUGIN_CURRENT_MIMETYPE PRODUCT_VMRC_MIMETYPE_TERMINATOR
+
+/*
+ * VMware USB Arbitration Service version definitions
+ */
+
+#define PRODUCT_USB_ARBITRATOR_SHORT_NAME "vmware-usbarbitrator"
+#define PRODUCT_USB_ARBITRATOR_NAME MAKE_NAME("USB Arbitration Service")
+#ifdef _WIN32
+#define PRODUCT_USB_ARBITRATOR_EXECUTABLE PRODUCT_GENERIC_NAME_LOWER "-usbarbitrator.exe"
+#else
+#define PRODUCT_USB_ARBITRATOR_EXECUTABLE PRODUCT_GENERIC_NAME_LOWER "-usbarbitrator"
+#endif
 
 /*
  * TODO: This properly lives in productState, but we need it here to
@@ -235,6 +252,7 @@
       || defined(VMX86_WGS)      \
       || defined(VMX86_DESKTOP)  \
       || defined(VMX86_ENTERPRISE_DESKTOP) \
+      || defined(VMX86_VIEW)     \
       || defined(VMX86_MUI)      \
       || defined(VMX86_API)      \
       || defined(VMX86_VPX)      \
@@ -248,7 +266,10 @@
       || defined(VMX86_VLICENSE) \
       || defined(VMX86_P2V)      \
       || defined(VMX86_DDK)      \
-      || defined(VMX86_VDDK))
+      || defined(VMX86_VDDK)     \
+      || defined(VMX86_NETDUMP) \
+      || defined(VMX86_BOOMERANG) \
+      || defined(VMX86_HBR_SERVER))
 #   if defined(_WIN32) || defined(__APPLE__)
       /*
        * XXX Make the product be Workstation by default if none of the defines
@@ -292,7 +313,15 @@
 #     define PRODUCT_SHORT_NAME PRODUCT_API_SCRIPTING_PERL_NAME
 #  endif
 #elif defined(VMX86_VPX)
-# define PRODUCT_SHORT_NAME PRODUCT_VPX_NAME
+#  if defined(CSI_FDM)
+#     define PRODUCT_SHORT_NAME PRODUCT_FDM_NAME
+#  elif defined(VPXA)
+#     define PRODUCT_SHORT_NAME PRODUCT_VPXA_NAME
+#  elif defined(XVP)
+#     define PRODUCT_SHORT_NAME PRODUCT_XVP_NAME
+#  else
+#     define PRODUCT_SHORT_NAME PRODUCT_VPX_NAME
+#  endif
 #elif defined(VMX86_WBC)
 # define PRODUCT_SHORT_NAME PRODUCT_WBC_NAME
 #elif defined(VMX86_SDK)
@@ -313,6 +342,14 @@
 # define PRODUCT_SHORT_NAME PRODUCT_DDK_NAME
 #elif defined(VMX86_VDDK)
 # define PRODUCT_SHORT_NAME PRODUCT_VDDK_NAME
+#elif defined(VMX86_NETDUMP)
+# define PRODUCT_SHORT_NAME PRODUCT_NETDUMP_NAME
+#elif defined(VMX86_BOOMERANG)
+# define PRODUCT_SHORT_NAME PRODUCT_BOOMERANG_NAME
+#elif defined(VMX86_HBR_SERVER)
+# define PRODUCT_SHORT_NAME PRODUCT_HBR_SERVER_NAME
+#elif defined(VMX86_VIEW)
+# define PRODUCT_SHORT_NAME PRODUCT_VIEW_NAME
 #endif
 
 
@@ -379,6 +416,9 @@
 #         define PRODUCT_NAME_FOR_LICENSE "VMware Workstation"
 #      endif
 #      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
+#   elif defined(VMX86_VPX)
+#      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " Server"
+#      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
 #   elif defined(VMX86_WGS_MIGRATION)
 #      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " for " PRODUCT_OS
 #      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
@@ -388,20 +428,30 @@
 #   elif defined(VMX86_SYSIMAGE)
 #      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME
 #      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
+#   elif defined(VMX86_NETDUMP)
+#      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NETDUMP_NAME
+#      define PRODUCT_SMP_NAME_FOR_LICENSE "" //None
 #   else   /* It is a product that doesn't use a license */
 #      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME
 #      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
 #   endif
 
-/* Default for the 'libdir' config variable */
 /*
+ * VMWARE_HOST_DIRECTORY is for host-specific configuration files.
+ * DEFAULT_LIBDIRECTORY is the default for the 'libdir' config variable.
+ *
  * The APIs are installed as separate products and must have their own
  * configuration and library directories.  The remote console checks at
  * run time, and the MUI is not really a separate product.
  */
 #   if defined(__APPLE__)
-#      define VMWARE_HOST_DIRECTORY_PREFIX \
-          "/Library/Application Support/" PRODUCT_SHORT_NAME
+#      if defined VMX86_DESKTOP
+#         define VMWARE_HOST_DIRECTORY_PREFIX \
+             "/Library/Preferences/" PRODUCT_SHORT_NAME
+#      else
+#         define VMWARE_HOST_DIRECTORY_PREFIX \
+             "/Library/Application Support/" PRODUCT_SHORT_NAME
+#      endif
 #   endif
 
 #   if defined(VMX86_API)
@@ -443,22 +493,26 @@
 #   endif
 
 #   if defined(__APPLE__)
+#      if defined VMX86_DESKTOP
 /*
- * Mac OS hosts don't distinguish between an /etc and /usr equivalent,
- * so put both in DEFAULT_LIBDIRECTORY.  Note: If there are filename
- * clashes, we'll need to distinguish the two.
+ * We will remove this definition soon. Fusion's library directory should not
+ * be hardcoded: it prevents Fusion from being relocated. Use
+ * Location_GetLibrary() instead.
  */
-#      define DEFAULT_LIBDIRECTORY VMWARE_HOST_DIRECTORY
+#         define DEFAULT_LIBDIRECTORY \
+             "/Applications/" PRODUCT_SHORT_NAME ".app/Contents/Library"
+#      else
+#         define DEFAULT_LIBDIRECTORY VMWARE_HOST_DIRECTORY
+#      endif
 #   endif
 
-/* For host specific files */
+/* For user-specific files. */
 #   if defined(__APPLE__)
-#      define VMWARE_USER_SUBDIRECTORY "Library/Preferences/" PRODUCT_SHORT_NAME
+#      define VMWARE_USER_DIRECTORY "~/Library/Preferences/" PRODUCT_SHORT_NAME
 #   else
-#      define VMWARE_USER_SUBDIRECTORY "." PRODUCT_GENERIC_NAME_LOWER
+#      define VMWARE_USER_DIRECTORY "~/." PRODUCT_GENERIC_NAME_LOWER
 #   endif
-/* For user specific files */
-#   define VMWARE_USER_DIRECTORY "~/" VMWARE_USER_SUBDIRECTORY
+
 #   define VMWARE_MODULE_NAME "/dev/vmmon"
 #   define VMWARE_CONFIG PRODUCT_GENERIC_NAME_LOWER "-config.pl"
 #   define VMWARE_CONNECT_SOCKET_DIRECTORY "/var/run/" PRODUCT_GENERIC_NAME_LOWER
@@ -484,6 +538,9 @@
 #      else
 #         define PRODUCT_NAME_FOR_LICENSE "VMware Workstation"
 #      endif
+#      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
+#   elif defined(VMX86_VPX)
+#      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " Server"
 #      define PRODUCT_SMP_NAME_FOR_LICENSE "" // None
 #   elif defined(VMX86_WGS_MIGRATION)
 #      define PRODUCT_NAME_FOR_LICENSE PRODUCT_NAME " for Win32"
@@ -527,6 +584,8 @@
 #  define PRODUCT_NAME_PLATFORM         PRODUCT_NAME " for Solaris"
 #elif defined(__APPLE__)
 #  define PRODUCT_NAME_PLATFORM         PRODUCT_NAME " for Mac OS X"
+#elif defined __ANDROID__
+#  define PRODUCT_NAME_PLATFORM         PRODUCT_NAME " for Android"
 #else
 #  ifdef VMX86_TOOLS
 #    error "Define a product string for this platform."
@@ -558,5 +617,16 @@
  *       to guarantee that the service is installed with exactly this name.
  */
 #define HOST_AGENT_SERVICE_NAME     "VMwareHostd"
+
+// Name of the environment variable that controls which proxy server to use
+// while opening connections to vCenter and vSphere servers. Currently vCloud
+// VMRC uses it.
+#define VMWARE_HTTPSPROXY  "VMWARE_HTTPSPROXY"
+
+// Name of the environment variable that controls whether MKS traffic should
+// be tunnelled over HTTPS through the console proxy. Currently vCloud VMRC
+// uses it.
+#define VMWARE_HTTPSTUNNEL_MKS   "VMWARE_HTTPSTUNNEL_MKS"
+
 
 #endif /* VM_PRODUCT_H */

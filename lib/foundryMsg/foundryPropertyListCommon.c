@@ -31,6 +31,8 @@
 #include "vm_version.h"
 #include "util.h"
 #include "str.h"
+#include "unicode.h"
+#include "vixCommands.h"
 
 #include "vixOpenSource.h"
 
@@ -50,10 +52,13 @@
 // To be safe, we always use 8 bytes.
 #define  PROPERTY_SIZE_POINTER   8
 
-static VixError VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,
-                                               const char *buffer,
-                                               size_t bufferSize,
-                                               Bool clobber);
+static VixError
+VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,
+                               const char *buffer,
+                               size_t bufferSize,
+                               Bool clobber,
+                               VixPropertyListBadEncodingAction action);
+
 
 /*
  *-----------------------------------------------------------------------------
@@ -167,6 +172,8 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
    size_t bufferSize = 0;
    size_t pos = 0;
  
+   ASSERT_ON_COMPILE(PROPERTY_LENGTH_SIZE == sizeof valueLength);
+
    if ((NULL == propList) ||
        (NULL == resultSize) ||
        (NULL == resultBuffer)) {
@@ -196,7 +203,7 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
 
       bufferSize += headerSize;
       
-      switch(property->type) {
+      switch (property->type) {
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_INTEGER:
             bufferSize += PROPERTY_SIZE_INT32;
@@ -205,7 +212,26 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_STRING:
             if (property->value.strValue) {
-               bufferSize += (strlen(property->value.strValue) + 1);
+               valueLength = strlen(property->value.strValue) + 1;
+               /*
+                * The deserialization code rejects all non-UTF-8 strings.
+                * There should not be any non-UTF-8 strings passing
+                * through our code since we should have either converted
+                * non-UTF-8 strings from system APIs to UTF-8, or validated
+                * that any client-provided strings were UTF-8. But this
+                * if we've missed something, this should hopefully catch the
+                * offending code close to the act.
+                */
+               if (!Unicode_IsBufferValid(property->value.strValue,
+                                          valueLength,
+                                          STRING_ENCODING_UTF8)) {
+                  Log("%s: attempted to send a non-UTF-8 string for "
+                      "property %d.\n",
+                      __FUNCTION__, property->propertyID);
+                  ASSERT(0);
+                  err = VIX_E_INVALID_UTF8_STRING;
+               }
+               bufferSize += valueLength;
             } else {
                err = VIX_E_INVALID_ARG;
                goto abort;
@@ -229,8 +255,14 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
 
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_POINTER:
-            bufferSize += PROPERTY_SIZE_POINTER;
-            break;
+            /*
+             * We should not serialize any pointer.
+             * Catch such programming errors.
+             */
+            err = VIX_E_INVALID_ARG;
+            Log("%s:%d, pointer properties cannot be serialized.\n",
+                __FUNCTION__, __LINE__);
+            goto abort;
 
          ////////////////////////////////////////////////////////
          default:
@@ -241,7 +273,11 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
       property = property->next;
    }
 
-   *resultBuffer = (char*) Util_SafeCalloc(1, bufferSize);
+   *resultBuffer = (char*) VixMsg_MallocClientData(bufferSize);
+   if (NULL == *resultBuffer) {
+      err = VIX_E_OUT_OF_MEMORY;
+      goto abort;
+   }
    serializeBuffer = *resultBuffer;
 
    pos = 0;
@@ -267,7 +303,7 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
       memcpy(&(serializeBuffer[pos]), &(property->type), propertyTypeSize);
       pos += propertyTypeSize;
 
-      switch(property->type) {
+      switch (property->type) {
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_INTEGER:
              valueLength = PROPERTY_SIZE_INT32;
@@ -317,16 +353,7 @@ VixPropertyList_Serialize(VixPropertyListImpl    *propList,       // IN
 
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_POINTER:
-            if (property->value.ptrValue) {
-               valueLength = PROPERTY_SIZE_POINTER;
-               memcpy(&(serializeBuffer[pos]), &valueLength, propertyValueLengthSize);
-               pos += propertyValueLengthSize;
-               memcpy(&(serializeBuffer[pos]), &(property->value.ptrValue), sizeof(property->value.ptrValue));
-            } else {
-               err = VIX_E_INVALID_ARG;
-               goto abort;
-            }
-            break;
+            NOT_IMPLEMENTED();
 
          ////////////////////////////////////////////////////////
          default:
@@ -374,14 +401,16 @@ abort:
  */
 
 VixError
-VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
-                            const char *buffer,                // IN
-                            size_t bufferSize)                 // IN
+VixPropertyList_Deserialize(VixPropertyListImpl *propList,            // IN
+                            const char *buffer,                       // IN
+                            size_t bufferSize,                        // IN
+                            VixPropertyListBadEncodingAction action)  // IN
 {
    return VixPropertyListDeserializeImpl(propList,
                                          buffer,
                                          bufferSize,
-                                         TRUE); // clobber
+                                         TRUE, // clobber
+                                         action);
 } // VixPropertyList_Deserialize
 
 
@@ -405,12 +434,14 @@ VixPropertyList_Deserialize(VixPropertyListImpl *propList,     // IN
 VixError
 VixPropertyList_DeserializeNoClobber(VixPropertyListImpl *propList,     // IN
                                      const char *buffer,                // IN
-                                     size_t bufferSize)                 // IN
+                                     size_t bufferSize,                 // IN
+                                     VixPropertyListBadEncodingAction action) // IN
 {
    return VixPropertyListDeserializeImpl(propList,
                                          buffer,
                                          bufferSize,
-                                         FALSE); // clobber
+                                         FALSE, // clobber
+                                         action);
 } // VixPropertyList_DeserializeNoClobber
 
 
@@ -423,7 +454,6 @@ VixPropertyList_DeserializeNoClobber(VixPropertyListImpl *propList,     // IN
  *
  *       This function should be modified to deal with the case of 
  *       properties of type VIX_PROPERTYTYPE_HANDLE.
- *       
  *
  * Results:
  *      VixError.
@@ -435,10 +465,11 @@ VixPropertyList_DeserializeNoClobber(VixPropertyListImpl *propList,     // IN
  */
 
 VixError
-VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
-                               const char *buffer,                // IN
-                               size_t bufferSize,                 // IN
-                               Bool clobber)                      // IN
+VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,            // IN
+                               const char *buffer,                       // IN
+                               size_t bufferSize,                        // IN
+                               Bool clobber,                             // IN
+                               VixPropertyListBadEncodingAction action)  // IN
 {
    VixError err = VIX_OK;
    VixPropertyValue *property = NULL;
@@ -447,7 +478,6 @@ VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
    int *intPtr;
    Bool *boolPtr;
    int64 *int64Ptr;
-   void **ptrPtr;
    unsigned char* blobPtr;
    int *propertyIDPtr;
    int *lengthPtr;
@@ -456,6 +486,8 @@ VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
    size_t propertyValueLengthSize;
    size_t headerSize;
    VixPropertyType *propertyTypePtr;
+   Bool allocateFailed;
+   Bool needToEscape;
 
    if ((NULL == propList)
        || (NULL == buffer)) {
@@ -513,7 +545,7 @@ VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
       /*
        * Initialize the property to the received value
        */
-      switch(*propertyTypePtr) {
+      switch (*propertyTypePtr) {
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_INTEGER:
             if (PROPERTY_SIZE_INT32 != *lengthPtr) {
@@ -535,8 +567,44 @@ VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
                err = VIX_E_INVALID_SERIALIZED_DATA;
                goto abort;
             }
+
+            needToEscape = FALSE;
+
+            /*
+             * Make sure the string is valid UTF-8 before copying it. We
+             * expect all strings stored in the process to be UTF-8.
+             */
+            if (!Unicode_IsBufferValid(strPtr, *lengthPtr,
+                                       STRING_ENCODING_UTF8)) {
+               Log("%s: non-UTF-8 string received for property %d.\n",
+                   __FUNCTION__, *propertyIDPtr);
+               switch (action) {
+               case VIX_PROPERTY_LIST_BAD_ENCODING_ERROR:
+                  err = VIX_E_INVALID_UTF8_STRING;
+                  goto abort;
+               case VIX_PROPERTY_LIST_BAD_ENCODING_ESCAPE:
+                  needToEscape = TRUE;
+               }
+
+            }
             free(property->value.strValue);
-            property->value.strValue = Util_SafeStrdup(strPtr);
+
+            if (needToEscape) {
+               property->value.strValue =
+                  Unicode_EscapeBuffer(strPtr, *lengthPtr,
+                                       STRING_ENCODING_UTF8);
+               if (NULL == property->value.strValue) {
+                  err = VIX_E_OUT_OF_MEMORY;
+                  goto abort;
+               }
+            } else {
+               property->value.strValue =
+                  VixMsg_StrdupClientData(strPtr, &allocateFailed);
+               if (allocateFailed) {
+                  err = VIX_E_OUT_OF_MEMORY;
+                  goto abort;
+               }
+            }
             break;
 
          ////////////////////////////////////////////////////////
@@ -569,7 +637,8 @@ VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
              * pretty easy to handle.
              */
             free(property->value.blobValue.blobContents);
-            property->value.blobValue.blobContents = malloc(*lengthPtr);
+            property->value.blobValue.blobContents =
+               VixMsg_MallocClientData(*lengthPtr);
             if (NULL == property->value.blobValue.blobContents) {
                err = VIX_E_OUT_OF_MEMORY;
                goto abort;
@@ -579,15 +648,14 @@ VixPropertyListDeserializeImpl(VixPropertyListImpl *propList,     // IN
 
          ////////////////////////////////////////////////////////
          case VIX_PROPERTYTYPE_POINTER:
-            // The size may be different on different machines.
-            // To be safe, we always use 8 bytes.
-            if (PROPERTY_SIZE_POINTER != *lengthPtr) {
-               err = VIX_E_INVALID_SERIALIZED_DATA;
-               goto abort;
-            }
-            ptrPtr = (void**) &(buffer[pos]);
-            property->value.ptrValue = *ptrPtr;
-            break;
+            /*
+             * Deserialize an pointer property should not be allowed.
+             * An evil peer could send us such data.
+             */
+            err = VIX_E_INVALID_SERIALIZED_DATA;
+            Log("%s:%d, pointer properties cannot be serialized.\n",
+                __FUNCTION__, __LINE__);
+            goto abort;
 
          ////////////////////////////////////////////////////////
          default:
@@ -1503,5 +1571,62 @@ VixPropertyList_PropertyExists(VixPropertyListImpl *propList,     // IN
 
    return(foundIt);
 } // VixPropertyList_PropertyExists
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixPropertyList_NumItems --
+ *
+ *       Returns a count of the properties in the list.
+ *
+ * Results:
+ *       int - Number of properties in property list.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+VixPropertyList_NumItems(VixPropertyListImpl *propList)     // IN
+{
+   VixPropertyValue *prop;
+   int count = 0;
+
+   if (propList == NULL) {
+      return 0;
+   }
+
+   for (prop = propList->properties; prop != NULL; prop = prop->next) {
+      ++count;
+   }
+
+   return count;
+} // VixPropertyList_NumItems
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * VixPropertyList_Empty --
+ *
+ *       Returns whether the property list has no properties.
+ *
+ * Results:
+ *       Bool - True iff property list has no properties.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+VixPropertyList_Empty(VixPropertyListImpl *propList)     // IN
+{
+   return (propList == NULL || propList->properties == NULL);
+} // VixPropertyList_Empty
 
 

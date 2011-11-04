@@ -28,31 +28,34 @@
 #define Debug        g_debug
 #define Warning      g_warning
 
-#include "vmtoolsApp.h"
+#include "vmware/tools/guestrpc.h"
+#include "vmware/tools/plugin.h"
 
-Bool
-ToolsDaemonTcloCheckUserAccount(RpcInData *data);
+void
+FoundryToolsDaemon_Initialize(ToolsAppCtx *ctx);
+void
+FoundryToolsDaemon_Uninitialize(ToolsAppCtx *ctx);
 
-Bool
+gboolean
 FoundryToolsDaemonGetToolsProperties(RpcInData *data);
 
-Bool
+gboolean
 ToolsDaemonHgfsImpersonated(RpcInData *data);
 
-Bool
+gboolean
 ToolsDaemonTcloMountHGFS(RpcInData *data);
 
-Bool
+gboolean
 ToolsDaemonTcloReceiveVixCommand(RpcInData *data);
 
-Bool
+gboolean
 FoundryToolsDaemonRunProgram(RpcInData *data);
 
 #if defined(linux) || defined(_WIN32)
-Bool
+gboolean
 ToolsDaemonTcloSyncDriverFreeze(RpcInData *data);
 
-Bool
+gboolean
 ToolsDaemonTcloSyncDriverThaw(RpcInData *data);
 #endif
 

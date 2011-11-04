@@ -19,10 +19,11 @@ noinst_LTLIBRARIES = libFile.la
 
 libFile_la_SOURCES = 
 libFile_la_SOURCES += file.c
+libFile_la_SOURCES += fileStandAlone.c
 libFile_la_SOURCES += filePosix.c
 libFile_la_SOURCES += fileIO.c
 libFile_la_SOURCES += fileIOPosix.c
 libFile_la_SOURCES += fileLockPrimitive.c
 libFile_la_SOURCES += fileLockPosix.c
-
-AM_CFLAGS = @LIB_FILE_CPPFLAGS@
+libFile_la_SOURCES += fileTempPosix.c
+libFile_la_SOURCES += fileTemp.c

@@ -25,16 +25,127 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "toolboxInt.h"
 #include "toolboxCmdInt.h"
+#include "backdoor.h"
+#include "backdoor_def.h"
+#include "backdoor_types.h"
+#include "removable_device.h"
+#include "vmware/tools/i18n.h"
 
-static int DevicesSetStatus (char *devName, Bool enable, int quiet_flag);
+#define MAX_DEVICES 50
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * Devices_ListDevices  --
+ * SetDeviceState --
+ *
+ *      Ask the VMX to change the connected state of a device.
+ *
+ * Results:
+ *      TRUE on success
+ *      FALSE on failure
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+SetDeviceState(uint16 id,      // IN: Device ID
+               Bool connected) // IN
+{
+   Backdoor_proto bp;
+
+   bp.in.cx.halfs.low = BDOOR_CMD_TOGGLEDEVICE;
+   bp.in.size = (connected ? 0x80000000 : 0) | id;
+   Backdoor(&bp);
+   return bp.out.ax.word ? TRUE : FALSE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * GetDeviceListElement --
+ *
+ *      Retrieve 4 bytes of of information about a removable device.
+ *
+ * Results:
+ *      TRUE on success. '*data' is set
+ *      FALSE on failure
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+GetDeviceListElement(uint16 id,     // IN : Device ID
+                     uint16 offset, // IN : Offset in the RD_Info
+                                    //      structure
+                     uint32 *data)  // OUT: Piece of RD_Info structure
+{
+   Backdoor_proto bp;
+
+   bp.in.cx.halfs.low = BDOOR_CMD_GETDEVICELISTELEMENT;
+   bp.in.size = (id << 16) | offset;
+   Backdoor(&bp);
+   if (bp.out.ax.word == FALSE) {
+      return FALSE;
+   }
+   *data = bp.out.bx.word;
+   return TRUE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * GetDeviceInfo --
+ *
+ *      Retrieve information about a removable device.
+ *
+ * Results:
+ *      TRUE on success
+ *      FALSE on failure
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+GetDeviceInfo(uint16 id,     // IN: Device ID
+              RD_Info *info) // OUT
+{
+   uint16 offset;
+   uint32 *p;
+
+   /*
+    * XXX It is theoretically possible to SEGV here as we can write up to 3
+    *     bytes beyond the end of the 'info' structure. I think alignment
+    *     saves us in practice.
+    */
+   for (offset = 0, p = (uint32 *)info;
+        offset < sizeof *info;
+        offset += sizeof (uint32), p++) {
+      if (GetDeviceListElement(id, offset, p) == FALSE) {
+         return FALSE;
+      }
+   }
+
+   return TRUE;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * DevicesList  --
  *
  *      prints device names and status to stdout.
  *
@@ -47,14 +158,16 @@ static int DevicesSetStatus (char *devName, Bool enable, int quiet_flag);
  *-----------------------------------------------------------------------------
  */
 
-int
-Devices_ListDevices(void)
+static int
+DevicesList(void)
 {
    int i;
    for (i = 0; i < MAX_DEVICES; i++) {
       RD_Info info;
-      if (GuestApp_GetDeviceInfo(i, &info) && strlen(info.name) > 0) {
-         printf ("%s: %s\n", info.name, info.enabled ? "Enabled" : "Disabled");
+      if (GetDeviceInfo(i, &info) && strlen(info.name) > 0) {
+         const char *status = info.enabled ? SU_(option.enabled, "Enabled")
+                                           : SU_(option.disabled, "Disabled");
+         g_print("%s: %s\n", info.name, status);
       }
    }
    return EXIT_SUCCESS;
@@ -64,13 +177,14 @@ Devices_ListDevices(void)
 /*
  *-----------------------------------------------------------------------------
  *
- * Devices_DeviceStatus  --
+ * DevicesGetStatus  --
  *
  *      Prints device names to stdout.
  *
  * Results:
- *      Returns EXIT_SUCCESS on success
- *      Returns EXIT_OSFILE if devName was not found
+ *      Returns EXIT_SUCCESS if device is enabled.
+ *      Returns EX_UNAVAILABLE if device is disabled.
+ *      Returns EXIT_OSFILE if devName was not found.
  *
  * Side effects:
  *      Print to stderr on error.
@@ -78,20 +192,27 @@ Devices_ListDevices(void)
  *-----------------------------------------------------------------------------
  */
 
-int
-Devices_DeviceStatus(char *devName)  // IN: Device Name
+static int
+DevicesGetStatus(char *devName)  // IN: Device Name
 {
    int i;
    for (i = 0; i < MAX_DEVICES; i++) {
       RD_Info info;
-      if (GuestApp_GetDeviceInfo(i, &info)
+      if (GetDeviceInfo(i, &info)
           && toolbox_strcmp(info.name, devName) == 0) {
-         printf("%s\n", info.enabled ? "Enabled" : "Disabled");
+         if (info.enabled) {
+            ToolsCmd_Print("%s\n", SU_(option.enabled, "Enabled"));
+            return EXIT_SUCCESS;
+         } else {
+            ToolsCmd_Print("%s\n", SU_(option.disabled, "Disabled"));
+            return EX_UNAVAILABLE;
+         }
          return EXIT_SUCCESS;
       }
    }
-   fprintf(stderr,
-            "error fetching interface information: Device not found\n");
+   ToolsCmd_PrintErr("%s",
+                     SU_(device.notfound,
+                         "Error fetching interface information: device not found.\n"));
    return EX_OSFILE;
 }
 
@@ -117,28 +238,39 @@ Devices_DeviceStatus(char *devName)  // IN: Device Name
 
 static int
 DevicesSetStatus(char *devName,  // IN: device name
-                 Bool enable,    // IN: status
-                 int quiet_flag) // IN: Verbosity flag
+                 Bool enable)    // IN: status
 {
    int dev_id;
    for (dev_id = 0; dev_id < MAX_DEVICES; dev_id++) {
       RD_Info info;
-      if (GuestApp_GetDeviceInfo(dev_id, &info)
-	  && toolbox_strcmp(info.name, devName) == 0) {
-         if (!GuestApp_SetDeviceState(dev_id, enable)) {
-            fprintf(stderr, "Unable to %s device %s\n", enable ? "connect"
-                    : "disconnect", info.name);
+      if (GetDeviceInfo(dev_id, &info) &&
+          toolbox_strcmp(info.name, devName) == 0) {
+         if (!SetDeviceState(dev_id, enable)) {
+            if (enable) {
+               ToolsCmd_PrintErr(SU_(device.connect.error,
+                                     "Unable to connect device %s.\n"),
+                                 info.name);
+            } else {
+               ToolsCmd_PrintErr(SU_(device.disconnect.error,
+                                     "Unable to disconnect device %s.\n"),
+                                 info.name);
+            }
             return EX_TEMPFAIL;
          }
          goto exit;
       }
    }
-   fprintf(stderr,
-           "error fetching interface information: Device not found\n");
+
+   ToolsCmd_PrintErr("%s",
+                     SU_(device.notfound,
+                         "Error fetching interface information: device not found.\n"));
    return EX_OSFILE;
-  exit:
-   if (!quiet_flag) {
-      printf("%s\n", enable ? "Enabled" : "Disabled");
+
+exit:
+   if (enable) {
+      ToolsCmd_Print("%s\n", SU_(option.enabled, "Enabled"));
+   } else {
+      ToolsCmd_Print("%s\n", SU_(option.disabled, "Disabled"));
    }
    return EXIT_SUCCESS;
 }
@@ -147,48 +279,83 @@ DevicesSetStatus(char *devName,  // IN: device name
 /*
  *-----------------------------------------------------------------------------
  *
- * Devices_EnableDevice  --
+ * Device_Command --
  *
- *      Connects a device.
+ *      Handle and parse device commands.
  *
  * Results:
- *      Same as DevicesSetStatus.
+ *      Returns EXIT_SUCCESS on success.
+ *      Returns the exit code on errors.
  *
  * Side effects:
- *      Possibly connect a device.
- *      Print to stderr on error.
+ *      Might enable or disable a device.
  *
  *-----------------------------------------------------------------------------
  */
 
 int
-Devices_EnableDevice(char *name,     // IN: device name
-                     int quiet_flag) // IN: Verbosity flag
+Device_Command(char **argv,    // IN: Command line arguments
+               int argc,       // IN: Length of command line arguments
+               gboolean quiet) // IN
 {
-   return DevicesSetStatus(name, TRUE, quiet_flag);
+   char *subcommand = argv[optind];
+   Bool haveDeviceArg = optind + 1 < argc;
+
+   if (toolbox_strcmp(subcommand, "list") == 0) {
+      return DevicesList();
+   } else if (toolbox_strcmp(subcommand, "status") == 0) {
+      if (haveDeviceArg) {
+         return DevicesGetStatus(argv[optind + 1]);
+      }
+   } else if (toolbox_strcmp(subcommand, "enable") == 0) {
+      if (haveDeviceArg) {
+         return DevicesSetStatus(argv[optind + 1], TRUE);
+      }
+   } else if (toolbox_strcmp(subcommand, "disable") == 0) {
+      if (haveDeviceArg) {
+         return DevicesSetStatus(argv[optind + 1], FALSE);
+      }
+   } else {
+      ToolsCmd_UnknownEntityError(argv[0],
+                                  SU_(arg.subcommand, "subcommand"),
+                                  subcommand);
+      return EX_USAGE;
+   }
+
+   ToolsCmd_MissingEntityError(argv[0], SU_(arg.devicename, "device name"));
+   return EX_USAGE;
 }
 
 
 /*
  *-----------------------------------------------------------------------------
  *
- * Devices_DisableDevice  --
+ * Device_Help --
  *
- *      disconnects a device.
+ *      Prints the help for device commands.
  *
  * Results:
- *      Same as DevicesSetStatus.
+ *      None.
  *
  * Side effects:
- *      Possibly disconnect a device.
- *      Print to stderr on error.
+ *      None.
  *
  *-----------------------------------------------------------------------------
  */
 
-int
-Devices_DisableDevice(char *name,     // IN: device name
-                      int quiet_flag) // IN: Verbosity flag
+void
+Device_Help(const char *progName, // IN: The name of the program obtained from argv[0]
+            const char *cmd)      // IN
 {
-   return DevicesSetStatus(name, FALSE, quiet_flag);
+   g_print(SU_(help.device, "%s: functions related to the virtual machine's hardware devices\n"
+                            "Usage: %s %s <subcommand> [args]\n"
+                            "dev is the name of the device.\n"
+                            "\n"
+                            "Subcommands:\n"
+                            "   enable <dev>: enable the device dev\n"
+                            "   disable <dev>: disable the device dev\n"
+                            "   list: list all available devices\n"
+                            "   status <dev>: print the status of a device\n"),
+           cmd, progName, cmd);
 }
+

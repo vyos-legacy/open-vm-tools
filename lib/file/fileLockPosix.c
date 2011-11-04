@@ -51,42 +51,22 @@
 #include "fileInt.h"
 #include "util.h"
 #include "str.h"
+#include "err.h"
 #include "vm_version.h"
 #include "localconfig.h"
 #include "hostinfo.h"
 #include "su.h"
+#include "hostType.h"
 
 #include "unicodeOperations.h"
-
-#if defined(VMX86_SERVER)
-#include "hostType.h"
-/*
- * UserWorlds have to handle file locking slightly differently than COS
- * applications, as they are in a different pid space.  The problem is that
- * if a UserWorld tries to write its UserWorld pid to a lock file, a COS
- * program will think the lock file is stale, as that pid won't be valid on
- * the COS. Luckily, every UW is attached to a COS proxy, so, for the
- * purposes of this file, the UW can use its COS proxy's pid as its pid when
- * locking files. This way, if a COS app looks up the proxy pid, it will be
- * valid and the COS app will wait for the lock.
- */
-#include "uwvmk.h"
-#endif
 
 #define LOGLEVEL_MODULE main
 #include "loglevel_user.h"
 
 #define DEVICE_LOCK_DIR "/var/lock"
 
-/*
- * Parameters used by the file library.
- */
-typedef struct FileLockOptions {
-   int lockerPid;
-   Bool userWorld;
-} FileLockOptions;
+#define LOG_MAX_PROC_NAME  64
 
-static FileLockOptions fileLockOptions = { 0, FALSE };
 
 /*
  * XXX
@@ -96,30 +76,6 @@ static FileLockOptions fileLockOptions = { 0, FALSE };
  * important, and should be presented directly to the user, not go silently
  * into the log file.
  */
-
-/*
- *----------------------------------------------------------------------
- *
- * FileLock_Init --
- *
- *      Initialize the file locking library.
- *
- * Results:
- *      None.
- *
- * Side effects:
- *      Allows the user to enable locking on random file systems.
- *
- *----------------------------------------------------------------------
- */
-
-void
-FileLock_Init(int lockerPid,            // IN
-              Bool userWorld)           // IN
-{
-   fileLockOptions.lockerPid = lockerPid;
-   fileLockOptions.userWorld = userWorld;
-}
 
 #if !defined(__FreeBSD__) && !defined(sun)
 /*
@@ -140,24 +96,27 @@ FileLock_Init(int lockerPid,            // IN
  */
 
 static Bool
-IsLinkingAvailable(const char *fileName)     // IN:
+IsLinkingAvailable(const char *fileName)  // IN:
 {
    struct statfs buf;
-   int           status;
+   int status;
 
    ASSERT(fileName);
 
-#if defined(VMX86_SERVER)
-   // Never supported on VMvisor
-   if (HostType_OSIsPureVMK()) {
+   /*
+    * Don't use linking on ESX/VMFS... the overheads are expensive and this
+    * path really isn't used.
+    */
+
+   if (HostType_OSIsVMK()) {
       return FALSE;
    }
-#endif
 
    status = statfs(fileName, &buf);
 
    if (status == -1) {
-      Log(LGPFX" Bad statfs using %s (%s).\n", fileName, strerror(errno));
+      Log(LGPFX" Bad statfs using %s (%s).\n", fileName,
+          Err_Errno2String(errno));
 
       return FALSE;
    }
@@ -194,7 +153,6 @@ IsLinkingAvailable(const char *fileName)     // IN:
    case TMPFS_SUPER_MAGIC:
    case JFS_SUPER_MAGIC:
         return TRUE;                        // these are known to work
-   case VMFS_SUPER_MAGIC:
    case SMB_SUPER_MAGIC:
    case MSDOS_SUPER_MAGIC:
         return FALSE;
@@ -209,44 +167,6 @@ IsLinkingAvailable(const char *fileName)     // IN:
 #endif
 
    return FALSE;
-}
-
-
-/*
- *---------------------------------------------------------------------------
- *
- * FileLockGetPid --
- *
- *      Returns the pid of the main thread if we're running in a
- *      multithreaded process, otherwise return the result of getpid().
- *
- * Results:
- *      a pid.
- *
- * Side effects:
- *      None.
- *
- *---------------------------------------------------------------------------
- */
-
-static int
-FileLockGetPid(void)
-{
-#if defined(VMX86_SERVER)
-   /*
-    * For a UserWorld, we want to get this cartel's proxy's cos pid.
-    */
-   if (fileLockOptions.userWorld) {
-      int pid = 0;
-
-      VMKernel_GetLockPid(&pid);
-
-      return pid;
-   }
-#endif
-
-   return fileLockOptions.lockerPid > 0 ?
-                         fileLockOptions.lockerPid : (int) getpid();
 }
 
 
@@ -267,7 +187,7 @@ FileLockGetPid(void)
  */
 
 static Bool
-RemoveStaleLockFile(const char *lockFileName)      // IN:
+RemoveStaleLockFile(const char *lockFileName)  // IN:
 {
    uid_t uid;
    int ret;
@@ -286,7 +206,7 @@ RemoveStaleLockFile(const char *lockFileName)      // IN:
 
    if (ret < 0) {
       Warning(LGPFX" Failed to remove stale lock file %s (%s).\n",
-              lockFileName, strerror(saveErrno));
+              lockFileName, Err_Errno2String(saveErrno));
 
       return FALSE;
    }
@@ -312,9 +232,9 @@ RemoveStaleLockFile(const char *lockFileName)      // IN:
  */
 
 static int
-GetLockFileValues(const char *lockFileName, // IN:
-                  int *pid,                 // OUT:
-                  char *hostID)             // OUT:
+GetLockFileValues(const char *lockFileName,  // IN:
+                  int *pid,                  // OUT:
+                  char *hostID)              // OUT:
 {
    char *p;
    int  saveErrno;
@@ -335,7 +255,7 @@ GetLockFileValues(const char *lockFileName, // IN:
 
    if (lockFile == NULL) {
       Warning(LGPFX" Failed to open existing lock file %s (%s).\n",
-              lockFileName, strerror(saveErrno));
+              lockFileName, Err_Errno2String(saveErrno));
 
       return (saveErrno == ENOENT) ? 0 : -1;
    }
@@ -347,7 +267,7 @@ GetLockFileValues(const char *lockFileName, // IN:
 
    if (p == NULL) {
       Warning(LGPFX" Failed to read line from lock file %s (%s).\n",
-              lockFileName, strerror(saveErrno));
+              lockFileName, Err_Errno2String(saveErrno));
 
       deleteLockFile = TRUE;
    } else {
@@ -396,36 +316,13 @@ GetLockFileValues(const char *lockFileName, // IN:
 static Bool
 FileLockIsValidProcess(int pid)  // IN:
 {
-   uid_t uid;
-   int err;
-   Bool ret;
+   HostinfoProcessQuery value = Hostinfo_QueryProcessExistence(pid);
 
-#if defined(VMX86_SERVER)
-   if (fileLockOptions.userWorld) {
-      return (VMKernel_IsLockPidAlive(pid) == 0) ? TRUE : FALSE;
-   }
-#endif
-
-   uid = Id_BeginSuperUser();
-   err = (kill(pid, 0) == -1) ? errno : 0;
-   Id_EndSuperUser(uid);
-
-   switch (err) {
-   case 0:
-   case EPERM:
-      ret = TRUE;
-      break;
-   case ESRCH:
-      ret = FALSE;
-      break;
-   default:
-      Log(LGPFX" %s Unexpected errno (%d), assuming valid.\n",
-          __FUNCTION__, err);
-      ret = TRUE;
-      break;
+   if (value == HOSTINFO_PROCESS_QUERY_UNKNOWN) {
+      return TRUE;  // Err on the side of caution
    }
 
-   return ret;
+   return (value == HOSTINFO_PROCESS_QUERY_ALIVE) ? TRUE : FALSE;
 }
 
 
@@ -468,7 +365,7 @@ FileLockCreateLockFile(const char *lockFileName,  // IN:
 
       if (lockFD == -1) {
          Log(LGPFX" Failed to create new lock file %s (%s).\n",
-             lockFileLink, strerror(saveErrno));
+             lockFileLink, Err_Errno2String(saveErrno));
 
          return (saveErrno == EEXIST) ? 0 : -1;
       }
@@ -489,7 +386,7 @@ FileLockCreateLockFile(const char *lockFileName,  // IN:
 
       if (lockFD == -1) {
          Log(LGPFX" Failed to create new lock file %s (%s).\n",
-             lockFileName, strerror(saveErrno));
+             lockFileName, Err_Errno2String(saveErrno));
 
          return (saveErrno == EEXIST) ? 0 : -1;
       }
@@ -502,7 +399,7 @@ FileLockCreateLockFile(const char *lockFileName,  // IN:
 
    if (err != strlen(uniqueID)) {
       Warning(LGPFX" Failed to write to new lock file %s (%s).\n",
-              lockFileName, strerror(saveErrno));
+              lockFileName, Err_Errno2String(saveErrno));
       status = -1;
       goto exit;
    }
@@ -523,7 +420,7 @@ exit:
 
       if (err < 0) {
          Warning(LGPFX" Failed to remove temporary lock file %s (%s).\n",
-                 lockFileLink, strerror(errno));
+                 lockFileLink, Err_Errno2String(errno));
       }
 
    }
@@ -555,7 +452,7 @@ exit:
  */
 
 int
-FileLock_LockDevice(const char *deviceName)   // IN:
+FileLock_LockDevice(const char *deviceName)  // IN:
 {
    const char *hostID;
    char       uniqueID[1000];
@@ -570,14 +467,14 @@ FileLock_LockDevice(const char *deviceName)   // IN:
                                    deviceName);
 
    lockFileLink = Str_SafeAsprintf(NULL, "%s/LTMP..%s.t%05d", DEVICE_LOCK_DIR,
-                                   deviceName, FileLockGetPid());
+                                   deviceName, getpid());
 
    LOG(1, ("Requesting lock %s (temp = %s).\n", lockFileName,
            lockFileLink));
 
    hostID = FileLockGetMachineID();
    Str_Sprintf(uniqueID, sizeof uniqueID, "%d %s\n",
-               FileLockGetPid(), hostID);
+               getpid(), hostID);
 
    while ((status = FileLockCreateLockFile(lockFileName, lockFileLink,
                                            uniqueID)) == 0) {
@@ -665,7 +562,7 @@ FileLock_UnlockDevice(const char *deviceName)  // IN:
 
    if (ret < 0) {
       Log(LGPFX" Cannot remove lock file %s (%s).\n",
-          path, strerror(saveErrno));
+          path, Err_Errno2String(saveErrno));
       free(path);
 
       return FALSE;
@@ -680,7 +577,7 @@ FileLock_UnlockDevice(const char *deviceName)  // IN:
 /*
  *----------------------------------------------------------------------
  *
- * ReadSlashProc --
+ * FileReadSlashProc --
  *
  *      Read the data in a /proc file
  *
@@ -695,9 +592,9 @@ FileLock_UnlockDevice(const char *deviceName)  // IN:
  */
 
 static int
-ReadSlashProc(const char *procPath, // IN:
-              char *buffer,         // OUT:
-              size_t bufferSize)    // IN:
+FileReadSlashProc(const char *procPath,  // IN:
+                  char *buffer,          // OUT:
+                  size_t bufferSize)     // IN:
 {
    int fd;
    int err;
@@ -736,38 +633,50 @@ ReadSlashProc(const char *procPath, // IN:
 
 
 /*
- *----------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  *
- * ProcessCreationTime --
+ * FileLockProcessDescriptor --
  *
- *      Return the specified process's creation time.
+ *      Returns the process descriptor of the specified process.
+ *
+ *      The format of a process descriptor is as follows:
+ *
+ *      processID-processCreationTime(processName)
+ *
+ *      where the processName and processCreationTime information
+ *      may be independently optional.
  *
  * Results:
- *      The process's creation time is returned. If an error occurs the
- *      reported creation time will be 0.
+ *      NULL The process does not exist.
+ *     !NULL The process descriptor is returned. It is the callers
+ *           responsibility to free the dynamically allocated memory.
  *
- * Side effects:
- *      None.
+ * Side Effects:
+ *     None
  *
- *----------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  */
 
-static uint64
-ProcessCreationTime(pid_t pid)
+static char *
+FileLockProcessDescriptor(pid_t pid)  // IN:
 {
-   int    err;
-   char   path[64];
-   char   buffer[1024];
-   uint64 creationTime;
+   char path[64];
+   char buffer[1024];
+   char *descriptor = NULL;
+
+   if (!FileLockIsValidProcess(pid)) {
+      return NULL;
+   }
 
    Str_Sprintf(path, sizeof path, "/proc/%d/stat", pid);
 
-   err = ReadSlashProc(path, buffer, sizeof buffer);
-
-   if (err == 0) {
-      uint32 i;
-      char   *p;
-      char   *last = NULL;
+   if (FileReadSlashProc(path, buffer, sizeof buffer) == 0) {
+      char *p;
+      char *q;
+      char *rest;
+      uint32 argc;
+      char *argv[22];
+      char *savePtr = NULL;
 
       /*
        * You are in a maze of twisty little fields, (virtually) all alike...
@@ -776,270 +685,195 @@ ProcessCreationTime(pid_t pid)
        *
        * A "man 5 proc" will provide illumination concerning all of the
        * fields found on this line of text. We code for the worst case
-       * and insure that file names containing spaces or parens are
+       * and ensure that file names containing spaces or parens are
        * properly handled.
        */
 
-      p = strrchr(buffer, ')');
-      ASSERT(p != NULL);
-      p = strtok_r(++p, " ", &last);
-      ASSERT(p != NULL);
+      p = strchr(buffer, '(');
 
-      for (i = 0; i < 19; i++) {
-         p = strtok_r(NULL, " ", &last);
-         ASSERT(p != NULL);
+      if ((p == NULL) || (p == buffer) || (*(p - 1) != ' ')) {
+         goto bail;
       }
 
-      if (sscanf(p, "%"FMT64"u", &creationTime) != 1) {
-         Warning(LGPFX" %s creationTime conversion error on %s.\n",
-                 __FUNCTION__, p);
+      *(p - 1) = '\0';
 
-         creationTime = 0;
+      q = strrchr(p + 1, ')');
+      if (q == NULL) {
+         goto bail;
       }
-   } else {
-      creationTime = 0;
+
+      rest = q + 1;
+      if (*rest != ' ') {
+         goto bail;
+      }
+
+      *rest++ = '\0';
+
+      argv[0] = strtok_r(buffer, " ", &savePtr);  // ensure no trailing spaces
+      argv[1] = p;
+
+      /* Map spaces in the process name to something benign */
+      q = p;
+
+      while ((q = strchr(q, ' ')) != NULL) {
+         *q = '_';
+      }
+
+      if (strlen(p) > LOG_MAX_PROC_NAME) {
+         p[LOG_MAX_PROC_NAME - 1] = ')';
+         p[LOG_MAX_PROC_NAME] = '\0';
+      }
+
+      for (argc = 2; argc < 22; argc++) {
+         argv[argc] = strtok_r((argc == 2) ? rest : NULL, " ", &savePtr);
+
+         if (argv[argc] == NULL) {
+            break;
+         }
+      }
+
+      if (argc == 22) {
+         descriptor = Str_SafeAsprintf(NULL, "%s-%s%s", argv[0], argv[21],
+                                       argv[1]);
+      }
    }
 
-   return creationTime;
+bail:
+
+   if (descriptor == NULL) {
+      /*
+       * Accessing /proc failed in some way. Emit a valid string that also
+       * provides a clue that there is/was a problem.
+       */
+
+      descriptor = Str_SafeAsprintf(NULL, "%d-0", pid);
+   }
+
+   return descriptor;
 }
 #elif defined(__APPLE__)
-static uint64
-ProcessCreationTime(pid_t pid)
-{
-    int                err;
-    size_t             size;
-    struct kinfo_proc  info;
-    int                mib[4];
-  
-    /* Request information about the specified process */
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
-    mib[2] = KERN_PROC_PID;
-    mib[3] = pid;
-
-    memset(&info, 0, sizeof info);
-    size = sizeof(info);
-    err = sysctl(mib, ARRAYSIZE(mib), &info, &size, NULL, 0);
-
-    /* Log any failures */
-    if (err == -1) {
-       Warning(LGPFX" %s sysctl for pid %d failed: %s\n", __FUNCTION__,
-               pid, strerror(errno));
-
-       return 0;
-    }
-
-    /* Return the process creation time */
-    return (info.kp_proc.p_starttime.tv_sec * CONST64U(1000000)) +
-            info.kp_proc.p_starttime.tv_usec;
-}
-#else
-static uint64
-ProcessCreationTime(pid_t pid)
-{
-   return 0;
-}
-#endif
-
-
 /*
- *----------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  *
- * FileLockValidOwner --
+ * FileLockProcessCreationTime --
  *
- *      Validate the lock file owner.
+ *      Returns the process creation time of the specified process.
  *
  * Results:
- *      TRUE    Yes
- *      FALSE   No
+ *      TRUE  Done!
+ *      FALSE Process doesn't exist
  *
  * Side effects:
- *      None.
+ *      None
  *
- *----------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  */
 
-Bool
-FileLockValidOwner(const char *executionID, // IN:
-                   const char *payload)     // IN:
+static Bool
+FileLockProcessCreationTime(pid_t pid,                 // IN:
+                            uint64 *procCreationTime)  // OUT:
 {
-   int pid;
+   int err;
+   size_t size;
+   struct kinfo_proc info;
+   int mib[4];
 
-   /* Validate the PID. */
-   if (sscanf(executionID, "%d", &pid) != 1) {
-      Warning(LGPFX" %s pid conversion error on %s. Assuming valid.\n",
-              __FUNCTION__, executionID);
+   ASSERT(procCreationTime);
 
-      return TRUE;
-   }
+   /* Request information about the specified process */
+   mib[0] = CTL_KERN;
+   mib[1] = KERN_PROC;
+   mib[2] = KERN_PROC_PID;
+   mib[3] = pid;
 
-   if (!FileLockIsValidProcess(pid)) {
+   memset(&info, 0, sizeof info);
+   size = sizeof info;
+   err = sysctl(mib, ARRAYSIZE(mib), &info, &size, NULL, 0);
+
+   if (err == -1) {
       return FALSE;
    }
 
-   /* If there is a payload perform additional validation. */
-   if (payload != NULL) {
-      uint64 fileCreationTime;
-      uint64 processCreationTime;
-
-      /*
-       * The payload is the process creation time of the process that
-       * created the lock file.
-       */
-
-      if (sscanf(payload, "%"FMT64"u", &fileCreationTime) != 1) {
-         Warning(LGPFX" %s payload conversion error on %s. Assuming valid.\n",
-                 __FUNCTION__, payload);
-
-         return TRUE;
-      }
-
-      /* Non-matching process creation times -> pid is not the creator */
-      processCreationTime = ProcessCreationTime(pid);
-
-      if ((fileCreationTime != 0) &&
-          (processCreationTime != 0) &&
-          (fileCreationTime != processCreationTime)) {
-         return FALSE;
-      }
-   }
+   *procCreationTime = (info.kp_proc.p_starttime.tv_sec * CONST64U(1000000)) +
+                        info.kp_proc.p_starttime.tv_usec;
 
    return TRUE;
 }
 
 
 /*
- *----------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  *
- *  FileLockOpenFile --
+ * FileLockProcessDescriptor --
  *
- *      Open the specified file
+ *      Returns the process descriptor of the specified process.
  *
- * Results:
- *      0       success
- *      > 0     failure (errno)
+ *      The format of a process descriptor is as follows:
  *
- * Side effects:
- *      May change the host file system.
+ *      processID-processCreationTime(processName)
  *
- *----------------------------------------------------------------------
- */
-
-int
-FileLockOpenFile(ConstUnicode pathName,        // IN:
-                 int flags,                    // IN:
-                 FILELOCK_FILE_HANDLE *handle) // OUT:
-{
-   ASSERT(pathName);
-
-   *handle = PosixFileOpener(pathName, flags, 0644);
-
-   return (*handle == -1) ? errno : 0;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- *  FileLockCloseFile --
- *
- *      Close the specified file
+ *      where the processName and processCreationTime information
+ *      may be independently optional.
  *
  * Results:
- *      0       success
- *      > 0     failure (errno)
- *
- * Side effects:
- *      May change the host file system.
- *
- *----------------------------------------------------------------------
- */
-
-int
-FileLockCloseFile(FILELOCK_FILE_HANDLE handle) // IN:
-{
-   return (close(handle) == -1) ? errno : 0;
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * FileLockReadFile --
- *
- *      Read a file.
- *
- * Results:
- *      0       success
- *      > 0     failure (errno)
+ *      NULL The process does not exist.
+ *     !NULL The process descriptor is returned. It is the callers
+ *           responsibility to free the dynamically allocated memory.
  *
  * Side effects:
  *      None
  *
- *-----------------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  */
 
-int
-FileLockReadFile(FILELOCK_FILE_HANDLE handle,  // IN:
-                 void *buf,                    // IN:
-                 uint32 requestedBytes,        // IN:
-                 uint32 *resultantBytes)       // OUT:
+static char *
+FileLockProcessDescriptor(pid_t pid)  // IN:
 {
-   int err;
-   ssize_t result;
+   uint64 procCreationTime;
 
-   result = read(handle, buf, requestedBytes);
-
-   if (result == -1) {
-      *resultantBytes = 0;
-      err = errno;
-   } else {
-      *resultantBytes = result;
-      err = 0;
+   if (!FileLockIsValidProcess(pid)) {
+      return NULL;
    }
 
-   return err;
+   if (!FileLockProcessCreationTime(pid, &procCreationTime)) {
+      return NULL;
+   }
+
+   return Str_SafeAsprintf(NULL, "%d-%"FMT64"u", pid, procCreationTime);
 }
-
-
+#else
 /*
- *-----------------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  *
- * FileLockWriteFile --
+ * FileLockProcessDescriptor --
  *
- *      Write a file.
+ *      Returns the process descriptor of the specified process.
+ *
+ *      The format of a process descriptor is as follows:
+ *
+ *      processID-processCreationTime(processName)
+ *
+ *      where the processName and processCreationTime information
+ *      may be independently optional.
  *
  * Results:
- *      0       success
- *      > 0     failure (errno)
+ *      NULL The process does not exist.
+ *     !NULL The process descriptor is returned. It is the callers
+ *           responsibility to free the dynamically allocated memory.
  *
  * Side effects:
- *      May change the host file system.
+ *      None
  *
- *-----------------------------------------------------------------------------
+ *---------------------------------------------------------------------------
  */
 
-int
-FileLockWriteFile(FILELOCK_FILE_HANDLE handle,  // IN:
-                  void *buf,                    // IN:
-                  uint32 requestedBytes,        // IN:
-                  uint32 *resultantBytes)       // OUT:
+static char *
+FileLockProcessDescriptor(pid_t pid)  // IN:
 {
-   int err;
-   ssize_t result;
-
-   result = write(handle, buf, requestedBytes);
-
-   if (result == -1) {
-      *resultantBytes = 0;
-      err = errno;
-   } else {
-      *resultantBytes = result;
-      err = 0;
-   }
-
-   return err;
+   return FileLockIsValidProcess(pid) ? Str_SafeAsprintf(NULL, "%d-0", pid) :
+                                        NULL;
 }
+#endif
 
 
 /*
@@ -1050,7 +884,8 @@ FileLockWriteFile(FILELOCK_FILE_HANDLE handle,  // IN:
  *      Returns the executionID of the caller.
  *
  * Results:
- *      The executionID of the caller.
+ *      The executionID of the caller. This is a dynamically allocated string;
+ *      the caller is responsible for its disposal.
  *
  * Side effects:
  *      The executionID of the caller is not thread safe. Locking is currently
@@ -1063,7 +898,112 @@ FileLockWriteFile(FILELOCK_FILE_HANDLE handle,  // IN:
 char *
 FileLockGetExecutionID(void)
 {
-   return Str_SafeAsprintf(NULL, "%d", FileLockGetPid());
+   char *descriptor = FileLockProcessDescriptor(getpid());
+
+   ASSERT(descriptor);  // Must be able to describe ourselves!
+
+   return descriptor;
+}
+
+
+/*
+ *---------------------------------------------------------------------------
+ *
+ * FileLockParseProcessDescriptor --
+ *
+ *      Attempt to parse the specified process descriptor. Return the
+ *      pieces requested.
+ *
+ * Results:
+ *      TRUE  Process descriptor is valid.
+ *      FALSE Process descriptor is invalid.
+ *
+ * Side effects:
+ *      None
+ *
+ *---------------------------------------------------------------------------
+ */
+
+static Bool
+FileLockParseProcessDescriptor(const char *procDescriptor,  // IN:
+                               pid_t *pid,                  // OUT:
+                               uint64 *procCreationTime)    // OUT:
+{
+   ASSERT(procDescriptor);
+   ASSERT(pid);
+   ASSERT(procCreationTime);
+
+   if (sscanf(procDescriptor, "%d-%"FMT64"u", pid, procCreationTime) != 2) {
+      if (sscanf(procDescriptor, "%d", pid) == 1) {
+         *procCreationTime = 0ULL;
+      } else {
+         return FALSE;
+      }
+   }
+ 
+   return *pid >= 0;  
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileLockValidExecutionID --
+ *
+ *      Validate the execution ID.
+ *
+ * Results:
+ *      TRUE    Yes
+ *      FALSE   No
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+Bool
+FileLockValidExecutionID(const char *executionID)  // IN:
+{
+   pid_t filePID;
+   pid_t procPID;
+   Bool gotFileData;
+   Bool gotProcData;
+   char *procDescriptor;
+   uint64 fileCreationTime;
+   uint64 procCreationTime;
+
+   gotFileData = FileLockParseProcessDescriptor(executionID, &filePID,
+                                                &fileCreationTime);
+
+   if (!gotFileData) {
+      Warning(LGPFX" %s parse error on '%s'. Assuming valid.\n",
+              __FUNCTION__, executionID);
+
+      return TRUE;  // Assume TRUE - preserve a lock - on parse error
+   }
+
+   procDescriptor = FileLockProcessDescriptor(filePID);
+
+   if (procDescriptor == NULL) {
+      return FALSE;  // process doesn't exist
+   }
+
+   gotProcData = FileLockParseProcessDescriptor(procDescriptor, &procPID,
+                                                &procCreationTime);
+
+   ASSERT(gotProcData);         // We built it; it had better be good
+   ASSERT(procPID == filePID);  // This better match what we started with...
+
+   free(procDescriptor);
+
+   if ((fileCreationTime != 0) &&
+       (procCreationTime != 0) &&
+       (fileCreationTime != procCreationTime)) {
+      return FALSE;  // The process no longer exists
+   } else {
+      return TRUE;  // Looks valid...
+   }
 }
 
 
@@ -1077,7 +1017,7 @@ FileLockGetExecutionID(void)
  *      points to.
  *
  * Results:
- *      The normalized path
+ *      The normalized path or NULL on error
  *
  * Side effects:
  *      None
@@ -1089,41 +1029,28 @@ static Unicode
 FileLockNormalizePath(ConstUnicode filePath)  // IN:
 {
    Unicode result;
-   struct stat statbuf;
+   Unicode fullPath;
 
-   if ((Posix_Lstat(filePath, &statbuf) == 0) &&
-        (S_ISLNK(statbuf.st_mode))) {
-      Unicode fullPath;
-      Unicode baseDir = NULL;
-      Unicode fileName = NULL;
+   Unicode dirName = NULL;
+   Unicode fileName = NULL;
 
-      /*
-       * The file to be locked is a symbolic path. Place the lock file
-       * next to the file, not where the symbolic path points to.
-       */
+   /*
+    * If the file to be locked is a symbolic link the lock file belongs next
+    * to the symbolic link, not "off" where the symbolic link points to.
+    * Translation: Don't "full path" the entire path of the file to be locked;
+    * "full path" the dirName of the path, leaving the fileName alone.
+    */
 
-       File_GetPathName(filePath, &baseDir, &fileName);
+   File_GetPathName(filePath, &dirName, &fileName);
 
-       fullPath = File_FullPath(baseDir);
+   fullPath = File_FullPath(dirName);
 
-       if (fullPath == NULL) {
-          result = NULL;
-       } else {
-          result = Unicode_Join(fullPath, DIRSEPS, fileName, NULL);
+   result = (fullPath == NULL) ? NULL : Unicode_Join(fullPath, DIRSEPS,
+                                                     fileName, NULL);
 
-          Unicode_Free(fullPath);
-       }
-
-       Unicode_Free(baseDir);
-       Unicode_Free(fileName);
-   } else {
-      /*
-       * The stat failed or the file is not a symbolic link - do a fullpath
-       * on the argument path to normalize it.
-       */
-
-      result = File_FullPath(filePath);
-   }
+   Unicode_Free(fullPath);
+   Unicode_Free(dirName);
+   Unicode_Free(fileName);
 
    return result;
 }
@@ -1156,15 +1083,14 @@ FileLockNormalizePath(ConstUnicode filePath)  // IN:
  *----------------------------------------------------------------------
  */
 
-void *
+FileLockToken *
 FileLock_Lock(ConstUnicode filePath,         // IN:
               const Bool readOnly,           // IN:
               const uint32 msecMaxWaitTime,  // IN:
               int *err)                      // OUT:
 {
-   void *lockToken;
    Unicode normalizedPath;
-   char creationTimeString[32];
+   FileLockToken *tokenPtr;
 
    ASSERT(filePath);
    ASSERT(err);
@@ -1173,18 +1099,15 @@ FileLock_Lock(ConstUnicode filePath,         // IN:
    if (normalizedPath == NULL) {
       *err = EINVAL;
 
-      return NULL;
+      tokenPtr = NULL;
+   } else {
+      tokenPtr = FileLockIntrinsic(normalizedPath, !readOnly, msecMaxWaitTime,
+                                   err);
+
+      Unicode_Free(normalizedPath);
    }
 
-   Str_Sprintf(creationTimeString, sizeof creationTimeString, "%"FMT64"u",
-               ProcessCreationTime(FileLockGetPid()));
-
-   lockToken = FileLockIntrinsic(normalizedPath, !readOnly, msecMaxWaitTime,
-                                 creationTimeString, err);
-
-   Unicode_Free(normalizedPath);
-
-   return lockToken;
+   return tokenPtr;
 }
 
 
@@ -1220,12 +1143,12 @@ FileLock_IsLocked(ConstUnicode filePath,  // IN:
          *err = EINVAL;
       }
 
-      return FALSE;
+      isLocked = FALSE;
+   } else {
+      isLocked = FileLockIsLocked(normalizedPath, err);
+
+      Unicode_Free(normalizedPath);
    }
-
-   isLocked = FileLockIsLocked(normalizedPath, err);
-
-   Unicode_Free(normalizedPath);
 
    return isLocked;
 }
@@ -1249,123 +1172,23 @@ FileLock_IsLocked(ConstUnicode filePath,  // IN:
  */
 
 int
-FileLock_Unlock(ConstUnicode filePath,  // IN:
-                const void *lockToken)  // IN:
+FileLock_Unlock(const FileLockToken *lockToken)  // IN:
 {
-   int err;
-   Unicode normalizedPath;
-
-   ASSERT(filePath);
    ASSERT(lockToken);
 
-   normalizedPath = FileLockNormalizePath(filePath);
-   if (normalizedPath == NULL) {
-      return EINVAL;
-   }
-
-   err = FileUnlockIntrinsic(normalizedPath, lockToken);
-
-   Unicode_Free(normalizedPath);
-
-   return err;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * FileLock_DeleteFileVMX --
- *
- *      The VMX file delete primitive.
- *
- * Results:
- *      0       unlocked
- *      >0      errno
- *
- * Side effects:
- *      Changes the host file system.
- *
- * Note:
- *      THIS IS A HORRIBLE HACK AND NEEDS TO BE REMOVED ASAP!!!
- *
- *----------------------------------------------------------------------
- */
-
-int
-FileLock_DeleteFileVMX(ConstUnicode filePath)  // IN:
-{
-   int err;
-   Unicode normalizedPath;
-
-   ASSERT(filePath);
-
-   normalizedPath = FileLockNormalizePath(filePath);
-   if (normalizedPath == NULL) {
-      return EINVAL;
-   }
-
-   err = FileLockHackVMX(normalizedPath);
-
-   Unicode_Free(normalizedPath);
-
-   return err;
+   return FileUnlockIntrinsic((FileLockToken *) lockToken);
 }
 
 #else
-
-/*
- * Stub functions for unsupported platforms.
- */
- 
-int
-FileLockCloseFile(FILELOCK_FILE_HANDLE handle)  // IN:
-{
-   NOT_IMPLEMENTED();
-}
-
-
 char *
 FileLockGetExecutionID(void)
 {
    NOT_IMPLEMENTED();
 }
 
-
-int
-FileLockOpenFile(ConstUnicode pathName,         // IN:
-                 int flags,                     // IN:
-                 FILELOCK_FILE_HANDLE *handle)  // OUT:
-{
-
-   NOT_IMPLEMENTED();
-}
-
-
-int
-FileLockReadFile(FILELOCK_FILE_HANDLE handle,  // IN:
-                 void *buf,                    // IN:
-                 uint32 requestedBytes,        // IN:
-                 uint32 *resultantBytes)       // OUT:
-{
-   NOT_IMPLEMENTED();
-}
-
-
 Bool
-FileLockValidOwner(const char *executionID,  // IN:
-                   const char *payload)      // IN:
+FileLockValidExecutionID(const char *executionID)  // IN:
 {
    NOT_IMPLEMENTED();
 }
-
-
-int
-FileLockWriteFile(FILELOCK_FILE_HANDLE handle,  // IN:
-                  void *buf,                    // IN:
-                  uint32 requestedBytes,        // IN:
-                  uint32 *resultantBytes)       // OUT:
-{
-   NOT_IMPLEMENTED();
-}
-
 #endif /* !__FreeBSD__ && !sun */

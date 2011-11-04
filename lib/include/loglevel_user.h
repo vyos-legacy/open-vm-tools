@@ -15,7 +15,7 @@
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA.
  *
  *********************************************************/
-  
+
 #ifndef _LOGLEVEL_USER_H_
 #define _LOGLEVEL_USER_H_
 
@@ -33,11 +33,12 @@
    LOGLEVEL_VAR(aio), \
    LOGLEVEL_VAR(passthrough), \
    LOGLEVEL_VAR(tools), \
-   LOGLEVEL_VAR(vsockLookup), \
    LOGLEVEL_VAR(license), \
    LOGLEVEL_VAR(vui), \
    LOGLEVEL_VAR(stats), \
    LOGLEVEL_VAR(cpucount), \
+   LOGLEVEL_VAR(ovhdmem), \
+   LOGLEVEL_VAR(vigor), \
    \
    /* user/io */ \
    LOGLEVEL_VAR(disk), \
@@ -62,15 +63,20 @@
    LOGLEVEL_VAR(extcfgdevice), \
    LOGLEVEL_VAR(flashram), \
    LOGLEVEL_VAR(efinv), \
+   LOGLEVEL_VAR(pvnvram), \
    LOGLEVEL_VAR(pci), \
    LOGLEVEL_VAR(pci_vide), \
    LOGLEVEL_VAR(pci_uhci), \
    LOGLEVEL_VAR(uhci), \
    LOGLEVEL_VAR(pci_ehci), \
    LOGLEVEL_VAR(ehci), \
+   LOGLEVEL_VAR(pci_xhci), \
+   LOGLEVEL_VAR(usb_xhci), \
    LOGLEVEL_VAR(usb), \
    LOGLEVEL_VAR(vusbmouse), \
    LOGLEVEL_VAR(vusbkeyboard), \
+   LOGLEVEL_VAR(vusbhid), \
+   LOGLEVEL_VAR(vusbtablet), \
    LOGLEVEL_VAR(hidQueue), \
    LOGLEVEL_VAR(pci_1394), \
    LOGLEVEL_VAR(1394), \
@@ -82,7 +88,6 @@
    LOGLEVEL_VAR(vide), \
    LOGLEVEL_VAR(ideCdrom), \
    LOGLEVEL_VAR(hostonly), \
-   LOGLEVEL_VAR(backdoorAbsMouse), \
    LOGLEVEL_VAR(oprom), \
    LOGLEVEL_VAR(http), \
    LOGLEVEL_VAR(vmci), \
@@ -90,7 +95,9 @@
    LOGLEVEL_VAR(vmxnet3), \
    LOGLEVEL_VAR(pci_vmxnet3), \
    LOGLEVEL_VAR(vcpuhotplug), \
+   LOGLEVEL_VAR(vcpuNUMA), \
    LOGLEVEL_VAR(heci), \
+   LOGLEVEL_VAR(vmiopluginlib), \
    \
    /* user/disk */ \
    LOGLEVEL_VAR(aioMgr), \
@@ -112,13 +119,17 @@
    LOGLEVEL_VAR(gui), \
    LOGLEVEL_VAR(guiWin32), \
    LOGLEVEL_VAR(mks), \
+   LOGLEVEL_VAR(mksSWB), \
    LOGLEVEL_VAR(mksClient), \
    LOGLEVEL_VAR(mksServer), \
    LOGLEVEL_VAR(mksKeyboard), \
+   LOGLEVEL_VAR(keymap), \
    LOGLEVEL_VAR(mksMouse), \
+   LOGLEVEL_VAR(mksHostCursor), \
    LOGLEVEL_VAR(mksHostOps), \
    LOGLEVEL_VAR(mksGLManager), \
    LOGLEVEL_VAR(mksGLShader), \
+   LOGLEVEL_VAR(mksGLState), \
    LOGLEVEL_VAR(vdpPlugin), \
    \
    /* user/sound */ \
@@ -145,7 +156,6 @@
    LOGLEVEL_VAR(macbw), \
    LOGLEVEL_VAR(macfi), \
    LOGLEVEL_VAR(vmkcfg), \
-   LOGLEVEL_VAR(vmxfer), \
    LOGLEVEL_VAR(poll), \
    LOGLEVEL_VAR(barrier), \
    LOGLEVEL_VAR(mstat), \
@@ -167,12 +177,16 @@
    LOGLEVEL_VAR(ipc), \
    LOGLEVEL_VAR(smbios), \
    LOGLEVEL_VAR(acpi), \
+   LOGLEVEL_VAR(acpiGPE), \
+   LOGLEVEL_VAR(vmgenc), \
    LOGLEVEL_VAR(xpmode), \
    LOGLEVEL_VAR(snapshot), \
    LOGLEVEL_VAR(asyncsocket), \
    LOGLEVEL_VAR(mainMem), \
    LOGLEVEL_VAR(mainMemReplayCheck), \
    LOGLEVEL_VAR(memoryHotplug), \
+   LOGLEVEL_VAR(numa), \
+   LOGLEVEL_VAR(numaHost), \
    LOGLEVEL_VAR(remoteDevice), \
    LOGLEVEL_VAR(vncDecode), \
    LOGLEVEL_VAR(vncEncode), \
@@ -186,7 +200,6 @@
    LOGLEVEL_VAR(battery), \
    LOGLEVEL_VAR(fakeDma), \
    LOGLEVEL_VAR(shader), \
-   LOGLEVEL_VAR(numa), \
    LOGLEVEL_VAR(machPoll), \
    LOGLEVEL_VAR(replayVMX), \
    LOGLEVEL_VAR(vmWindowController), \
@@ -194,6 +207,7 @@
    LOGLEVEL_VAR(duiMKS), \
    LOGLEVEL_VAR(worker), \
    LOGLEVEL_VAR(duiDevices), \
+   LOGLEVEL_VAR(duiLocalization), \
    LOGLEVEL_VAR(duiProxyApps), \
    LOGLEVEL_VAR(docker), \
    LOGLEVEL_VAR(vmIPC), \
@@ -214,14 +228,29 @@
    LOGLEVEL_VAR(blit), /* lib/blit */ \
    LOGLEVEL_VAR(vmnetBridge), \
    LOGLEVEL_VAR(wifi), /* macWireless and wpa_supplicant */ \
+   LOGLEVEL_VAR(pvfslib), \
    LOGLEVEL_VAR(brtalk), \
    LOGLEVEL_VAR(button), \
    LOGLEVEL_VAR(util), \
+   LOGLEVEL_VAR(vmcf), \
+   LOGLEVEL_VAR(win32util), \
+   LOGLEVEL_VAR(largepage), \
    LOGLEVEL_VAR(guestAppMonitor), \
    LOGLEVEL_VAR(syncWaitQ), \
-   LOGLEVEL_VAR(win32util), \
+   LOGLEVEL_VAR(sg), /* lib/sg */ \
+   LOGLEVEL_VAR(ftcpt), \
    LOGLEVEL_VAR(wrapLib),  \
+   LOGLEVEL_VAR(digestlib), \
+   LOGLEVEL_VAR(inputdevtap), \
+   LOGLEVEL_VAR(objlib), \
+   LOGLEVEL_VAR(svgadevtap), \
+   LOGLEVEL_VAR(masReceipt), /* lib/masReceipt */ \
+   LOGLEVEL_VAR(serviceImpl), /* lib/serviceImpl */ \
+   LOGLEVEL_VAR(serviceUser), /* lib/serviceUser */ \
+   LOGLEVEL_VAR(ssl), \
+   LOGLEVEL_VAR(vmrc), \
+   /* end of list */
 
 LOGLEVEL_EXTENSION_DECLARE(LOGLEVEL_USER);
 
-#endif /* _LOGLEVEL_USER_H_ */ 
+#endif /* _LOGLEVEL_USER_H_ */

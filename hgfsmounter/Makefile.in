@@ -66,13 +66,12 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(sbindir)"
 PROGRAMS = $(sbin_PROGRAMS)
-am_mount_vmhgfs_OBJECTS = hgfsmounter.$(OBJEXT) \
-	stub-user-util.$(OBJEXT)
+am_mount_vmhgfs_OBJECTS = hgfsmounter.$(OBJEXT)
 mount_vmhgfs_OBJECTS = $(am_mount_vmhgfs_OBJECTS)
-mount_vmhgfs_DEPENDENCIES = ../lib/misc/libMisc.la \
-	../lib/string/libString.la \
+mount_vmhgfs_DEPENDENCIES = ../lib/string/libString.la \
 	../lib/panicDefault/libPanicDefault.la \
-	../lib/panic/libPanic.la ../lib/stubs/libStubs.la
+	../lib/panic/libPanic.la ../lib/lock/libLock.la \
+	../lib/misc/libMisc.la ../lib/stubs/libStubs.la
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -101,9 +100,12 @@ AWK = @AWK@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
+COMMON_PLUGIN_INSTALLDIR = @COMMON_PLUGIN_INSTALLDIR@
 COMMON_XLIBS = @COMMON_XLIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+CUNIT_CPPFLAGS = @CUNIT_CPPFLAGS@
+CUNIT_LIBS = @CUNIT_LIBS@
 CXX = @CXX@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
@@ -139,6 +141,7 @@ GTK_CPPFLAGS = @GTK_CPPFLAGS@
 GTK_LIBS = @GTK_LIBS@
 HAVE_DOT = @HAVE_DOT@
 HAVE_PKG_CONFIG = @HAVE_PKG_CONFIG@
+HGFS_LIBS = @HGFS_LIBS@
 ICU_CPPFLAGS = @ICU_CPPFLAGS@
 ICU_LIBS = @ICU_LIBS@
 INSTALL = @INSTALL@
@@ -146,23 +149,18 @@ INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
+INSTVMSG = @INSTVMSG@
 KERNEL_RELEASE = @KERNEL_RELEASE@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
-LIBPNG_CPPFLAGS = @LIBPNG_CPPFLAGS@
-LIBPNG_LIBS = @LIBPNG_LIBS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
 LIBVMTOOLS_LIBADD = @LIBVMTOOLS_LIBADD@
 LIB_AUTH_CPPFLAGS = @LIB_AUTH_CPPFLAGS@
-LIB_FILE_CPPFLAGS = @LIB_FILE_CPPFLAGS@
-LIB_HGFS_SERVER_CPPFLAGS = @LIB_HGFS_SERVER_CPPFLAGS@
 LIB_IMPERSONATE_CPPFLAGS = @LIB_IMPERSONATE_CPPFLAGS@
-LIB_MISC_CPPFLAGS = @LIB_MISC_CPPFLAGS@
-LIB_PROC_MGR_CPPFLAGS = @LIB_PROC_MGR_CPPFLAGS@
-LIB_STRING_CPPFLAGS = @LIB_STRING_CPPFLAGS@
 LIB_USER_CPPFLAGS = @LIB_USER_CPPFLAGS@
+LINUXINCLUDE = @LINUXINCLUDE@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
@@ -186,6 +184,8 @@ PACKAGE_STRING = @PACKAGE_STRING@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 PACKAGE_URL = @PACKAGE_URL@
 PACKAGE_VERSION = @PACKAGE_VERSION@
+PAM_CPPFLAGS = @PAM_CPPFLAGS@
+PAM_LIBS = @PAM_LIBS@
 PAM_PREFIX = @PAM_PREFIX@
 PATH_SEPARATOR = @PATH_SEPARATOR@
 PLUGIN_CPPFLAGS = @PLUGIN_CPPFLAGS@
@@ -195,31 +195,29 @@ PROCPS_LIBS = @PROCPS_LIBS@
 RANLIB = @RANLIB@
 RPCGEN = @RPCGEN@
 RPCGENFLAGS = @RPCGENFLAGS@
+RPCGEN_WRAPPER = @RPCGEN_WRAPPER@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 STRIP = @STRIP@
 SYSDIR = @SYSDIR@
 TARGET_OS = @TARGET_OS@
+TEST_PLUGIN_INSTALLDIR = @TEST_PLUGIN_INSTALLDIR@
 TOOLS_VERSION = @TOOLS_VERSION@
-URIPARSER_CPPFLAGS = @URIPARSER_CPPFLAGS@
-URIPARSER_LIBS = @URIPARSER_LIBS@
 VERSION = @VERSION@
 VIX_LIBADD = @VIX_LIBADD@
 VMSVC_PLUGIN_INSTALLDIR = @VMSVC_PLUGIN_INSTALLDIR@
 VMTOOLS_CPPFLAGS = @VMTOOLS_CPPFLAGS@
 VMTOOLS_LIBS = @VMTOOLS_LIBS@
 VMUSR_PLUGIN_INSTALLDIR = @VMUSR_PLUGIN_INSTALLDIR@
-VMWARE_USER_CPPFLAGS = @VMWARE_USER_CPPFLAGS@
-VMWARE_USER_LDADD = @VMWARE_USER_LDADD@
+XCOMPOSITE_LIBS = @XCOMPOSITE_LIBS@
 XDR_LIBS = @XDR_LIBS@
 XMKMF = @XMKMF@
+XSM_LIBS = @XSM_LIBS@
 X_CFLAGS = @X_CFLAGS@
 X_EXTRA_LIBS = @X_EXTRA_LIBS@
 X_LIBS = @X_LIBS@
 X_PRE_LIBS = @X_PRE_LIBS@
-ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
-ZLIB_LIBS = @ZLIB_LIBS@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
@@ -277,10 +275,11 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-mount_vmhgfs_LDADD = ../lib/misc/libMisc.la ../lib/string/libString.la \
+mount_vmhgfs_LDADD = ../lib/string/libString.la \
 	../lib/panicDefault/libPanicDefault.la \
-	../lib/panic/libPanic.la ../lib/stubs/libStubs.la
-mount_vmhgfs_SOURCES = hgfsmounter.c stub-user-util.c
+	../lib/panic/libPanic.la ../lib/lock/libLock.la \
+	../lib/misc/libMisc.la ../lib/stubs/libStubs.la
+mount_vmhgfs_SOURCES = hgfsmounter.c
 all: all-am
 
 .SUFFIXES:
@@ -369,7 +368,6 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hgfsmounter.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/stub-user-util.Po@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -606,17 +604,15 @@ uninstall-am: uninstall-sbinPROGRAMS
 @FREEBSD_TRUE@install-exec-hook:
 @FREEBSD_TRUE@	mv $(DESTDIR)$(sbindir)/mount.vmhgfs \
 @FREEBSD_TRUE@		$(DESTDIR)$(sbindir)/mount_vmhgfs
-@FREEBSD_TRUE@@WITH_ROOT_PRIVILEGES_TRUE@	chmod u+s $(DESTDIR)$(sbindir)/mount_vmhgfs
 @FREEBSD_TRUE@	-$(MKDIR_P) $(DESTDIR)/sbin
 @FREEBSD_TRUE@	-$(LN_S) $(DESTDIR)$(sbindir)/mount_vmhgfs \
 @FREEBSD_TRUE@		$(DESTDIR)/sbin/mount_vmhgfs &> /dev/null
 @FREEBSD_TRUE@uninstall-hook:
 @FREEBSD_TRUE@	rm -f $(DESTDIR)$(sbindir)/mount_vmhgfs
 @FREEBSD_FALSE@install-exec-hook:
-@FREEBSD_FALSE@@WITH_ROOT_PRIVILEGES_TRUE@	chmod u+s $(DESTDIR)$(sbindir)/mount.vmhgfs
 @FREEBSD_FALSE@	-$(MKDIR_P) $(DESTDIR)/sbin
-#	-$(LN_S) $(DESTDIR)$(sbindir)/mount.vmhgfs \
-#		$(DESTDIR)/sbin/mount.vmhgfs &> /dev/null
+@FREEBSD_FALSE@	-$(LN_S) $(DESTDIR)$(sbindir)/mount.vmhgfs \
+@FREEBSD_FALSE@		$(DESTDIR)/sbin/mount.vmhgfs &> /dev/null
 @FREEBSD_FALSE@uninstall-hook:
 @FREEBSD_FALSE@	rm -f $(DESTDIR)/sbin/mount.vmhgfs
 

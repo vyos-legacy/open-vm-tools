@@ -37,14 +37,13 @@ HEADERS := block.h
 HEADERS += vnode_if.h
 HEADERS += vmblock_k.h
 HEADERS += os.h
-HEADERS += compat_freebsd.h
-HEADERS += compat_vop.h
 
 CSRCS  := block.c
-CSRCS  += dbllnklst.c
+CSRCS  += os_panic.c
 CSRCS  += vfsops.c
 CSRCS  += vnops.c
 CSRCS  += subr.c
+CSRCS  += stubs.c
 
 SRCS   := $(HEADERS) $(CSRCS)
 
@@ -57,6 +56,16 @@ KLDMOD  = t
 VMBLOCK := $(MAINSRCROOT)/modules/vmblock
 
 CFLAGS  += $(INCLUDE) -Wall -Werror
+
+.ifdef OVT_SOURCE_DIR
+   CFLAGS += -I$(OVT_SOURCE_DIR)/lib/include
+   CFLAGS += -I$(OVT_SOURCE_DIR)/modules/freebsd/shared
+   CFLAGS += -I$(OVT_SOURCE_DIR)/modules/freebsd/vmblock
+   CFLAGS += -I$(OVT_SOURCE_DIR)/modules/shared/vmblock
+   VPATH  := $(OVT_SOURCE_DIR)/modules/shared/vmblock
+.else
+   CFLAGS += -Ishared
+.endif
 
 EXPORT_SYMS = NO
 

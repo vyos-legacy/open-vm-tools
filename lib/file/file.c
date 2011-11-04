@@ -21,6 +21,10 @@
  *
  *        Interface to host file system.  See also filePosix.c,
  *        fileWin32.c, etc.
+ *
+ *        If a function can be implemented such that it has no dependencies
+ *        outside of lib/misc, place the function in fileStandAlone.c, NOT
+ *        here.
  */
 
 #if defined(_WIN32)
@@ -47,6 +51,7 @@
 #include "util.h"
 #include "str.h"
 #include "msg.h"
+#include "log.h"
 #include "random.h"
 #include "uuid.h"
 #include "config.h"
@@ -54,23 +59,14 @@
 #include "file.h"
 #include "fileIO.h"
 #include "fileInt.h"
-#include "stats_file.h"
 #include "dynbuf.h"
 #include "base64.h"
 #include "timeutil.h"
 #include "hostinfo.h"
-#if !defined(N_PLAT_NLM)
 #include "vm_atomic.h"
-#endif
 
 #include "unicodeOperations.h"
 
-#define SETUP_DEFINE_VARS
-#include "stats_user_setup.h"
-
-#if !defined(O_BINARY)
-#define O_BINARY 0
-#endif
 
 /*
  *----------------------------------------------------------------------
@@ -81,9 +77,9 @@
  *
  *      XXX - This function invokes access(), which uses the real uid,
  *      not the effective uid, so it probably does not do what you 
- *      expect.  Instead it should use FileAttributes(), which calls
- *      Posix_Stat() and uses the effective uid, but it's too risky 
- *      to fix right now.  See PR 459242.
+ *      expect.  Instead it should use Posix_EuidAccess(), which 
+ *      uses the effective uid, but it's too risky to fix right now.
+ *      See PR 459242.
  *
  * Results:
  *      TRUE    file is accessible with the process' real uid
@@ -166,10 +162,10 @@ File_IsDirectory(ConstUnicode pathName)  // IN:
  *
  * File_GetFilePermissions --
  *
- *	Return the read / write / execute permissions of a file.
+ *      Return the read / write / execute permissions of a file.
  *
  * Results:
- *	TRUE if success, FALSE otherwise.
+ *      TRUE if success, FALSE otherwise.
  *
  * Side effects:
  *      None
@@ -184,18 +180,24 @@ File_GetFilePermissions(ConstUnicode pathName,  // IN:
    FileData fileData;
 
    ASSERT(mode);
+
    if (FileAttributes(pathName, &fileData) != 0) {
       return FALSE;
    }
+
    *mode = fileData.fileMode;
-#ifdef _WIN32
+
+#if defined(_WIN32)
       /*
-       *  On Win32 implementation of FileAttributes does not return execution bit.
+       * On Win32 implementation of FileAttributes does not return execution
+       * bit.
        */
+
       if (FileIO_Access(pathName, FILEIO_ACCESS_EXEC) == FILEIO_SUCCESS) {
          *mode |= S_IXUSR;
       }
 #endif
+
    return TRUE;
 }
 
@@ -255,39 +257,6 @@ File_UnlinkNoFollow(ConstUnicode pathName)  // IN:
 /*
  *----------------------------------------------------------------------
  *
- * File_GetModTime --
- *
- *      Get the last modification time of a file and return it. The time
- *      unit is seconds since the POSIX/UNIX/Linux epoch.
- *
- * Results:
- *      Last modification time of file or -1 if error.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------
- */
-
-int64
-File_GetModTime(ConstUnicode pathName)  // IN:
-{
-   int64 theTime;
-   struct stat statbuf;
-
-   if (Posix_Stat(pathName, &statbuf) == 0) {
-      theTime = statbuf.st_mtime;
-   } else {
-      theTime = -1;
-   }
-
-   return theTime;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
  * File_CreateDirectory --
  *
  *      Creates the specified directory.
@@ -304,7 +273,9 @@ File_GetModTime(ConstUnicode pathName)  // IN:
 Bool
 File_CreateDirectory(ConstUnicode pathName)  // IN:
 {
-   return (FileCreateDirectory(pathName) == 0) ? TRUE : FALSE;
+   int err = FileCreateDirectory(pathName, 0777);
+
+   return err == 0;
 }
 
 
@@ -328,8 +299,9 @@ File_CreateDirectory(ConstUnicode pathName)  // IN:
 Bool
 File_EnsureDirectory(ConstUnicode pathName)  // IN:
 {
-   int res = FileCreateDirectory(pathName);
-   return ((0 == res) || (EEXIST == res));
+   int err = FileCreateDirectory(pathName, 0777);
+
+   return ((err == 0) || (err == EEXIST));
 }
 
 
@@ -352,11 +324,30 @@ File_EnsureDirectory(ConstUnicode pathName)  // IN:
 Bool
 File_DeleteEmptyDirectory(ConstUnicode pathName)  // IN:
 {
-   return (FileRemoveDirectory(pathName) == 0) ? TRUE : FALSE;
+   Bool returnValue = TRUE;
+
+   if (FileRemoveDirectory(pathName) != 0) {
+#if defined(_WIN32)
+      /*
+       * Directory may have read-only bit set. Unset the
+       * read-only bit and try deleting one more time.
+       */
+      if (File_SetFilePermissions(pathName, S_IWUSR)) {
+         if (FileRemoveDirectory(pathName) != 0) {
+            returnValue = FALSE;
+         }
+      } else {
+         returnValue = FALSE;
+      }
+#else
+      returnValue =  FALSE;
+#endif
+   }
+
+   return returnValue;
 }
 
 
-#if !defined(N_PLAT_NLM)
 /*
  *----------------------------------------------------------------------
  *
@@ -378,7 +369,7 @@ static const char *
 GetOldMachineID(void)
 {
    static Atomic_Ptr atomic; /* Implicitly initialized to NULL. --mbellon */
-   const char        *machineID;
+   const char *machineID;
 
    machineID = Atomic_ReadPtr(&atomic);
 
@@ -391,16 +382,16 @@ GetOldMachineID(void)
 
       Hostinfo_MachineID(&hashValue, &hardwareID);
 
-      // Build the raw machineID
+      /* Build the raw machineID */
       memcpy(rawMachineID, &hashValue, sizeof hashValue);
       memcpy(&rawMachineID[sizeof hashValue], &hardwareID,
              sizeof hardwareID);
 
-      // Base 64 encode the binary data to obtain printable characters
+      /* Base 64 encode the binary data to obtain printable characters */
       Base64_Encode(rawMachineID, sizeof rawMachineID, encodedMachineID,
                     sizeof encodedMachineID, NULL);
 
-      // remove any '/' from the encoding; no problem using it for a file name
+      /* remove '/' from the encoding; no problem using it for a file name */
       for (p = encodedMachineID; *p; p++) {
          if (*p == '/') {
             *p = '-';
@@ -446,7 +437,7 @@ const char *
 FileLockGetMachineID(void)
 {
    static Atomic_Ptr atomic; /* Implicitly initialized to NULL. --mbellon */
-   const char        *machineID;
+   const char *machineID;
 
    machineID = Atomic_ReadPtr(&atomic);
 
@@ -506,21 +497,21 @@ FileLockGetMachineID(void)
  *
  * OldMachineIDMatch --
  *
- *	Do the old-style MachineIDs match?
+ *      Do the old-style MachineIDs match?
  *
  * Results:
  *      TRUE     Yes
  *      FALSE    No
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *-----------------------------------------------------------------------------
  */
 
 static Bool
-OldMachineIDMatch(const char *first,  // IN:
-                  const char *second) // IN:
+OldMachineIDMatch(const char *first,   // IN:
+                  const char *second)  // IN:
 {
 #if defined(__APPLE__) || defined(linux)
    /* Ignore the host name hash */
@@ -542,6 +533,7 @@ OldMachineIDMatch(const char *first,  // IN:
    if ((result == FALSE) || (len != 12)) {
       Warning("%s: unexpected decode problem #1 (%s)\n", __FUNCTION__,
               first);
+
       return FALSE;
    }
 
@@ -556,6 +548,7 @@ OldMachineIDMatch(const char *first,  // IN:
    if ((result == FALSE) || (len != 12)) {
       Warning("%s: unexpected decode problem #2 (%s)\n", __FUNCTION__,
               second);
+
       return FALSE;
    }
 
@@ -572,21 +565,21 @@ OldMachineIDMatch(const char *first,  // IN:
  *
  * FileLockMachineIDMatch --
  *
- *	Do the MachineIDs match?
+ *      Do the MachineIDs match?
  *
  * Results:
  *      TRUE     Yes
  *      FALSE    No
  *
  * Side effects:
- *	None.
+ *      None.
  *
  *-----------------------------------------------------------------------------
  */
 
 Bool
-FileLockMachineIDMatch(char *hostMachineID,  // IN:
-                       char *otherMachineID) // IN:
+FileLockMachineIDMatch(char *hostMachineID,   // IN:
+                       char *otherMachineID)  // IN:
 {
    if (strncmp(hostMachineID, "uuid=", 5) == 0) {
       if (strncmp(otherMachineID, "uuid=", 5) == 0) {
@@ -637,7 +630,6 @@ File_IsEmptyDirectory(ConstUnicode pathName)  // IN:
 
    return numFiles == 0;
 }
-#endif /* N_PLAT_NLM */
 
 
 /*
@@ -648,8 +640,8 @@ File_IsEmptyDirectory(ConstUnicode pathName)  // IN:
  *      Check if specified file is a regular file.
  *
  * Results:
- *      TRUE	is a regular file
- *      FALSE	is not a regular file or an error occured.
+ *      TRUE    is a regular file
+ *      FALSE   is not a regular file or an error occured.
  *
  * Side effects:
  *      None
@@ -670,588 +662,14 @@ File_IsFile(ConstUnicode pathName)  // IN:
 /*
  *----------------------------------------------------------------------
  *
- * FileFirstSlashIndex --
- *
- *      Finds the first pathname slash index in a path (both slashes count
- *      for Win32, only forward slash for Unix).
- *
- * Results:
- *      As described.
- *      
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------
- */
-
-static UnicodeIndex
-FileFirstSlashIndex(ConstUnicode pathName,    // IN:
-                    UnicodeIndex startIndex)  // IN:
-{
-   UnicodeIndex firstFS;
-#if defined(_WIN32)
-   UnicodeIndex firstBS;
-#endif
-
-   ASSERT(pathName);
-
-   firstFS = Unicode_FindSubstrInRange(pathName, startIndex, -1,
-                                       "/", 0, 1);
-
-#if defined(_WIN32)
-   firstBS = Unicode_FindSubstrInRange(pathName, startIndex, -1,
-                                       "\\", 0, 1);
-
-   if ((firstFS != UNICODE_INDEX_NOT_FOUND) &&
-       (firstBS != UNICODE_INDEX_NOT_FOUND)) {
-      return MIN(firstFS, firstBS);
-   } else {
-     return (firstFS == UNICODE_INDEX_NOT_FOUND) ? firstBS : firstFS;
-   }
-#else
-   return firstFS;
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * FileLastSlashIndex --
- *
- *      Finds the last pathname slash index in a path (both slashes count
- *      for Win32, only forward slash for Unix).
- *
- * Results:
- *      As described.
- *      
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------
- */
-
-static UnicodeIndex
-FileLastSlashIndex(ConstUnicode pathName,    // IN:
-                   UnicodeIndex startIndex)  // IN:
-{
-   UnicodeIndex lastFS;
-#if defined(_WIN32)
-   UnicodeIndex lastBS;
-#endif
-
-   ASSERT(pathName);
-
-   lastFS = Unicode_FindLastSubstrInRange(pathName, startIndex, -1,
-                                          "/", 0, 1);
-
-#if defined(_WIN32)
-   lastBS = Unicode_FindLastSubstrInRange(pathName, startIndex, -1,
-                                          "\\", 0, 1);
-
-   if ((lastFS != UNICODE_INDEX_NOT_FOUND) &&
-       (lastBS != UNICODE_INDEX_NOT_FOUND)) {
-      return MAX(lastFS, lastBS);
-   } else {
-     return (lastFS == UNICODE_INDEX_NOT_FOUND) ? lastBS : lastFS;
-   }
-#else
-   return lastFS;
-#endif
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * File_SplitName --
- *
- *      Split a file name into three components: VOLUME, DIRECTORY,
- *      BASE.  The return values must be freed.
- *
- *      VOLUME is empty for an empty string or a UNIX-style path, the
- *      drive letter and colon for a Win32 drive-letter path, or the
- *      construction "\\server\share" for a Win32 UNC path.
- *
- *      BASE is the longest string at the end that begins after the
- *      volume string and after the last directory separator.
- *
- *      DIRECTORY is everything in-between VOLUME and BASE.
- *
- *      The concatenation of VOLUME, DIRECTORY, and BASE produces the
- *      original string, so any of those strings may be empty.
- *
- *      A NULL pointer may be passed for one or more OUT parameters, in
- *      which case that parameter is not returned.
- *
- *      Able to handle both UNC and drive-letter paths on Windows.
- *
- * Results:
- *      As described.
- *      
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------
- */
-
-void
-File_SplitName(ConstUnicode pathName,  // IN:
-               Unicode *volume,        // OUT (OPT):
-               Unicode *directory,     // OUT (OPT):
-               Unicode *base)          // OUT (OPT):
-{
-   Unicode vol;
-   Unicode dir;
-   Unicode bas;
-   UnicodeIndex volEnd;
-   UnicodeIndex length;
-   UnicodeIndex pathLen;
-   UnicodeIndex baseBegin;
-
-   ASSERT(pathName);
-
-   pathLen = Unicode_LengthInCodeUnits(pathName);
-
-   /*
-    * Get volume.
-    */
-
-   volEnd = 0;
-
-#if defined(_WIN32)
-   if ((pathLen > 2) &&
-       (Unicode_StartsWith(pathName, "\\\\") ||
-        Unicode_StartsWith(pathName, "//"))) {
-      /* UNC path */
-      volEnd = FileFirstSlashIndex(pathName, 2);
-
-      if (volEnd == UNICODE_INDEX_NOT_FOUND) {
-         /* we have \\foo, which is just bogus */
-         volEnd = 0;
-      } else {
-         volEnd = FileFirstSlashIndex(pathName, volEnd + 1);
-
-         if (volEnd == UNICODE_INDEX_NOT_FOUND) {
-            /* we have \\foo\bar, which is legal */
-            volEnd = pathLen;
-         }
-      }
-   } else if ((pathLen >= 2) &&
-              (Unicode_FindSubstrInRange(pathName, 1, 1, ":", 0,
-                                         1) != UNICODE_INDEX_NOT_FOUND)) {
-      /* drive-letter path */
-      volEnd = 2;
-   }
-
-   if (volEnd > 0) {
-      vol = Unicode_Substr(pathName, 0, volEnd);
-   } else {
-      vol = Unicode_Duplicate("");
-   }
-#else
-   vol = Unicode_Duplicate("");
-#endif /* _WIN32 */
-
-   /*
-    * Get base.
-    */
-
-   baseBegin = FileLastSlashIndex(pathName, 0);
-   baseBegin = (baseBegin == UNICODE_INDEX_NOT_FOUND) ? 0 : baseBegin + 1;
-
-   if (baseBegin >= volEnd) {
-      bas = Unicode_Substr(pathName, baseBegin, -1);
-   } else {
-      bas = Unicode_Duplicate("");
-   }
-
-   /*
-    * Get dir.
-    */
-
-   length = baseBegin - volEnd;
-
-   if (length > 0) {
-      dir = Unicode_Substr(pathName, volEnd, length);
-   } else {
-      dir = Unicode_Duplicate("");
-   }
-
-   /*
-    * Return what needs to be returned.
-    */
-
-   if (volume) {
-      *volume = vol;
-   } else {
-      Unicode_Free(vol);
-   }
-
-   if (directory) {
-      *directory = dir;
-   } else {
-      Unicode_Free(dir);
-   }
-
-   if (base) {
-      *base = bas;
-   } else {
-      Unicode_Free(bas);
-   }
-}
-
-
-/*
- *---------------------------------------------------------------------------
- *
- * File_PathJoin --
- *
- *      Join the dirName and baseName together to create a (full) path but
- *      don't add a DIRSEPS unless necessary.
- *
- *      File_PathJoin("a", "b")  -> "a/b"
- *      File_PathJoin("a/", "b") -> "a/b"
- *
- * Results: 
- *      The constructed path which must be freed by the caller.
- *
- * Side effects: 
- *      None
- *
- *---------------------------------------------------------------------------
- */
-
-Unicode
-File_PathJoin(ConstUnicode dirName,   // IN:
-              ConstUnicode baseName)  // IN:
-{
-   Unicode result;
-
-   ASSERT(dirName);
-   ASSERT(baseName);
-
-   if (Unicode_EndsWith(dirName, DIRSEPS)) {
-      result = Unicode_Append(dirName, baseName);
-   } else {
-      result = Unicode_Join(dirName, DIRSEPS, baseName, NULL);
-   }
-
-   return result;
-}
-
-
-/*
- *---------------------------------------------------------------------------
- *
- * File_GetPathName --
- *
- *      Behaves like File_SplitName by splitting the fullpath into
- *      pathname & filename components.
- *
- *      The trailing directory separator [\|/] is stripped off the
- *      pathname component. This in turn means that on Linux the root
- *      directory will be returned as the empty string "". On Windows
- *      it will be returned as X: where X is the drive letter. It is
- *      important that callers of this functions are aware that the ""
- *      on Linux means root "/".
- *
- *      A NULL pointer may be passed for one or more OUT parameters,
- *      in which case that parameter is not returned.
- *
- * Results: 
- *      As described.
- *
- * Side effects: 
- *      The return values must be freed.
- *
- *---------------------------------------------------------------------------
- */
-
-void 
-File_GetPathName(ConstUnicode fullPath,  // IN:
-                 Unicode *pathName,      // OUT (OPT):
-                 Unicode *baseName)      // OUT (OPT):
-{
-   Unicode volume;
-   UnicodeIndex len;
-   UnicodeIndex curLen;
-
-   File_SplitName(fullPath, &volume, pathName, baseName);
-
-   if (pathName == NULL) {
-      Unicode_Free(volume);
-      return;
-   }
-
-   /*
-    * The volume component may be empty.
-    */
-   if (Unicode_LengthInCodeUnits(volume) > 0) {
-      Unicode temp;
-
-      temp = Unicode_Append(volume, *pathName);
-      Unicode_Free(*pathName);
-      *pathName = temp;
-   }
-   Unicode_Free(volume);
-
-   /*
-    * Remove any trailing directory separator characters.
-    */
-
-   len = Unicode_LengthInCodeUnits(*pathName);
-
-   curLen = len;
-
-   while ((curLen > 0) &&
-          (FileFirstSlashIndex(*pathName, curLen - 1) == curLen - 1)) {
-      curLen--;
-   }
-
-   if (curLen < len) {
-      Unicode temp;
-
-      temp = Unicode_Substr(*pathName, 0, curLen);
-      Unicode_Free(*pathName);
-      *pathName = temp;
-   }
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- *  File_StripSlashes --
- *
- *      Strip trailing slashes from the end of a path.
- *
- * Results:
- *      The stripped filename.
- *
- * Side effects:
- *      None.
- *
- *----------------------------------------------------------------------
- */
-
-Unicode
-File_StripSlashes(ConstUnicode path) // IN
-{
-   Unicode result, volume, dir, base;
-
-   /*
-    * SplitName handles all drive letter/UNC/whatever cases, all we
-    * have to do is make sure the dir part is stripped of slashes if
-    * there isn't a base part.
-    */
-
-   File_SplitName(path, &volume, &dir, &base);
-
-   if (!Unicode_IsEmpty(dir) && Unicode_IsEmpty(base)) {
-      char *dir2 = Unicode_GetAllocBytes(dir, STRING_ENCODING_UTF8);
-      size_t i = strlen(dir2);
-
-      /*
-       * Don't strip first slash on Windows, since we want at least
-       * one slash to trail a drive letter/colon or UNC specifier.
-       */
-#ifdef _WIN32
-      while ((i > 1) && (('/' == dir2[i - 1]) ||
-                         ('\\' == dir2[i - 1]))) {
-#else
-      while ((i > 0) && ('/' == dir2[i - 1])) {
-#endif
-         i--;
-      }
-
-      Unicode_Free(dir);
-      dir = Unicode_AllocWithLength(dir2, i, STRING_ENCODING_UTF8);
-      free(dir2);
-   }
-
-   result = Unicode_Join(volume, dir, base, NULL);
-
-   Unicode_Free(volume);
-   Unicode_Free(dir);
-   Unicode_Free(base);
-
-   return result;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- *  File_MakeTempEx --
- *
- *      Create a temporary file and, if successful, return an open file
- *      descriptor to that file.
- *
- *      'dir' specifies the directory in which to create the file. It
- *      must not end in a slash.
- *
- *      'fileName' specifies the base filename of the created file.
- *
- * Results:
- *      Open file descriptor or -1; if successful then presult points
- *      to a dynamically allocated string with the pathname of the temp
- *      file.
- *
- * Side effects:
- *      Creates a file if successful. Errno is set on error
- *
- *----------------------------------------------------------------------
- */
-
-int
-File_MakeTempEx(ConstUnicode dir,       // IN:
-                ConstUnicode fileName,  // IN:
-                Unicode *presult)       // OUT:
-{
-   int fd;
-   int err;
-   uint32 var;
-
-   Unicode path = NULL;
-   Unicode basePath = NULL;
-
-   if ((dir == NULL) || (fileName == NULL)) {
-      errno = EFAULT;
-      return -1;
-   }
-
-   ASSERT(presult);
-
-   *presult = NULL;
-
-   /* construct base full pathname to use */
-   basePath = Unicode_Join(dir, DIRSEPS, fileName, NULL);
-
-   for (var = 0; var < 0xFFFFFFFF; var++) {
-      Unicode temp;
-
-      /* construct suffixed pathname to use */
-      Unicode_Free(path);
-
-      temp = Unicode_Format("%d", var);
-      ASSERT_MEM_ALLOC(temp);
-      path = Unicode_Append(basePath, temp);
-      Unicode_Free(temp);
-
-      fd = Posix_Open(path, O_CREAT | O_EXCL | O_BINARY | O_RDWR, 0600);
-
-      if (fd != -1) {
-         *presult = path;
-         path = NULL;
-         break;
-      }
-
-      if (errno != EEXIST) {
-         err = errno;
-         Msg_Append(MSGID(file.maketemp.openFailed)
-                 "Failed to create temporary file \"%s\": %s.\n",
-                 UTF8(path), Msg_ErrString());
-         errno = err;
-         goto exit;
-      }
-   }
-
-   if (fd == -1) {
-      Msg_Append(MSGID(file.maketemp.fullNamespace)
-                 "Failed to create temporary file \"%s\": The name space is "
-                 "full.\n", UTF8(path));
-
-      errno = EAGAIN;
-   }
-
-  exit:
-   err = errno;
-   Unicode_Free(basePath);
-   Unicode_Free(path);
-   errno = err;
-
-   return fd;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- *  File_MakeTemp --
- *
- *      Create a temporary file and, if successful, return an open file
- *      descriptor to the file.
- *
- *      'tag' can either be a full pathname, a string, or NULL.
- *
- *      If 'tag' is a full pathname, that path will be used as the root
- *      path for the file.
- *
- *      If 'tag' is a string, the created file's filename will begin
- *      with 'tag' and will be created in the default temp directory.
- *
- *      If 'tag' is NULL, then 'tag' is assumed to be "vmware" and the
- *      above case applies.
- *
- *      This API is technically unsafe if you allow this function to use
- *      the default temp directory since it's not guaranteed on Windows
- *      that when the file is closed it is not readable by other users
- *      (no matter what we specify as the mode to open, the new file
- *      will inherit DACLs from the parent, and certain temp directories
- *      on Windows give all Power Users read&write access). Please use
- *      Util_MakeSafeTemp if your dependencies permit it.
- *
- * Results:
- *      Open file descriptor or -1; if successful then filename points
- *      to a dynamically allocated string with the pathname of the temp
- *      file.
- *
- * Side effects:
- *      Creates a file if successful. Errno is set on error
- *
- *----------------------------------------------------------------------
- */
-
-int
-File_MakeTemp(ConstUnicode tag,  // IN (OPT):
-              Unicode *presult)  // OUT:
-{
-   int fd;
-   int err;
-   Unicode dir;
-   Unicode fileName;
-
-   if (tag && File_IsFullPath(tag)) {
-      File_GetPathName(tag, &dir, &fileName);
-   } else {
-      dir = File_GetTmpDir(TRUE);
-      fileName = Unicode_Duplicate(tag ? tag : "vmware");
-   }
-
-   fd = File_MakeTempEx(dir, fileName, presult);
-   err = errno;
-
-   Unicode_Free(dir);
-   Unicode_Free(fileName);
-
-   errno = err;
-
-   return fd;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
  * File_CopyFromFdToFd --
  *
  *      Write all data between the current position in the 'src' file and the
  *      end of the 'src' file to the current position in the 'dst' file
  *
  * Results:
- *      TRUE on success
- *      FALSE on failure
+ *      TRUE   success
+ *      FALSE  failure
  *
  * Side effects:
  *      The current position in the 'src' file and the 'dst' file are modified
@@ -1263,6 +681,7 @@ Bool
 File_CopyFromFdToFd(FileIODescriptor src,  // IN:
                     FileIODescriptor dst)  // IN:
 {
+   Err_Number err;
    FileIOResult fretR;
 
    do {
@@ -1272,15 +691,25 @@ File_CopyFromFdToFd(FileIODescriptor src,  // IN:
 
       fretR = FileIO_Read(&src, buf, sizeof(buf), &actual);
       if (!FileIO_IsSuccess(fretR) && (fretR != FILEIO_READ_ERROR_EOF)) {
+         err = Err_Errno();
+
          Msg_Append(MSGID(File.CopyFromFdToFd.read.failure)
                                "Read error: %s.\n\n", FileIO_MsgError(fretR));
+
+         Err_SetErrno(err);
+
          return FALSE;
       }
 
       fretW = FileIO_Write(&dst, buf, actual, NULL);
       if (!FileIO_IsSuccess(fretW)) {
+         err = Err_Errno();
+
          Msg_Append(MSGID(File.CopyFromFdToFd.write.failure)
                               "Write error: %s.\n\n", FileIO_MsgError(fretW));
+
+         Err_SetErrno(err);
+
          return FALSE;
       }
    } while (fretR != FILEIO_READ_ERROR_EOF);
@@ -1317,9 +746,10 @@ File_CopyFromFdToName(FileIODescriptor src,  // IN:
                       ConstUnicode dstName,  // IN:
                       int dstDispose)        // IN:
 {
-   FileIODescriptor dst;
+   Bool success;
+   Err_Number err;
    FileIOResult fret;
-   Bool result;
+   FileIODescriptor dst;
 
    ASSERT(dstName);
 
@@ -1327,30 +757,43 @@ File_CopyFromFdToName(FileIODescriptor src,  // IN:
 
    fret = File_CreatePrompt(&dst, dstName, 0, dstDispose);
    if (!FileIO_IsSuccess(fret)) {
+      err = Err_Errno();
+
       if (fret != FILEIO_CANCELLED) {
          Msg_Append(MSGID(File.CopyFromFdToName.create.failure)
                     "Unable to create a new '%s' file: %s.\n\n",
                     UTF8(dstName), FileIO_MsgError(fret));
       }
 
+      Err_SetErrno(err);
+
       return FALSE;
    }
 
-   result = File_CopyFromFdToFd(src, dst);
+   success = File_CopyFromFdToFd(src, dst);
+
+   err = Err_Errno();
 
    if (FileIO_Close(&dst) != 0) {
+      if (success) {  // Report close failure when there isn't another error
+         err =  Err_Errno();
+      }
+
       Msg_Append(MSGID(File.CopyFromFdToName.close.failure)
                  "Unable to close the '%s' file: %s.\n\n", UTF8(dstName),
                  Msg_ErrString());
-      result = FALSE;
+
+      success = FALSE;
    }
 
-   if (result == FALSE) {
+   if (!success) {
       /* The copy failed: ensure the destination file is removed */
       File_Unlink(dstName);
    }
 
-   return result;
+   Err_SetErrno(err);
+
+   return success;
 }
 
 
@@ -1380,8 +823,8 @@ File_CreatePrompt(FileIODescriptor *file,  // OUT:
                   int access,              // IN:
                   int prompt)              // IN:
 {
-   FileIOOpenAction action;
    FileIOResult fret;
+   FileIOOpenAction action;
 
    ASSERT(file);
    ASSERT(pathName);
@@ -1391,12 +834,13 @@ File_CreatePrompt(FileIODescriptor *file,  // OUT:
    while ((fret = FileIO_Open(file, pathName, FILEIO_OPEN_ACCESS_WRITE | access,
                              action)) == FILEIO_OPEN_ERROR_EXIST) {
       static Msg_String const buttons[] = {
-         {BUTTONID(file.create.retry) "Retry"},
+         {BUTTONID(file.create.retry)     "Retry"},
          {BUTTONID(file.create.overwrite) "Overwrite"},
-         {BUTTONID(cancel) "Cancel"},
+         {BUTTONID(cancel)                "Cancel"},
          {NULL}
       };
       int answer;
+      Err_Number err = Err_Errno();
 
       answer = (prompt != -1) ? prompt : Msg_Question(buttons, 2,
          MSGID(File.CreatePrompt.question)
@@ -1406,6 +850,9 @@ File_CreatePrompt(FileIODescriptor *file,  // OUT:
          "to another location, select Retry.\n"
          "To cancel the operation, select Cancel.\n",
          UTF8(pathName));
+
+      Err_SetErrno(err);
+
       if (answer == 2) {
          fret = FILEIO_CANCELLED;
          break;
@@ -1448,9 +895,10 @@ File_CopyFromNameToName(ConstUnicode srcName,  // IN:
                         ConstUnicode dstName,  // IN:
                         int dstDispose)        // IN:
 {
-   FileIODescriptor src;
+   Bool success;
+   Err_Number err;
    FileIOResult fret;
-   Bool result;
+   FileIODescriptor src;
 
    ASSERT(srcName);
    ASSERT(dstName);
@@ -1459,23 +907,209 @@ File_CopyFromNameToName(ConstUnicode srcName,  // IN:
 
    fret = FileIO_Open(&src, srcName, FILEIO_OPEN_ACCESS_READ, FILEIO_OPEN);
    if (!FileIO_IsSuccess(fret)) {
+      err = Err_Errno();
+
       Msg_Append(MSGID(File.CopyFromNameToName.open.failure)
                  "Unable to open the '%s' file for read access: %s.\n\n",
                  UTF8(srcName), FileIO_MsgError(fret));
+
+      Err_SetErrno(err);
+
       return FALSE;
    }
 
-   result = File_CopyFromFdToName(src, dstName, dstDispose);
+   success = File_CopyFromFdToName(src, dstName, dstDispose);
+
+   err = Err_Errno();
    
    if (FileIO_Close(&src) != 0) {
+      if (success) {  // Report close failure when there isn't another error
+         err =  Err_Errno();
+      }
+
       Msg_Append(MSGID(File.CopyFromNameToName.close.failure)
                  "Unable to close the '%s' file: %s.\n\n", UTF8(srcName),
                  Msg_ErrString());
-      result = FALSE;
+
+      success = FALSE;
    }
 
-   return result;
+   Err_SetErrno(err);
+
+   return success;
 }
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * FileCopyTree --
+ *
+ *      Recursively copies all files from a source path to a destination,
+ *      optionally overwriting any files. This does the actual work
+ *      for File_CopyTree.
+ *
+ * Results:
+ *      TRUE on success
+ *      FALSE on failure: Error messages are appended.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+FileCopyTree(ConstUnicode srcName,    // IN:
+             ConstUnicode dstName,    // IN:
+             Bool overwriteExisting,  // IN:
+             Bool followSymlinks)     // IN:
+{
+   int err;
+   Bool success = TRUE;
+   int numFiles;
+   int i;
+   Unicode *fileList = NULL;
+
+   numFiles = File_ListDirectory(srcName, &fileList);
+
+   if (numFiles == -1) {
+      err = Err_Errno();
+      Msg_Append(MSGID(File.CopyTree.walk.failure)
+                 "Unable to access '%s' when copying files.\n\n",
+                 UTF8(srcName));
+      Err_SetErrno(err);
+
+      return FALSE;
+   }
+
+   File_EnsureDirectory(dstName);
+
+   for (i = 0; i < numFiles && success; i++) {
+      struct stat sb;
+      Unicode name;
+      Unicode srcFilename;
+
+      name = Unicode_Alloc(fileList[i], STRING_ENCODING_DEFAULT);
+      srcFilename = File_PathJoin(srcName, name);
+
+      if (followSymlinks) {
+         success = (Posix_Stat(srcFilename, &sb) == 0);
+      } else {
+         success = (Posix_Lstat(srcFilename, &sb) == 0);
+      }
+
+      if (success) {
+         Unicode dstFilename = File_PathJoin(dstName, name);
+
+         switch (sb.st_mode & S_IFMT) {
+         case S_IFDIR:
+            success = FileCopyTree(srcFilename, dstFilename, overwriteExisting,
+                                   followSymlinks);
+            break;
+
+#if !defined(_WIN32)
+         case S_IFLNK:
+            if (Posix_Symlink(Posix_ReadLink(srcFilename), dstFilename) != 0) {
+               err = Err_Errno();
+               Msg_Append(MSGID(File.CopyTree.symlink.failure)
+                          "Unable to symlink '%s' to '%s': %s\n\n",
+                          UTF8(Posix_ReadLink(srcFilename)),
+                          UTF8(dstFilename),
+                          Err_Errno2String(err));
+               Err_SetErrno(err);
+               success = FALSE;
+            }
+            break;
+#endif
+
+         default:
+            if (!File_Copy(srcFilename, dstFilename, overwriteExisting)) {
+               err = Err_Errno();
+               Msg_Append(MSGID(File.CopyTree.copy.failure)
+                          "Unable to copy '%s' to '%s': %s\n\n",
+                          UTF8(srcFilename), UTF8(dstFilename),
+                          Err_Errno2String(err));
+               Err_SetErrno(err);
+               success = FALSE;
+            }
+
+            break;
+         }
+
+         Unicode_Free(dstFilename);
+      } else {
+         err = Err_Errno();
+         Msg_Append(MSGID(File.CopyTree.stat.failure)
+                    "Unable to get information on '%s' when copying files.\n\n",
+                    UTF8(srcFilename));
+         Err_SetErrno(err);
+      }
+
+      Unicode_Free(srcFilename);
+      Unicode_Free(name);
+   }
+
+   for (i = 0; i < numFiles; i++) {
+      Unicode_Free(fileList[i]);
+   }
+
+   free(fileList);
+
+   return success;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * File_CopyTree --
+ *
+ *      Recursively copies all files from a source path to a destination,
+ *      optionally overwriting any files.
+ *
+ * Results:
+ *      TRUE on success
+ *      FALSE on failure: Error messages are appended.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+File_CopyTree(ConstUnicode srcName,    // IN:
+              ConstUnicode dstName,    // IN:
+              Bool overwriteExisting,  // IN:
+              Bool followSymlinks)     // IN:
+{
+   int err;
+
+   ASSERT(srcName);
+   ASSERT(dstName);
+
+   if (!File_IsDirectory(srcName)) {
+      err = Err_Errno();
+      Msg_Append(MSGID(File.CopyTree.source.notDirectory)
+                 "The source path '%s' is not a directory.\n\n",
+                 UTF8(srcName));
+      Err_SetErrno(err);
+      return FALSE;
+   }
+
+   if (!File_IsDirectory(dstName)) {
+      err = Err_Errno();
+      Msg_Append(MSGID(File.CopyTree.dest.notDirectory)
+                 "The destination path '%s' is not a directory.\n\n",
+                 UTF8(dstName));
+      Err_SetErrno(err);
+      return FALSE;
+   }
+
+   return FileCopyTree(srcName, dstName, overwriteExisting, followSymlinks);
+}
+
 
 /*
  *----------------------------------------------------------------------
@@ -1501,10 +1135,11 @@ File_CopyFromFd(FileIODescriptor src,     // IN:
                 ConstUnicode dstName,     // IN:
                 Bool overwriteExisting)   // IN:
 {
+   Bool success;
+   Err_Number err;
+   FileIOResult fret;
    FileIODescriptor dst;
    FileIOOpenAction action;
-   FileIOResult fret;
-   Bool result;
 
    ASSERT(dstName);
 
@@ -1515,27 +1150,41 @@ File_CopyFromFd(FileIODescriptor src,     // IN:
 
    fret = FileIO_Open(&dst, dstName, FILEIO_OPEN_ACCESS_WRITE, action);
    if (!FileIO_IsSuccess(fret)) {
+      err = Err_Errno();
+
       Msg_Append(MSGID(File.CopyFromFdToName.create.failure)
                  "Unable to create a new '%s' file: %s.\n\n", UTF8(dstName),
                  FileIO_MsgError(fret));
+
+      Err_SetErrno(err);
+
       return FALSE;
    }
 
-   result = File_CopyFromFdToFd(src, dst);
+   success = File_CopyFromFdToFd(src, dst);
+
+   err = Err_Errno();
 
    if (FileIO_Close(&dst) != 0) {
+      if (success) {  // Report close failure when there isn't another error
+         err =  Err_Errno();
+      }
+
       Msg_Append(MSGID(File.CopyFromFdToName.close.failure)
                  "Unable to close the '%s' file: %s.\n\n", UTF8(dstName),
                  Msg_ErrString());
-      result = FALSE;
+
+      success = FALSE;
    }
 
-   if (result == FALSE) {
+   if (!success) {
       /* The copy failed: ensure the destination file is removed */
       File_Unlink(dstName);
    }
 
-   return result;
+   Err_SetErrno(err);
+
+   return success;
 }
 
 
@@ -1564,9 +1213,10 @@ File_Copy(ConstUnicode srcName,    // IN:
           ConstUnicode dstName,    // IN:
           Bool overwriteExisting)  // IN:
 {
-   FileIODescriptor src;
+   Bool success;
+   Err_Number err;
    FileIOResult fret;
-   Bool result;
+   FileIODescriptor src;
 
    ASSERT(srcName);
    ASSERT(dstName);
@@ -1575,34 +1225,52 @@ File_Copy(ConstUnicode srcName,    // IN:
 
    fret = FileIO_Open(&src, srcName, FILEIO_OPEN_ACCESS_READ, FILEIO_OPEN);
    if (!FileIO_IsSuccess(fret)) {
+      err = Err_Errno();
+
       Msg_Append(MSGID(File.Copy.open.failure)
                  "Unable to open the '%s' file for read access: %s.\n\n",
                  UTF8(srcName), FileIO_MsgError(fret));
+
+      Err_SetErrno(err);
+
       return FALSE;
    }
 
-   result = File_CopyFromFd(src, dstName, overwriteExisting);
+   success = File_CopyFromFd(src, dstName, overwriteExisting);
+
+   err = Err_Errno();
    
    if (FileIO_Close(&src) != 0) {
+      if (success) {  // Report close failure when there isn't another error
+         err =  Err_Errno();
+      }
+
       Msg_Append(MSGID(File.Copy.close.failure)
                  "Unable to close the '%s' file: %s.\n\n", UTF8(srcName),
                  Msg_ErrString());
-      result = FALSE;
+
+      success = FALSE;
    }
 
-   return result;
+   Err_SetErrno(err);
+
+   return success;
 }
+
 
 /*
  *----------------------------------------------------------------------
  *
- * File_Rename --
+ * File_Move --
  *
- *      Renames a source to a destination file.
- *      Will copy the file if necessary
+ *      Moves a file from one place to the other as efficiently as possible.
+ *      This can be used to rename a file but, since file copying may be
+ *      necessary, there is no assurance of atomicity. For efficiency
+ *      purposes copying only results if the native rename ability fails.
  *
  * Results:
- *      TRUE if succeeded FALSE otherwise
+ *      TRUE   succeeded
+ *      FALSE  otherwise
  *      
  * Side effects:
  *      src file is no more, but dst file exists
@@ -1611,17 +1279,134 @@ File_Copy(ConstUnicode srcName,    // IN:
  */
 
 Bool 
-File_Rename(ConstUnicode oldFile,  // IN:
-            ConstUnicode newFile)  // IN:
+File_Move(ConstUnicode oldFile,  // IN:
+          ConstUnicode newFile,  // IN:
+          Bool *asRename)        // OUT: result occurred due to rename/copy
 {
-   Bool ret = TRUE;
+   Bool ret;
+   Bool duringRename;
 
-   if (FileRename(oldFile, newFile) != 0) {
-      /* overwrite the file if it exists */
-      if (File_Copy(oldFile, newFile, TRUE)) {
-         File_Unlink(oldFile);
+   if (FileRename(oldFile, newFile) == 0) {
+      duringRename = TRUE;
+      ret = TRUE;
+      Err_SetErrno(0);
+   } else {
+      duringRename = FALSE;
+
+      if (File_Copy(oldFile, newFile, TRUE)) {  // Allow overwrite
+         File_Unlink(oldFile);  // Explicitly ignore errors
+         ret = TRUE;
+         Err_SetErrno(0);
       } else {
          ret = FALSE;
+      }
+   }
+
+   if (asRename) {
+      *asRename = duringRename;
+   }
+
+   return ret;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * File_MoveTree --
+ *
+ *    Moves a directory from one place to the other.
+ *     - If dstName indicates a path that does not exist a directory will be
+ *       created with that path filled with the contents from srcName.
+ *     - If dstName is an existing directory then the contents will be moved
+ *       into that directory.
+ *     - If dstName indicates a file then File_MoveTree fails.
+ *
+ *    First we'll attempt to rename the directory, failing that we copy the
+ *    contents from src->destination and unlink the src.  If the copy is
+ *    succesful then we will report success even if the unlink fails for some
+ *    reason.  In that event we will append error messages.
+ *
+ * Results:
+ *    TRUE - on success
+ *    FALSE - on failure with error messages appended
+ *
+ * Side effects:
+ *    - Deletes the originating directory
+ *    - In the event of a failed copy we'll leave the new directory in a state
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Bool
+File_MoveTree(ConstUnicode srcName,   // IN:
+              ConstUnicode dstName,   // IN:
+              Bool overwriteExisting) // IN:
+{
+   Bool ret = FALSE;
+   Bool createdDir = FALSE;
+
+   ASSERT(srcName);
+   ASSERT(dstName);
+
+   if (!File_IsDirectory(srcName)) {
+      Msg_Append(MSGID(File.MoveTree.source.notDirectory)
+                 "The source path '%s' is not a directory.\n\n",
+                 UTF8(srcName));
+      return FALSE;
+   }
+
+   if (FileRename(srcName, dstName) == 0) {
+      ret = TRUE;
+   } else {
+      struct stat statbuf;
+      if (-1 == Posix_Stat(dstName, &statbuf)) {
+         int err = Err_Errno();
+
+         if (ENOENT == err) {
+            if (!File_CreateDirectoryHierarchy(dstName)) {
+               Msg_Append(MSGID(File.MoveTree.dst.couldntCreate)
+                          "Could not create '%s'.\n\n", UTF8(dstName));
+               return FALSE;
+            }
+
+            createdDir = TRUE;
+         } else {
+            Msg_Append(MSGID(File.MoveTree.statFailed)
+                       "%d:Failed to stat destination '%s'.\n\n",
+                       err, UTF8(dstName));
+            return FALSE;
+         }
+      } else {
+         if (!File_IsDirectory(dstName)) {
+            Msg_Append(MSGID(File.MoveTree.dest.notDirectory)
+                       "The destination path '%s' is not a directory.\n\n",
+                       UTF8(dstName));
+            return FALSE;
+         }
+      }
+
+      if (File_CopyTree(srcName, dstName, overwriteExisting, FALSE)) {
+         ret = TRUE;
+         if (!File_DeleteDirectoryTree(srcName)) {
+            Msg_Append(MSGID(File.MoveTree.cleanupFailed)
+                       "Forced to copy '%s' into '%s' but unable to remove "
+                       "source directory.\n\n",
+                       UTF8(srcName), UTF8(dstName));
+         }
+      } else {
+         ret = FALSE;
+         Msg_Append(MSGID(File.MoveTree.copyFailed)
+                    "Could not rename and failed to copy source directory "
+                    "'%s'.\n\n",
+                    UTF8(srcName));
+         if (createdDir) {
+            /*
+             * Only clean up if we created the directory.  Not attempting to
+             * clean up partial failures.
+             */
+            File_DeleteDirectoryTree(dstName);
+         }
       }
    }
 
@@ -1664,7 +1449,7 @@ File_GetModTimeString(ConstUnicode pathName)  // IN:
  *
  * File_GetSize --
  *
- *      Get size of file.
+ *      Get size of file. Try File_GetSizeEx to get size of directory/symlink.
  *
  * Results:
  *      Size of file or -1.
@@ -1726,7 +1511,79 @@ File_SupportsLargeFiles(ConstUnicode pathName)  // IN:
 }
 
 
-#if !defined(N_PLAT_NLM)
+/*
+ *----------------------------------------------------------------------------
+ *
+ * File_GetSizeEx --
+ *
+ *      Get size of file or directory or symlink. File_GetSize can only get
+ *      size of file.
+ *
+ * Results:
+ *      Size of file/directory/symlink or -1.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+int64
+File_GetSizeEx(ConstUnicode pathName) // IN
+{
+   int numFiles;
+   int i;
+   Unicode *fileList = NULL;
+   struct stat sb;
+   int64 totalSize = 0;
+
+   if (pathName == NULL) {
+      return -1;
+   }
+
+   if (-1 == Posix_Lstat(pathName, &sb)) {
+      return -1;
+   }
+
+   if (S_IFDIR != (sb.st_mode & S_IFMT)) {
+      return sb.st_size;
+   }
+
+   numFiles = File_ListDirectory(pathName, &fileList);
+
+   if (-1 == numFiles) {
+      return -1;
+   }
+
+   for (i = 0; i < numFiles; i++) {
+      Unicode name;
+      Unicode fileName;
+      int64 fileSize;
+
+      name = Unicode_Alloc(fileList[i], STRING_ENCODING_DEFAULT);
+      fileName = File_PathJoin(pathName, name);
+
+      fileSize = File_GetSizeEx(fileName);
+
+      Unicode_Free(fileName);
+      Unicode_Free(name);
+
+      if (-1 == fileSize) {
+         totalSize = -1;
+         break;
+      } else {
+         totalSize += fileSize;
+      }
+   }
+
+   if (numFiles >= 0) {
+      Unicode_FreeList(fileList, numFiles);
+   }
+
+   return totalSize;
+}
+
+
 /*
  *----------------------------------------------------------------------------
  *
@@ -1744,7 +1601,7 @@ File_SupportsLargeFiles(ConstUnicode pathName)  // IN:
  */
 
 int64
-File_GetSizeByPath(ConstUnicode pathName)
+File_GetSizeByPath(ConstUnicode pathName)  // IN:
 {
    return (pathName == NULL) ? -1 : FileIO_GetSizeByPath(pathName);
 }
@@ -1767,7 +1624,7 @@ File_GetSizeByPath(ConstUnicode pathName)
  */
 
 Bool
-File_CreateDirectoryHierarchy(ConstUnicode pathName)
+File_CreateDirectoryHierarchy(ConstUnicode pathName)  // IN:
 {
    Unicode volume;
    UnicodeIndex index;
@@ -1777,7 +1634,7 @@ File_CreateDirectoryHierarchy(ConstUnicode pathName)
       return TRUE;
    }
 
-   length = Unicode_LengthInCodeUnits(pathName);
+   length = Unicode_LengthInCodePoints(pathName);
 
    if (length == 0) {
       return TRUE;
@@ -1789,7 +1646,7 @@ File_CreateDirectoryHierarchy(ConstUnicode pathName)
 
    File_SplitName(pathName, &volume, NULL, NULL);
 
-   index = Unicode_LengthInCodeUnits(volume);
+   index = Unicode_LengthInCodePoints(volume);
 
    Unicode_Free(volume);
 
@@ -1832,11 +1689,12 @@ File_CreateDirectoryHierarchy(ConstUnicode pathName)
  * File_DeleteDirectoryTree --
  *
  *      Deletes the specified directory tree. If filesystem errors are
- *      encountered along the way, the function will continue to delete what it
- *      can but will return FALSE.
+ *      encountered along the way, the function will continue to delete what
+ *      it can but will return FALSE.
  *
  * Results:
- *      TRUE if the entire tree was deleted or didn't exist, FALSE otherwise.
+ *      TRUE   the entire tree was deleted or didn't exist
+ *      FALSE  otherwise.
  *      
  * Side effects:
  *      Deletes the directory tree from disk.
@@ -1849,20 +1707,33 @@ File_DeleteDirectoryTree(ConstUnicode pathName)  // IN: directory to delete
 {
    int i;
    int numFiles;
+   int err = 0;
    Unicode base;
 
    Unicode *fileList = NULL;
    Bool sawFileError = FALSE;
 
-   switch (FileAttributes(pathName, NULL)) {
-   case 0:
-      break;
-   case ENOENT:
-   case ENOTDIR:
-      /* path does not exist or is inaccessible */
-      return TRUE;
-   default:
-      return FALSE;
+   if (Posix_EuidAccess(pathName, F_OK) != 0) {
+      /*
+       * If Posix_EuidAccess failed with errno == ENOSYS, then fall back
+       * to FileAttributes.
+       */
+      if (errno == ENOSYS) {
+         /* FileAttributes returns the error code instead of setting errno. */
+         err = FileAttributes(pathName, NULL);
+      } else {
+         /* Use the error value that was set by Posix_EuidAccess. */
+         err = errno;
+      }
+   }
+
+   switch (err) {
+      case ENOENT:
+      case ENOTDIR:
+         /* path does not exist or is inaccessible */
+         return TRUE;
+      default:
+         break;
    }
 
    /* get list of files in current directory */
@@ -1877,29 +1748,46 @@ File_DeleteDirectoryTree(ConstUnicode pathName)  // IN: directory to delete
 
    for (i = 0; i < numFiles; i++) {
       Unicode curPath;
+      struct stat statbuf;
 
       curPath = Unicode_Append(base, fileList[i]);
 
-      if (File_IsDirectory(curPath)) {
-         /* is dir, recurse */
-         if (!File_DeleteDirectoryTree(curPath)) {
-            sawFileError = TRUE;
-         }
-      } else {
-         /* is file, delete */
-         if (File_Unlink(curPath) == -1) {
-#if defined(_WIN32)
-            if (File_SetFilePermissions(curPath, S_IWUSR)) {
-               if (File_Unlink(curPath) == -1) {
-                  sawFileError = TRUE;
-               }
-            } else {
+      if (Posix_Lstat(curPath, &statbuf) == 0) {
+         switch (statbuf.st_mode & S_IFMT) {
+         case S_IFDIR:
+            /* Directory, recurse */
+            if (!File_DeleteDirectoryTree(curPath)) {
                sawFileError = TRUE;
             }
-#else
-            sawFileError = TRUE;
+            break;
+
+#if !defined(_WIN32)
+         case S_IFLNK:
+            /* Delete symlink, not what it points to */
+            if (FileDeletion(curPath, FALSE) != 0) {
+               sawFileError = TRUE;
+            }
+            break;
 #endif
+
+         default:
+            if (FileDeletion(curPath, FALSE) != 0) {
+#if defined(_WIN32)
+               if (File_SetFilePermissions(curPath, S_IWUSR)) {
+                  if (FileDeletion(curPath, FALSE) != 0) {
+                     sawFileError = TRUE;
+                  }
+               } else {
+                  sawFileError = TRUE;
+               }
+#else
+               sawFileError = TRUE;
+#endif
+            }
+            break;
          }
+      } else {
+         sawFileError = TRUE;
       }
 
       Unicode_Free(curPath);
@@ -1907,8 +1795,11 @@ File_DeleteDirectoryTree(ConstUnicode pathName)  // IN: directory to delete
 
    Unicode_Free(base);
 
-   /* delete the now-empty directory */
-   if (!File_DeleteEmptyDirectory(pathName)) {
+   /*
+    * Call File_DeleteEmptyDirectory() only if there is no prior error
+    * while deleting the children.
+    */
+   if (!sawFileError && !File_DeleteEmptyDirectory(pathName)) {
       sawFileError = TRUE;
    }
 
@@ -1919,63 +1810,6 @@ File_DeleteDirectoryTree(ConstUnicode pathName)  // IN: directory to delete
    free(fileList);
 
    return !sawFileError;
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
- * File_PrependToPath --
- *
- *      This function checks if the elem is already present in the
- *      searchPath, if it is then it is moved forward in the search path.
- *      Otherwise it is prepended to the searchPath.
- *
- * Results:
- *      Return file search path with elem in front.
- *
- * Side effects:
- *      Caller must free returned string.
- *
- *-----------------------------------------------------------------------------
- */
-
-char *
-File_PrependToPath(const char *searchPath,   // IN
-                   const char *elem)         // IN
-{
-   const char sep = FILE_SEARCHPATHTOKEN[0];
-   char *newPath;
-   char *path;
-   size_t n;
-
-   ASSERT(searchPath);
-   ASSERT(elem);
-
-   newPath = Str_SafeAsprintf(NULL, "%s%s%s", elem, FILE_SEARCHPATHTOKEN,
-                              searchPath);
-
-   n = strlen(elem);
-   path = newPath + n + 1;
-
-   for (;;) {
-      char *next = Str_Strchr(path, sep);
-      size_t len = next ? next - path : strlen(path);
-
-      if (len == n && Str_Strncmp(path, elem, len) == 0) {
-         if (next) {
-            memmove(path, next + 1, strlen(next + 1) + 1);
-         } else {
-            *--path = '\0';
-         }
-         break;
-      }
-      if (!next) {
-         break;
-      }
-      path = next + 1;
-   }
-   return newPath;
 }
 
 
@@ -1998,10 +1832,10 @@ File_PrependToPath(const char *searchPath,   // IN
  */
 
 Bool
-File_FindFileInSearchPath(const char *fileIn,       // IN
-                          const char *searchPath,   // IN
-                          const char *cwd,          // IN
-                          char **result)            // OUT
+File_FindFileInSearchPath(const char *fileIn,      // IN:
+                          const char *searchPath,  // IN:
+                          const char *cwd,         // IN:
+                          char **result)           // OUT:
 {
    char *cur;
    char *tok;
@@ -2024,7 +1858,10 @@ File_FindFileInSearchPath(const char *fileIn,       // IN
       cur = Str_SafeAsprintf(NULL, "%s%s%s", cwd, DIRSEPS, fileIn);
    }
 
-   if (FileAttributes(cur, NULL) == 0) {
+   if (Posix_EuidAccess(cur, F_OK) == 0) {
+      goto done;
+   }
+   if (errno == ENOSYS && FileAttributes(cur, NULL) == 0) {
       goto done;
    }
 
@@ -2056,7 +1893,11 @@ File_FindFileInSearchPath(const char *fileIn,       // IN
          }
       }
 
-      if (FileAttributes(cur, NULL) == 0) {
+      if (Posix_EuidAccess(cur, F_OK) == 0) {
+         break;
+      }
+
+      if ((errno == ENOSYS) && (FileAttributes(cur, NULL) == 0)) {
          break;
       }
 
@@ -2091,126 +1932,27 @@ done:
 
 
 /*
- *-----------------------------------------------------------------------------
- *
- * File_ReplaceExtension --
- *
- *      Replaces the extension in input with newExtension.
- *
- *      If the old extension exists in the list of extensions specified in ...,
- *      truncate it before appending the new extension.
- *
- *      If the extension is not found in the list, the newExtension is
- *      just appended.
- *
- *      If there isn't a list of extensions specified (numExtensions == 0),
- *      truncate the old extension unconditionally.
- *
- *      NB: newExtension and the extension list must have .'s.
- *
- * Results:
- *      The name with newExtension added to it. The caller is responsible to
- *      free it when they are done with it.
- *
- * Side effects:
- *      None.
- *
- *-----------------------------------------------------------------------------
- */
-
-Unicode
-File_ReplaceExtension(ConstUnicode pathName,      // IN:
-                      ConstUnicode newExtension,  // IN:
-                      uint32 numExtensions,       // IN:
-                      ...)                        // IN:
-{
-   Unicode path;
-   Unicode base;
-   Unicode result;
-   va_list arguments;
-   UnicodeIndex index;
-   
-   ASSERT(pathName);
-   ASSERT(newExtension);
-   ASSERT(Unicode_StartsWith(newExtension, "."));
-
-   File_GetPathName(pathName, &path, &base);
-
-   index = Unicode_FindLast(base, ".");
-
-   if (index != UNICODE_INDEX_NOT_FOUND) {
-      Unicode oldBase = base;
-
-      if (numExtensions) {
-         uint32 i;
-
-         /*
-          * Only truncate the old extension from the base if it exists in
-          * in the valid extensions list.
-          */
-
-         va_start(arguments, numExtensions);
-
-         for (i = 0; i < numExtensions ; i++) {
-            Unicode oldExtension = va_arg(arguments, Unicode);
-
-            ASSERT(Unicode_StartsWith(oldExtension, "."));
-
-            if (Unicode_CompareRange(base, index, -1,
-                                     oldExtension, 0, -1, FALSE) == 0) {
-               base = Unicode_Truncate(oldBase, index); // remove '.'
-               break;
-            }
-         }
-
-         va_end(arguments);
-      } else {
-         /* Always truncate the old extension if extension list is empty . */
-         base = Unicode_Truncate(oldBase, index); // remove '.'
-      }
-
-      if (oldBase != base) {
-         Unicode_Free(oldBase);
-      }
-   }
-
-   if (Unicode_IsEmpty(path)) {
-      result = Unicode_Append(base, newExtension);
-   } else {
-      result = Unicode_Join(path, DIRSEPS, base, newExtension, NULL);
-   }
-
-   Unicode_Free(path);
-   Unicode_Free(base);
-
-   return result;
-}
-
-
-/*
  *----------------------------------------------------------------------
  *
  * File_ExpandAndCheckDir --
  *
- *	Expand any environment variables in the given path and check that
- *	the named directory is writeable.
+ *      Expand any environment variables in the given path and check that
+ *      the named directory is writeable.
  *
  * Results:
- *	NULL if error, the expanded path otherwise.
+ *      NULL if error, the expanded path otherwise.
  *
  * Side effects:
- *	The result is allocated.
+ *      The result is allocated.
  *
  *----------------------------------------------------------------------
  */
 
 char *
-File_ExpandAndCheckDir(const char *dirName)
+File_ExpandAndCheckDir(const char *dirName)  // IN:
 {
-   char *edirName;
-
    if (dirName != NULL) {
-      edirName = Util_ExpandString(dirName);
+      char *edirName = Util_ExpandString(dirName);
 
       if ((edirName != NULL) && FileIsWritableDir(edirName)) {
          size_t len = strlen(edirName) - 1;
@@ -2219,7 +1961,7 @@ File_ExpandAndCheckDir(const char *dirName)
             edirName[len] = '\0';
          }
 
-	 return edirName;
+         return edirName;
       }
    }
 
@@ -2228,19 +1970,77 @@ File_ExpandAndCheckDir(const char *dirName)
 
 
 /*
+ *-----------------------------------------------------------------------------
+ *
+ * FileSimpleRandom --
+ *
+ *      Return a random number in the range of 0 and 2^32-1.
+ *
+ *      This isn't thread safe but it's more than good enough for the
+ *      purposes required of it.
+ *
+ * Results:
+ *      Random number is returned.
+ *
+ * Side Effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+uint32
+FileSimpleRandom(void)
+{
+   static Atomic_Ptr atomic; /* Implicitly initialized to NULL. --mbellon */
+   rqContext *context;
+
+   context = Atomic_ReadPtr(&atomic);
+
+   if (UNLIKELY(context == NULL)) {
+      rqContext *newContext;
+      uint32 value;
+
+      /*
+       * Threads will hash up this RNG - this isn't officially thread safe
+       * which is just fine - but ensure that different processes have
+       * different answer streams.
+       */
+
+#if defined(_WIN32)
+      value = GetCurrentProcessId();
+#else
+      value = getpid();
+#endif
+
+      newContext = Random_QuickSeed(value);
+
+      if (Atomic_ReadIfEqualWritePtr(&atomic, NULL, (void *) newContext)) {
+         free(newContext);
+      }
+
+      context = Atomic_ReadPtr(&atomic);
+      ASSERT(context);
+   }
+
+   return Random_Quick(context);
+}
+
+
+/*
  *----------------------------------------------------------------------
  *
  * FileSleeper
  *
- *	Sleep for a random amount of time between the specified minimum and
- *      maximum sleep values. This provides "jitter" on retries such
- *      that two or more threads don't easily get into resonance.
+ *      Sleep for a random amount of time, no less than the specified minimum
+ *      and no more than the specified maximum sleep time values. This often
+ *      proves useful to "jitter" retries such that multiple threads don't
+ *      easily get into resonance performing necessary actions.
  *
  * Results:
- *      Sonambulistic behavior; the amount of time slept is returned.
+ *      Somnambulistic behavior; the amount of time slept is returned.
  *
  * Side effects:
- *	None
+ *      None
  *
  *----------------------------------------------------------------------
  */
@@ -2252,36 +2052,300 @@ FileSleeper(uint32 msecMinSleepTime,  // IN:
    uint32 variance;
    uint32 msecActualSleepTime;
 
+   ASSERT(msecMinSleepTime <= msecMaxSleepTime);
+
    variance = msecMaxSleepTime - msecMinSleepTime;
 
    if (variance == 0) {
       msecActualSleepTime = msecMinSleepTime;
    } else {
-      int sample;
-      float fpRand;
-      static int32 rng;  // implicitly 0
-
-      if (rng == 0) {
-#if defined(_WIN32)
-         rng = GetCurrentProcessId();
-#else
-         rng = getpid();
-#endif
-      }
-
-      sample = FastRand(rng);
-      fpRand = ((float) sample) / ((float) MAX_INT32);
-      rng = sample;
+      float fpRand = ((float) FileSimpleRandom()) / ((float) ~((uint32) 0));
 
       msecActualSleepTime = msecMinSleepTime + (uint32) (fpRand * variance);
    }
 
-#if defined(_WIN32)
-   Sleep(msecActualSleepTime);
-#else
    usleep(1000 * msecActualSleepTime);
-#endif
 
    return msecActualSleepTime;
 }
-#endif // N_PLAT_NLM
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileRotateByRename --
+ *
+ *      The oldest indexed file should be removed so that the consequent
+ *      rename succeeds.
+ *
+ *      The last dst is 'fileName' and should not be deleted.
+ *
+ * Results:
+ *      If newFileName is non-NULL: the new path is returned to *newFileName
+ *      if the rotation succeeded, otherwise NULL is returned in *newFileName.
+ *      The caller is responsible for freeing the string returned in
+ *      *newFileName.
+ *
+ * Side effects:
+ *      Rename backup old files kept so far.
+ *
+ *----------------------------------------------------------------------
+ */
+
+static void
+FileRotateByRename(const char *fileName,  // IN: full path to file
+                   const char *baseName,  // IN: filename w/o extension.
+                   const char *ext,       // IN: extension
+                   int n,                 // IN: number of old files to keep
+                   char **newFileName)    // OUT/OPT: new path to file
+{
+   char *src = NULL;
+   char *dst = NULL;
+   int i;
+   int result;
+
+   for (i = n; i >= 0; i--) {
+      src = (i == 0) ? (char *) fileName :
+                       Str_SafeAsprintf(NULL, "%s-%d%s", baseName, i - 1, ext);
+
+      if (dst == NULL) {
+         result = File_UnlinkIfExists(src);
+
+         if (result == -1) {
+            Log(LGPFX" %s: failed to remove %s: %s\n", __FUNCTION__,
+                src, Msg_ErrString());
+         }
+      } else {
+         result = Posix_Rename(src, dst);
+
+         if (result == -1) {
+            int error = Err_Errno();
+
+            if (error != ENOENT) {
+               Log(LGPFX" %s: failed to rename %s -> %s: %s\n", src, dst,
+                   __FUNCTION__, Err_Errno2String(error));
+            }
+         }
+      }
+
+      if ((src == fileName) && (newFileName != NULL)) {
+         *newFileName = result == -1 ? NULL : strdup(dst);
+      }
+
+      ASSERT(dst != fileName);
+      free(dst);
+      dst = src;
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileNumberCompare --
+ *
+ *      Helper function for comparing the contents of two
+ *      uint32 pointers a and b, suitable for use by qsort
+ *      to order an array of file numbers.
+ *
+ * Results:
+ *      The contents of 'a' minus the contents of 'b'.
+ *
+ * Side effects:
+ *      None.
+ */
+
+static int
+FileNumberCompare(const void *a,  // IN:
+                  const void *b)  // IN:
+{
+   return *(uint32 *) a - *(uint32 *) b;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileRotateByRenumber --
+ *
+ *      File rotation scheme optimized for vmfs:
+ *        1) find highest numbered file (maxNr)
+ *        2) rename <base>.<ext> to <base>-<maxNr + 1>.<ext>
+ *        3) delete (nFound - numToKeep) lowest numbered files.
+ *
+ *        Wrap around is handled incorrectly.
+ *
+ * Results:
+ *      If newFilePath is non-NULL: the new path is returned to *newFilePath
+ *      if the rotation succeeded, otherwise NULL is returned in *newFilePath.
+ *      The caller is responsible for freeing the string returned in
+ *      *newFilePath.
+ *
+ * Side effects:
+ *      Files renamed / deleted.
+ *
+ *----------------------------------------------------------------------
+ */
+
+static void
+FileRotateByRenumber(const char *filePath,       // IN: full path to file
+                     const char *filePathNoExt,  // IN: filename w/o extension.
+                     const char *ext,            // IN: extension
+                     int n,                      // IN: number old files to keep
+                     char **newFilePath)         // OUT/OPT: new path to file
+{
+   char *baseDir = NULL, *fmtString = NULL, *baseName = NULL, *tmp;
+   char *fullPathNoExt = NULL;
+   uint32 maxNr = 0;
+   int i, nrFiles, nFound = 0;
+   char **fileList = NULL;
+   uint32 *fileNumbers = NULL;
+   int result;
+
+   fullPathNoExt = File_FullPath(filePathNoExt);
+   if (fullPathNoExt == NULL) {
+      Log(LGPFX" %s: failed to get full path for '%s'.\n", __FUNCTION__,
+          filePathNoExt);
+      goto cleanup;
+   }
+
+   File_GetPathName(fullPathNoExt, &baseDir, &baseName);
+   if ((baseDir[0] == '\0') || (baseName[0] == '\0')) {
+      Log(LGPFX" %s: failed to get base dir for path '%s'.\n", __FUNCTION__,
+          filePathNoExt);
+      goto cleanup;
+   }
+
+   fmtString = Str_SafeAsprintf(NULL, "%s-%%d%s%%n", baseName, ext);
+
+   nrFiles = File_ListDirectory(baseDir, &fileList);
+   if (nrFiles == -1) {
+      Log(LGPFX" %s: failed to read the directory '%s'.\n", __FUNCTION__,
+          baseDir);
+      goto cleanup;
+   }
+
+   fileNumbers = Util_SafeCalloc(nrFiles, sizeof(uint32));
+
+   for (i = 0; i < nrFiles; i++) {
+      uint32 curNr;
+      int bytesProcessed = 0;
+
+      /*
+       * Make sure the whole file name matched what we expect for the file.
+       */
+
+      if ((sscanf(fileList[i], fmtString, &curNr, &bytesProcessed) >= 1) &&
+          (bytesProcessed == strlen(fileList[i]))) {
+         fileNumbers[nFound++] = curNr;
+      }
+
+      free(fileList[i]);
+   }
+
+   if (nFound > 0) {
+      qsort(fileNumbers, nFound, sizeof(uint32), FileNumberCompare);
+      maxNr = fileNumbers[nFound - 1];
+   }
+
+   /* rename the existing file to the next number */
+   tmp = Str_SafeAsprintf(NULL, "%s/%s-%d%s", baseDir, baseName,
+                          maxNr + 1, ext);
+
+   result = Posix_Rename(filePath, tmp);
+
+   if (result == -1) {
+      int error = Err_Errno();
+
+      if (error != ENOENT) {
+         Log(LGPFX" %s: failed to rename %s -> %s failed: %s\n", __FUNCTION__,
+             filePath, tmp, Err_Errno2String(error));
+      }
+   }
+
+   if (newFilePath != NULL) {
+      if (result == -1) {
+         *newFilePath = NULL;
+         free(tmp);
+      } else {
+         *newFilePath = tmp;
+      }
+   }
+
+   if (nFound >= n) {
+      /* Delete the extra files. */
+      for (i = 0; i <= nFound - n; i++) {
+         tmp = Str_SafeAsprintf(NULL, "%s/%s-%d%s", baseDir, baseName,
+                                fileNumbers[i], ext);
+
+         if (Posix_Unlink(tmp) == -1) {
+            Log(LGPFX" %s: failed to remove %s: %s\n", __FUNCTION__, tmp,
+                Msg_ErrString());
+         }
+         free(tmp);
+      }
+   }
+
+  cleanup:
+   free(fileNumbers);
+   free(fileList);
+   free(fmtString);
+   free(baseDir);
+   free(baseName);
+   free(fullPathNoExt);
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * File_Rotate --
+ *
+ *      Rotate old files. The 'noRename' option is useful for filesystems
+ *      where rename is hideously expensive (*cough* vmfs).
+ *
+ * Results:
+ *      If newFileName is non-NULL: the new path is returned to
+ *      *newFileName if the rotation succeeded, otherwise NULL
+ *      is returned in *newFileName.  The caller is responsible
+ *      for freeing the string returned in *newFileName.
+ *
+ * Side effects:
+ *      Files are renamed / deleted.
+ *
+ *----------------------------------------------------------------------
+ */
+
+void
+File_Rotate(const char *fileName,  // IN: original file
+            int n,                 // IN: number of backup files
+            Bool noRename,         // IN: don't rename all files
+            char **newFileName)    // OUT/OPT: new path to file
+{
+   const char *ext;
+   size_t baseLen;
+   char *baseName;
+
+   if ((ext = Str_Strrchr(fileName, '.')) == NULL) {
+      ext = fileName + strlen(fileName);
+   }
+   baseLen = ext - fileName;
+
+   /*
+    * Backup base of file name.
+    *
+    * Since the Str_Asprintf(...) doesn't like format of %.*s and crashes
+    * in Windows 2000. (Daniel Liu)
+    */
+
+   baseName = Util_SafeStrdup(fileName);
+   baseName[baseLen] = '\0';
+
+   if (noRename) {
+      FileRotateByRenumber(fileName, baseName, ext, n, newFileName);
+   } else {
+      FileRotateByRename(fileName, baseName, ext, n, newFileName);
+   }
+
+   free(baseName);
+}

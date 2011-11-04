@@ -23,9 +23,21 @@
  *
  */
 
+#if defined(_WIN32)
+#  include <windows.h>
+#endif
 #include "vm_assert.h"
 #include "msg.h"
 #include "str.h"
+
+
+void
+Msg_AppendMsgList(const MsgList *msgs)
+{
+   while (msgs != NULL) {
+      Warning("%s [STUB]: %s\n", __FUNCTION__, msgs->id);
+   }
+}
 
 
 void
@@ -39,7 +51,7 @@ Msg_Append(const char *fmt,
    Str_Vsnprintf(buf, sizeof buf, fmt, args);
    va_end(args);
 
-   Warning("Msg_Append: %s\n", buf);
+   Warning("%s [STUB]: %s\n", __FUNCTION__, buf);
 }
 
 
@@ -64,7 +76,7 @@ Msg_Question(Msg_String const *buttons,
    Str_Vsnprintf(buf, sizeof buf, fmt, args);
    va_end(args);
 
-   Warning("Msg_Question: %s\n", buf);
+   Warning("%s [STUB]: %s\n", __FUNCTION__, buf);
 
    return (unsigned int) defaultAnswer;
 }

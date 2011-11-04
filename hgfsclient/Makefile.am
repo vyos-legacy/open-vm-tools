@@ -20,6 +20,7 @@ bin_PROGRAMS = vmware-hgfsclient
 vmware_hgfsclient_LDADD =
 vmware_hgfsclient_LDADD += ../lib/hgfsBd/libHgfsBd.la
 vmware_hgfsclient_LDADD += @VMTOOLS_LIBS@
+vmware_hgfsclient_LDADD += @HGFS_LIBS@
 
 vmware_hgfsclient_CPPFLAGS =
 vmware_hgfsclient_CPPFLAGS += @VMTOOLS_CPPFLAGS@

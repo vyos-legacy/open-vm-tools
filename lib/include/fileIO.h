@@ -52,44 +52,26 @@
 
 #include "iovector.h"        // for struct iovec
 
-#if defined(VMX86_STATS)
-
-struct StatsUserBlock;
-
-#define FILEIO_STATS_VARS \
-   uint32 readIn, readDirect; \
-   uint32 writeIn, writeDirect; \
-   uint32 readvIn, readvDirect; \
-   uint32 writevIn, writevDirect; \
-   uint32 preadvIn, preadDirect; \
-   uint32 pwritevIn, pwriteDirect; \
-   uint64 bytesRead, bytesWritten; \
-   uint32 numReadCoalesced, numWriteCoalesced; \
-   struct StatsUserBlock *stats;
-#else
-#define FILEIO_STATS_VARS
-#endif
+struct FileLockToken;
 
 #if defined(_WIN32)
 
 # include <windows.h>
 
 typedef struct FileIODescriptor {
-   HANDLE win32;
-   uint32 flags;
-   Unicode fileName;
-   void *lockToken;
-   FILEIO_STATS_VARS
+   HANDLE                win32;
+   uint32                flags;
+   Unicode               fileName;
+   struct FileLockToken *lockToken;
 } FileIODescriptor;
 
 #else
 
 typedef struct FileIODescriptor {
-   int posix;
-   int flags;
-   Unicode fileName;
-   void *lockToken;
-   FILEIO_STATS_VARS
+   int                   posix;
+   int                   flags;
+   Unicode               fileName;
+   struct FileLockToken *lockToken;
 } FileIODescriptor;
 
 #endif
@@ -166,10 +148,6 @@ typedef enum {
  */
 #define FILEIO_OPEN_MULTIWRITER_LOCK     (1 << 14)
 /*
- * Flag the file as not to be backed up by Time Machine on Mac OS X.
- */
-#define FILEIO_OPEN_NO_TIME_MACHINE      (1 << 15)
-/*
  * Valid only for MacOS. It eventually results into O_EXLOCK flag passed to open
  * system call.
  *
@@ -183,13 +161,33 @@ typedef enum {
  * |                      | on conflicts       | on conflicts
  */
 #define FILEIO_OPEN_EXCLUSIVE_LOCK_MACOS (1 << 16)
+/*
+ * Open file in APPEND-only mode.  All writes go to the current end of file,
+ * not to the current file pointer location.
+ */
+#define FILEIO_OPEN_APPEND               (1 << 17)
+/*
+ * Valid only on POSIXen. Don't follow a symbolic link.
+ */
+#define FILEIO_OPEN_ACCESS_NOFOLLOW (1 << 18)
+/*
+ * Valid only on Windows. Set FILE_SHARE_DELETE.
+ */
+#define FILEIO_OPEN_SHARE_DELETE (1 << 19)
 
-// Flag passed to open() to get exclusive VMFS lock.  This definition must
-// match USEROBJ_OPEN_EXCLUSIVE_LOCK in user_vsiTypes.h.
-#define O_EXCLUSIVE_LOCK 0x10000000
+/*
+ * Flag passed to open() to not attempt to get the lun attributes as part of
+ * the open operation. Applicable only to opening of SCSI devices. This
+ * definition must match the definition of USEROBJ_OPEN_NOATTR in
+ * user_vsiTypes.h and FS_OPEN_NOATTR in fs_public.h
+ */
+#define O_NOATTR 0x04000000
 // Flag passed to open() to get multiwriter VMFS lock.  This definition must
 // match USEROBJ_OPEN_MULTIWRITER_LOCK in user_vsiTypes.h.
 #define O_MULTIWRITER_LOCK 0x08000000
+// Flag passed to open() to get exclusive VMFS lock.  This definition must
+// match USEROBJ_OPEN_EXCLUSIVE_LOCK in user_vsiTypes.h.
+#define O_EXCLUSIVE_LOCK 0x10000000
 
 /* File Access check args */
 #define FILEIO_ACCESS_READ       (1 << 0)
@@ -262,7 +260,9 @@ typedef enum {
 } FileIOResult;
 
 const char *FileIO_MsgError(FileIOResult status);
+
 void FileIO_Invalidate(FileIODescriptor *file);
+
 Bool FileIO_IsValid(const FileIODescriptor *fd);
 
 FileIOResult FileIO_Create(FileIODescriptor *file,
@@ -335,11 +335,16 @@ Bool    FileIO_Truncate(FileIODescriptor *file,
 
 int     FileIO_Sync(const FileIODescriptor *file);
 
+FileIOResult FileIO_GetAllocSize(const FileIODescriptor *fd,
+                                 uint64 *logicalBytes,
+                                 uint64 *allocedBytes);
 int64   FileIO_GetSize(const FileIODescriptor *fd);
 
-int64   FileIO_GetAllocSize(const FileIODescriptor *fd);
-
 Bool    FileIO_SetAllocSize(const FileIODescriptor *fd, uint64 size);
+
+FileIOResult FileIO_GetAllocSizeByPath(ConstUnicode pathName,
+                                       uint64 *logicalBytes,
+                                       uint64 *allocedBytes);
 
 int64   FileIO_GetSizeByPath(ConstUnicode pathName);
 
@@ -355,8 +360,8 @@ Bool    FileIO_SupportsFileSize(const FileIODescriptor *file,
 
 int64   FileIO_GetModTime(const FileIODescriptor *fd);
 
-FileIOResult FileIO_Lock(FileIODescriptor *file,  // IN/OUT
-                         int access);             // IN
+FileIOResult FileIO_Lock(FileIODescriptor *file,
+                         int access);
 
 FileIOResult FileIO_Unlock(FileIODescriptor *file);
 
@@ -365,12 +370,6 @@ void FileIO_Init(FileIODescriptor *fd,
                  ConstUnicode pathName);
 
 void FileIO_Cleanup(FileIODescriptor *fd);
-
-void FileIO_StatsInit(FileIODescriptor *fd);
-
-void FileIO_StatsLog(FileIODescriptor *fd);
-
-void FileIO_StatsExit(const FileIODescriptor *fd);
 
 const char *FileIO_ErrorEnglish(FileIOResult status);
 
@@ -396,7 +395,7 @@ ConstUnicode FileIO_Filename(FileIODescriptor *fd);
 /*
  *-------------------------------------------------------------------------
  * 
- * FileIO_Success --
+ * FileIO_IsSuccess --
  *
  *      Returns TRUE if the error code is success.
  *
@@ -425,10 +424,6 @@ FileIO_IsSuccess(FileIOResult res)      // IN
 Bool FileIO_IsSuccess(FileIOResult res);
 #endif
 
-#if defined(__APPLE__)
-EXTERN Bool FileIO_ResetExcludedFromTimeMachine(char const *pathName);
-EXTERN Bool FileIO_SetExcludedFromTimeMachine(char const *pathName,
-                                              Bool isExcluded);
-#endif
+Bool FileIO_SupportsPrealloc(const char *pathName, Bool fsCheck);
 
 #endif // _FILEIO_H_

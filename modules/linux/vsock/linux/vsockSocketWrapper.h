@@ -30,13 +30,26 @@
 /*
  * Socket states and flags.  Note that MSG_WAITALL is only defined on 2K3,
  * XP-SP2 and above.  Since we currently build for 2K to maintain backwards
- * compatibility, we pull the value from the newer header.
+ * compatibility, we pull the value from the newer header.  Same for the
+ * POLLXXX flags, which are not defined before Vista.
  */
 #if defined(_WIN32)
 #  define MSG_DONTWAIT        0
 #  define MSG_NOSIGNAL        0
 #  if (_WIN32_WINNT < 0x0502)
 #     define MSG_WAITALL      0x8
+#  endif
+#  if (_WIN32_WINNT < 0x0600)
+#     define POLLRDNORM       0x0100
+#     define POLLRDBAND       0x0200
+#     define POLLIN           (POLLRDNORM | POLLRDBAND)
+#     define POLLPRI          0x0400
+#     define POLLWRNORM       0x0010
+#     define POLLOUT          (POLLWRNORM)
+#     define POLLWRBAND       0x0020
+#     define POLLERR          0x0001
+#     define POLLHUP          0x0002
+#     define POLLNVAL         0x0004
 #  endif
 #endif
 
@@ -51,12 +64,13 @@
 #define SO_NONBLOCKING  0x1200
 #endif // __APPLE__
 
-#if defined(_WIN32) || defined(VMKERNEL) || defined __APPLE__
+#if defined(_WIN32) || defined(VMKERNEL) || defined(__APPLE__)
 #  define SS_FREE             0
 #  define SS_UNCONNECTED      1
 #  define SS_CONNECTING       2
 #  define SS_CONNECTED        3
 #  define SS_DISCONNECTING    4
+#  define SS_DISCONNECTED     5
 #  define RCV_SHUTDOWN        1
 #  define SEND_SHUTDOWN       2
 #  define SHUTDOWN_MASK       3
@@ -105,6 +119,12 @@
 # if !defined(EINVAL)
 #  define EINVAL              WSAEINVAL
 # endif
+# if !defined(EPERM)
+#  define EPERM               WSAEACCES /* WSA doesn't have EPERM */
+# endif
+# if !defined(ENOSYS)
+#  define ENOSYS              WSAEOPNOTSUPP
+# endif
 #  define EWOULDBLOCK         WSAEWOULDBLOCK
 #  define EINPROGRESS         WSAEINPROGRESS
 #  define EALREADY            WSAEALREADY
@@ -134,12 +154,15 @@
 #  define EHOSTDOWN           WSAEHOSTDOWN
 #  define EHOSTUNREACH        WSAEHOSTUNREACH
 #  define __ELOCALSHUTDOWN    ESHUTDOWN
+#  define __ELOCALRCVSHUTDOWN __ELOCALSHUTDOWN
 #  define __EPEERSHUTDOWN     ECONNABORTED
 #  define __ECONNINPROGRESS   EWOULDBLOCK
-#else
-#if defined(VMKERNEL)
+#  define __ESNDRCVTIMEDOUT   ETIMEDOUT
+#  define ESYSNOTREADY        WSASYSNOTREADY
+#elif defined(VMKERNEL)
 #  define EINTR               VMK_WAIT_INTERRUPTED
-#  define EACCES              VMK_NOACCESS
+#  define EPERM               VMK_ACCESS_DENIED
+#  define EACCES              VMK_NO_ACCESS
 #  define EFAULT              VMK_INVALID_ADDRESS
 #  define EINVAL              VMK_FAILURE
 #  define EWOULDBLOCK         VMK_WOULD_BLOCK
@@ -177,15 +200,20 @@
 #  define EHOSTUNREACH        VMK_EHOSTUNREACH
 #  define EPIPE               VMK_BROKEN_PIPE
 #  define __ELOCALSHUTDOWN    EPIPE
+#  define __ELOCALRCVSHUTDOWN 0
 #  define __EPEERSHUTDOWN     EPIPE
 #  define __ECONNINPROGRESS   EINPROGRESS
-#else
-#if defined(__APPLE__)
+#  define __ESNDRCVTIMEDOUT   VMK_WOULD_BLOCK
+#  define ESYSNOTREADY        VMK_NOT_SUPPORTED
+#elif defined(__APPLE__)
 #  define __ELOCALSHUTDOWN    ESHUTDOWN
+#  define __ELOCALRCVSHUTDOWN 0
 #  define __EPEERSHUTDOWN     ECONNABORTED
 #  define __ECONNINPROGRESS   EINPROGRESS
-#endif // __APPLE
-#endif // VMKERNEL
+#  define __ESNDRCVTIMEDOUT   EAGAIN
+#  define ESYSNOTREADY        EOPNOTSUPP
+#elif defined(linux)
+#  define ESYSNOTREADY        EOPNOTSUPP
 #endif // _WIN32
 
 
@@ -209,14 +237,16 @@
 #  define SOCKET_ERROR        (-1)
 #  define INVALID_SOCKET      ((SOCKET) -1)
 #  define sockerr()           errno
-#  define sockerr2err(_e)     (((_e) > 0) ? -(_e) : (_e))
 #  define sockcleanup()       do {} while (0)
 #if defined(linux)
+#  define sockerr2err(_e)     (((_e) > 0) ? -(_e) : (_e))
 #  define closesocket(_s)     close((_s))
-#else
-#  define closesocket(_s)	VMCISock_close(_s)
-#endif
    typedef int32              SOCKET;
+#else
+#  define sockerr2err(_e)     (_e)
+#  define closesocket(_s)     VMCISock_close(_s)
+   typedef int32              SOCKET;
+#endif
 #endif // linux
 #endif // VMKERNEL
 #endif // _WIN32

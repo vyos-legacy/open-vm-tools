@@ -21,7 +21,7 @@
 #include <stdlib.h>
 #include <errno.h>
 
-#if defined(__APPLE__) || defined(linux)
+#if !defined(_WIN32)
 #include <dlfcn.h>
 #endif
 
@@ -29,11 +29,11 @@
 #include "posixInt.h"
 
 
-#if defined(__APPLE__) || defined(linux)
+#if !defined(_WIN32)
 /*
  *----------------------------------------------------------------------
  *
- * FileIO_Dlopen --
+ * Posix_Dlopen --
  *
  *      POSIX dlopen()
  *

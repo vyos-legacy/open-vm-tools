@@ -30,18 +30,9 @@
 
 #include "guestApp.h"
 
-#ifdef N_PLAT_NLM
-#define CONF_FILE         "tools.cfg"
-#else
 #define CONF_FILE         "tools.conf"
-#endif
 
-#ifdef N_PLAT_NLM
-#   define CONFVAL_POWERONSCRIPT_DEFAULT  "POWERON.NCF"
-#   define CONFVAL_POWEROFFSCRIPT_DEFAULT "POWEROFF.NCF"
-#   define CONFVAL_RESUMESCRIPT_DEFAULT   "RESUME.NCF"
-#   define CONFVAL_SUSPENDSCRIPT_DEFAULT  "SUSPEND.NCF"
-#elif ! defined(_WIN32)
+#if ! defined(_WIN32)
 #   define CONFVAL_POWERONSCRIPT_DEFAULT  "poweron-vm-default"
 #   define CONFVAL_POWEROFFSCRIPT_DEFAULT "poweroff-vm-default"
 #   define CONFVAL_RESUMESCRIPT_DEFAULT   "resume-vm-default"
@@ -53,7 +44,6 @@
 #   define CONFVAL_SUSPENDSCRIPT_DEFAULT  "suspend-vm-default.bat"
 #endif
 
-#define CONFNAME_MAX_WIPERSIZE            "max.wiperfile.size"
 #define CONFNAME_POWERONSCRIPT            "poweron-script"
 #define CONFNAME_POWEROFFSCRIPT           "poweroff-script"
 #define CONFNAME_RESUMESCRIPT             "resume-script"
@@ -61,30 +51,95 @@
 #define CONFNAME_LOG                      "log"
 #define CONFNAME_LOGFILE                  "log.file"
 #define CONFNAME_LOGLEVEL                 "log.level" 
-#define CONFNAME_DISABLEQUERYDISKINFO     "disable-query-diskinfo"
 #define CONFNAME_DISABLETOOLSVERSION      "disable-tools-version"
+#define CONFNAME_DISABLEPMTIMERWARNING    "disable-pmtimerwarning"
+
 
 /*
- * Tell the tools to show the wireless icon in the guest.
+ ******************************************************************************
+ * BEGIN GuestInfo goodies.
  */
 
-#define CONFNAME_SHOW_WIRELESS_ICON "wirelessIcon.enable"
+/**
+ * Defines the string used for the GuestInfo config file group.
+ */
+#define CONFGROUPNAME_GUESTINFO "guestinfo"
+
+/**
+ * Lets users disable just the perf monitor.
+ */
+#define CONFNAME_GUESTINFO_DISABLEPERFMON "disable-perf-mon"
+
+/**
+ * Lets users disable just DiskInfo.
+ *
+ * If thinking of deprecating this, please read bug 535343 first.
+ */
+#define CONFNAME_GUESTINFO_DISABLEQUERYDISKINFO "disable-query-diskinfo"
+
+/**
+ * Define a custom GuestInfo poll interval (in seconds).
+ *
+ * @note Illegal values result in a @c g_warning and fallback to the default
+ * poll interval.
+ *
+ * @param int   User-defined poll interval.  Set to 0 to disable polling.
+ */
+#define CONFNAME_GUESTINFO_POLLINTERVAL "poll-interval"
 
 /*
- * Directory containing the tools library files.  Currently only intended
- * for vmware-user.
+ * END GuestInfo goodies.
+ ******************************************************************************
  */
-#if !defined(_WIN32) && !defined(N_PLAT_NLM)
-#   define CONFNAME_LIBDIR                        "libdir"
-#endif
 
-/* Default maximum size of wiper file in MB */
-#define CONFVAL_MAX_WIPERSIZE_DEFAULT         "512"
+
+/*
+ ******************************************************************************
+ * BEGIN Unity goodies.
+ */
+
+/**
+ * Defines the string used for the Unity config file group.
+ */
+#define CONFGROUPNAME_UNITY "unity"
+
+/**
+ * Lets users enable debug info from Unity.
+ */
+#define CONFNAME_UNITY_ENABLEDEBUG "debug"
+
+/**
+ * Lets users override system decisions about whether unity should be available.
+ */
+#define CONFNAME_UNITY_FORCEENABLE "forceEnable"
+
+/**
+ * Lets users override the desktop background color when in Unity mode.
+ */
+#define CONFNAME_UNITY_BACKGROUNDCOLOR "desktop.backgroundColor"
+
+/**
+ * Lets users enable (or disable) the Protocol Buffer enabled service
+ */
+#define CONFNAME_UNITY_ENABLEPBRPC "pbrpc.enable"
+
+/**
+ * Lets users configure the socket type for the PBRPC Services
+ */
+#define CONFNAME_UNITY_PBRPCSOCKETTYPE "pbrpc.socketType"
+#define CONFNAME_UNITY_PBRPCSOCKETTYPE_IPSOCKET "ipsocket"
+#define CONFNAME_UNITY_PBRPCSOCKETTYPE_VSOCKET "vsocket"
+
+/*
+ * END Unity goodies.
+ ******************************************************************************
+ */
+
+
+/** Where to find Tools data in the Win32 registry. */
+#define CONF_VMWARE_TOOLS_REGKEY    "Software\\VMware, Inc.\\VMware Tools"
 
 /* Wait 5 seconds between polls to see if the conf file has changed */
 #define CONF_POLL_TIME     500
-
-GuestApp_Dict *Conf_Load(void);
-Bool Conf_ReloadFile(GuestApp_Dict **pConfDict);
 
 #endif /* __CONF_H__ */

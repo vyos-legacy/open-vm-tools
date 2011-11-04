@@ -34,7 +34,6 @@
 #endif // Win32 vs Posix
 
 #include "vmware.h"
-#include "productState.h"
 #include "vm_version.h"
 #include "log.h"
 #include "panic.h"
@@ -42,6 +41,7 @@
 #include "str.h"
 #include "config.h"
 #include "util.h"
+#include "userlock.h"
 #if defined(_WIN32) || !defined(VMX86_TOOLS)
 #include "coreDump.h"
 #endif
@@ -466,6 +466,8 @@ Panic_Panic(const char *format,
    char buf[1024];
    static int count = 0;
 
+   MXUser_SetInPanic();
+
    Str_Vsnprintf(buf, sizeof buf, format, args);
 
    /*
@@ -554,9 +556,10 @@ Panic_Panic(const char *format,
 
    Panic_PostPanicMsg(buf);
 
-   /* 
+   /*
     * Bye
     */
+   Log("Exiting\n");
 
    exit(-1);
    NOT_REACHED();

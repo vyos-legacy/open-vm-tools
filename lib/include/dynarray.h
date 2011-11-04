@@ -256,15 +256,21 @@ DynArray_Copy(DynArray *src,        // IN
 #define DEFINE_DYNARRAY_TYPE(T)     DEFINE_DYNARRAY_NAMED_TYPE(T, T)
 
 #define DEFINE_DYNARRAY_NAMED_TYPE(T, TYPE)                             \
+   DECLARE_DYNARRAY_TYPE(T)                                             \
+   DEFINEONLY_DYNARRAY_NAMED_TYPE(T, TYPE)
+
+#define DECLARE_DYNARRAY_TYPE(T)                                        \
+   typedef DynArray T##Array;
+
+#define DEFINEONLY_DYNARRAY_NAMED_TYPE(T, TYPE)                         \
                                                                         \
    typedef int (CDECLCONV *DynArray##T##Cmp)(const TYPE *,              \
                                              const TYPE *);             \
-   typedef DynArray T##Array;                                           \
                                                                         \
-   static INLINE void                                                   \
+   static INLINE Bool                                                   \
    T##Array_Init(T##Array *a, unsigned int count)                       \
    {                                                                    \
-      DynArray_Init((DynArray *)a, count, sizeof(TYPE));                \
+      return DynArray_Init((DynArray *)a, count, sizeof(TYPE));         \
    }                                                                    \
                                                                         \
    static INLINE void                                                   \
@@ -274,13 +280,13 @@ DynArray_Copy(DynArray *src,        // IN
    }                                                                    \
                                                                         \
    static INLINE TYPE*                                                  \
-   T##Array_AddressOf(T##Array *a, unsigned int i)                \
+   T##Array_AddressOf(T##Array *a, unsigned int i)                      \
    {                                                                    \
       return (TYPE*)DynArray_AddressOf((DynArray *)a, i);               \
    }                                                                    \
                                                                         \
    static INLINE unsigned int                                           \
-   T##Array_Count(T##Array *a)                                    \
+   T##Array_Count(T##Array *a)                                          \
    {                                                                    \
       return DynArray_Count((DynArray *)a);                             \
    }                                                                    \
@@ -303,7 +309,7 @@ DynArray_Copy(DynArray *src,        // IN
    }                                                                    \
                                                                         \
    static INLINE unsigned int                                           \
-   T##Array_AllocCount(T##Array *a)                               \
+   T##Array_AllocCount(T##Array *a)                                     \
    {                                                                    \
       return DynArray_AllocCount((DynArray *)a);                        \
    }                                                                    \

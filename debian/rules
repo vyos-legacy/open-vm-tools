@@ -1,10 +1,4 @@
 #!/usr/bin/make -f
-# -*- makefile -*-
-# Sample debian/rules that uses debhelper.
-# This file was originally written by Joey Hess and Craig Small.
-# As a special exception, when this file is copied by dh-make into a
-# dh-make output file, you may use that output file without restriction.
-# This special exception was added by Craig Small in version 0.37 of dh-make.
 
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
@@ -80,13 +74,13 @@ configure	+= --mandir=/usr/share/man
 configure	+= --sysconfdir=/etc
 configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
+configure	+= --without-root-privileges
 configure	+= --without-x
 configure	+= --with-procps
 configure	+= --with-dnet
 configure	+= --without-gtkmm
 configure	+= --without-gtk2
 configure	+= --without-icu
-configure	+= --disable-unity
 configure	+= CFLAGS="$(CFLAGS)"
 configure	+= LDFLAGS="-Wl,-z,defs"
 
@@ -137,6 +131,10 @@ install: build
 	mkdir -p $(CURDIR)/debian/$(MODPKG)/lib
 	mv $(PKGDIR)/lib/modules $(CURDIR)/debian/$(MODPKG)/lib
 	-rmdir $(PKGDIR)/lib
+
+	# Removing useless files
+	rm -f debian/open-vm-tools/usr/lib/*.la
+	rm -f debian/open-vm-tools/usr/lib/open-vm-tools/plugins/*/*.la
 
 	# Fix up hooks
 	install -D -m 0755 debian/local/vmxnet.hook \

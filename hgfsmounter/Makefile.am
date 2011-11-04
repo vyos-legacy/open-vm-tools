@@ -18,23 +18,20 @@
 sbin_PROGRAMS = mount.vmhgfs
 
 mount_vmhgfs_LDADD =
-mount_vmhgfs_LDADD += ../lib/misc/libMisc.la
 mount_vmhgfs_LDADD += ../lib/string/libString.la
 mount_vmhgfs_LDADD += ../lib/panicDefault/libPanicDefault.la
 mount_vmhgfs_LDADD += ../lib/panic/libPanic.la
+mount_vmhgfs_LDADD += ../lib/lock/libLock.la
+mount_vmhgfs_LDADD += ../lib/misc/libMisc.la
 mount_vmhgfs_LDADD += ../lib/stubs/libStubs.la
 
 mount_vmhgfs_SOURCES =
 mount_vmhgfs_SOURCES += hgfsmounter.c
-mount_vmhgfs_SOURCES += stub-user-util.c
 
 if FREEBSD
 install-exec-hook:
 	mv $(DESTDIR)$(sbindir)/mount.vmhgfs \
 		$(DESTDIR)$(sbindir)/mount_vmhgfs
-if WITH_ROOT_PRIVILEGES
-	chmod u+s $(DESTDIR)$(sbindir)/mount_vmhgfs
-endif WITH_ROOT_PRIVILEGES
 	-$(MKDIR_P) $(DESTDIR)/sbin
 	-$(LN_S) $(DESTDIR)$(sbindir)/mount_vmhgfs \
 		$(DESTDIR)/sbin/mount_vmhgfs &> /dev/null
@@ -42,12 +39,9 @@ uninstall-hook:
 	rm -f $(DESTDIR)$(sbindir)/mount_vmhgfs
 else
 install-exec-hook:
-if WITH_ROOT_PRIVILEGES
-	chmod u+s $(DESTDIR)$(sbindir)/mount.vmhgfs
-endif WITH_ROOT_PRIVILEGES
 	-$(MKDIR_P) $(DESTDIR)/sbin
-#	-$(LN_S) $(DESTDIR)$(sbindir)/mount.vmhgfs \
-#		$(DESTDIR)/sbin/mount.vmhgfs &> /dev/null
+	-$(LN_S) $(DESTDIR)$(sbindir)/mount.vmhgfs \
+		$(DESTDIR)/sbin/mount.vmhgfs &> /dev/null
 uninstall-hook:
 	rm -f $(DESTDIR)/sbin/mount.vmhgfs
 endif !FREEBSD

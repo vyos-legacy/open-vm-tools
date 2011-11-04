@@ -29,8 +29,8 @@
 
 #include <glib.h>
 #include "vmware.h"
-#include "vmbackup_def.h"
-#include "vmtoolsApp.h"
+#include "vmware/guestrpc/vmbackup.h"
+#include "vmware/tools/plugin.h"
 
 typedef enum {
    VMBACKUP_STATUS_PENDING,
@@ -69,6 +69,8 @@ typedef struct VmBackupOp {
 } VmBackupOp;
 
 
+struct VmBackupSyncProvider;
+
 /**
  * Holds information about the current state of the backup operation.
  * Don't modify the fields directly - rather, use VmBackup_SetCurrentOp,
@@ -80,17 +82,27 @@ typedef struct VmBackupState {
    VmBackupOp    *currentOp;
    const char    *currentOpName;
    char          *volumes;
-   guint         pollPeriod;
+   char          *snapshots;
+   guint          pollPeriod;
+   GSource       *abortTimer;
    GSource       *timerEvent;
    GSource       *keepAlive;
    Bool (*callback)(struct VmBackupState *);
    Bool           forceRequeue;
    Bool           generateManifests;
-   intptr_t       clientData;
+   Bool           quiesceApps;
+   Bool           quiesceFS;
+   Bool           allowHWProvider;
+   Bool           execScripts;
+   char          *scriptArg;
+   guint          timeout;
+   gpointer       clientData;
    void          *scripts;
    const char    *configDir;
    ssize_t        currentScript;
+   gchar         *errorMsg;
    VmBackupMState machineState;
+   struct VmBackupSyncProvider *provider;
 } VmBackupState;
 
 typedef Bool (*VmBackupCallback)(VmBackupState *);
@@ -105,7 +117,6 @@ typedef Bool (*VmBackupProviderCallback)(VmBackupState *, void *clientData);
 
 typedef struct VmBackupSyncProvider {
    VmBackupProviderCallback start;
-   VmBackupProviderCallback abort;
    VmBackupProviderCallback snapshotDone;
    void (*release)(struct VmBackupSyncProvider *);
    void *clientData;
@@ -133,6 +144,7 @@ VmBackup_SetCurrentOp(VmBackupState *state,
 {
    ASSERT(state != NULL);
    ASSERT(state->currentOp == NULL);
+   ASSERT(currentOpName != NULL);
    state->currentOp = op;
    state->callback = callback;
    state->currentOpName = currentOpName;
@@ -186,10 +198,15 @@ VmBackup_Cancel(VmBackupOp *op)
 static INLINE void
 VmBackup_Release(VmBackupOp *op)
 {
-   ASSERT(op != NULL);
-   op->releaseFn(op);
+   if (op != NULL) {
+      ASSERT(op->releaseFn != NULL);
+      op->releaseFn(op);
+   }
 }
 
+
+VmBackupSyncProvider *
+VmBackup_NewNullProvider(void);
 
 VmBackupSyncProvider *
 VmBackup_NewSyncDriverProvider(void);
@@ -197,6 +214,9 @@ VmBackup_NewSyncDriverProvider(void);
 #if defined(G_PLATFORM_WIN32)
 VmBackupSyncProvider *
 VmBackup_NewVssProvider(void);
+
+void
+VmBackup_UnregisterSnapshotProvider(void);
 #endif
 
 VmBackupOp *

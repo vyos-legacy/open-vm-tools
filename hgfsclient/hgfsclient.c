@@ -24,6 +24,7 @@
  *
  */
 
+#define G_LOG_DOMAIN "hgfsClient"
 #include "vmware.h"
 #include "guestApp.h"
 #include "vmcheck.h"
@@ -34,7 +35,8 @@
 #include "hgfsProto.h"
 #include "conf.h"
 #include "str.h"
-#include "vmtools.h"
+#include "vmware/tools/log.h"
+#include "vmware/tools/utils.h"
 
 #include "hgfsclient_version.h"
 #include "embed_version.h"
@@ -316,20 +318,14 @@ static Bool
 HgfsClient_Init(void)
 {
    Bool success = FALSE;
-   gchar *confFile;
-   GKeyFile *conf;
+   GKeyFile *conf = NULL;
 
-   confFile = VMTools_GetToolsConfFile();
-   conf = VMTools_LoadConfig(confFile, G_KEY_FILE_NONE, FALSE);
-
+   VMTools_LoadConfig(NULL, G_KEY_FILE_NONE, &conf, NULL);
+   VMTools_ConfigLogging("hgfsclient", conf, FALSE, FALSE);
    if (conf != NULL) {
-      VMTools_ConfigLogging(conf);
       g_key_file_free(conf);
       conf = NULL;
    }
-
-   g_free(confFile);
-   confFile = NULL;
 
    if (!VmCheck_IsVirtualWorld()) {
       Warning("This application must be run in a Virtual Machine.\n");

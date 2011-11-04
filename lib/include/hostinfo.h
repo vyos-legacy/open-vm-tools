@@ -20,7 +20,7 @@
  * hostinfo.h --
  *
  *      Interface to host-specific information functions
- *   
+ *
  */
 
 #if !defined(_HOSTINFO_H_)
@@ -33,6 +33,14 @@
 #include "vm_basic_types.h"
 #include "x86cpuid.h"
 #include "unicodeTypes.h"
+
+typedef enum {
+   HOSTINFO_PROCESS_QUERY_DEAD,    // Procss is dead (does not exist)
+   HOSTINFO_PROCESS_QUERY_ALIVE,   // Process is alive (does exist)
+   HOSTINFO_PROCESS_QUERY_UNKNOWN  // Process existence cannot be determined
+} HostinfoProcessQuery;
+
+extern HostinfoProcessQuery Hostinfo_QueryProcessExistence(int pid);
 
 extern Unicode Hostinfo_NameGet(void);	/* don't free result */
 extern Unicode Hostinfo_HostName(void);	/* free result */
@@ -47,58 +55,78 @@ extern Bool Hostinfo_GetMemoryInfoInPages(unsigned int *minSize,
 extern Bool Hostinfo_GetSwapInfoInPages(unsigned int *totalSwap,
                                         unsigned int *freeSwap);
 #endif
-#ifdef VMX86_SERVER
-extern Bool Hostinfo_GetCOSMemoryInfoInPages(unsigned int *minSize,
-                                             unsigned int *maxSize,
-                                             unsigned int *currentSize);
-#endif
 extern Bool Hostinfo_GetRatedCpuMhz(int32 cpuNumber,
                                     uint32 *mHz);
 extern char *Hostinfo_GetCpuDescription(uint32 cpuNumber);
 extern void Hostinfo_GetTimeOfDay(VmTimeType *time);
 extern VmTimeType Hostinfo_SystemUpTime(void);
-extern VmTimeType Hostinfo_RawSystemTimerUS(void);
-extern VmTimeType Hostinfo_SystemTimerUS(void);
-extern int Hostinfo_OSVersion(int i);
+extern VmTimeType Hostinfo_SystemTimerNS(void);
+
+static INLINE VmTimeType
+Hostinfo_SystemTimerUS(void)
+{
+   return Hostinfo_SystemTimerNS() / 1000ULL;
+}
+
+static INLINE VmTimeType
+Hostinfo_SystemTimerMS(void)
+{
+   return Hostinfo_SystemTimerNS() / 1000000ULL;
+}
+
+extern int Hostinfo_OSVersion(unsigned int i);
 extern int Hostinfo_GetSystemBitness(void);
 extern const char *Hostinfo_OSVersionString(void);
 
-extern Bool Hostinfo_GetOSName(uint32 outBufFullLen,
-                               uint32 outBufLen,
-                               char *osNameFull,
-                               char *osName);
+extern char *Hostinfo_GetOSName(void);
+extern char *Hostinfo_GetOSGuestString(void);
 
 extern Bool Hostinfo_OSIsSMP(void);
+
 #if defined(_WIN32)
 extern Bool Hostinfo_OSIsWinNT(void);
 extern Bool Hostinfo_OSIsWow64(void);
+DWORD Hostinfo_OpenProcessBits(void);
+#else
+extern void Hostinfo_ResetProcessState(const int *keepFds,
+                                       size_t numKeepFds);
+
+extern int Hostinfo_Execute(const char *path,
+                            char * const *args,
+                            Bool wait,
+                            const int *keepFds,
+                            size_t numKeepFds);
+
+typedef enum HostinfoDaemonizeFlags {
+   HOSTINFO_DAEMONIZE_DEFAULT = 0,
+   HOSTINFO_DAEMONIZE_NOCHDIR = (1 << 0),
+   HOSTINFO_DAEMONIZE_NOCLOSE = (1 << 1),
+   HOSTINFO_DAEMONIZE_EXIT    = (1 << 2),
+   HOSTINFO_DAEMONIZE_LOCKPID = (1 << 3),
+} HostinfoDaemonizeFlags;
+
+extern Bool Hostinfo_Daemonize(const char *path,
+                               char * const *args,
+                               HostinfoDaemonizeFlags flags,
+                               const char *pidPath,
+                               const int *keepFds,
+                               size_t numKeepFds);
 #endif
+
+extern Bool Hostinfo_NestingSupported(void);
+extern Bool Hostinfo_VCPUInfoBackdoor(unsigned bit);
+extern Bool Hostinfo_SLC64Supported(void);
+extern Bool Hostinfo_SynchronizedVTSCs(void);
+extern Bool Hostinfo_NestedHVReplaySupported(void);
 extern Bool Hostinfo_TouchBackDoor(void);
+extern Bool Hostinfo_TouchVirtualPC(void);
 extern Bool Hostinfo_TouchXen(void);
 extern char *Hostinfo_HypervisorCPUIDSig(void);
 
 #define HGMP_PRIVILEGE    0
 #define HGMP_NO_PRIVILEGE 1
 extern Unicode Hostinfo_GetModulePath(uint32 priv);
-
-
-#if !defined(_WIN32)
-extern void Hostinfo_ResetProcessState(const int *keepFds, size_t numKeepFds);
-extern int Hostinfo_Execute(const char *command, char * const *args,
-			    Bool wait);
-typedef enum HostinfoDaemonizeFlags {
-   HOSTINFO_DAEMONIZE_DEFAULT = 0,
-   HOSTINFO_DAEMONIZE_NOCHDIR = (1 << 0),
-   HOSTINFO_DAEMONIZE_NOCLOSE = (1 << 1),
-   HOSTINFO_DAEMONIZE_EXIT    = (1 << 2),
-} HostinfoDaemonizeFlags;
-extern Bool Hostinfo_Daemonize(const char *path,
-                               char * const *args,
-                               HostinfoDaemonizeFlags flags,
-                               const char *pidPath,
-                               const int *openFds,
-                               size_t numFds);
-#endif
+extern char *Hostinfo_GetLibraryPath(void *addr);
 
 extern Unicode Hostinfo_GetUser(void);
 extern void Hostinfo_LogMemUsage(void);
@@ -111,7 +139,7 @@ extern void Hostinfo_LogMemUsage(void);
  */
 
 typedef struct {
-   CpuidVendors vendor;
+   CpuidVendor vendor;
 
    uint32 version;
    uint8 family;
@@ -121,10 +149,6 @@ typedef struct {
 
    uint32 features;
    uint32 extfeatures;
-
-   uint32 numPhysCPUs;
-   uint32 numCores;
-   uint32 numLogCPUs;
 } HostinfoCpuIdInfo;
 
 
@@ -132,8 +156,10 @@ extern uint32 Hostinfo_NumCPUs(void);
 extern char *Hostinfo_GetCpuidStr(void);
 extern Bool Hostinfo_GetCpuid(HostinfoCpuIdInfo *info);
 
-#if defined(VMX86_SERVER)
-extern Bool Hostinfo_HTDisabled(void);
+#if !defined(VMX86_SERVER)
+extern Bool Hostinfo_CPUCounts(uint32 *logical,
+                               uint32 *cores,
+                               uint32 *pkgs);
 #endif
 
 #if defined(_WIN32)
@@ -180,13 +206,23 @@ OS_TYPE Hostinfo_GetOSType(void);
 OS_DETAIL_TYPE Hostinfo_GetOSDetailType(void);
 
 Bool Hostinfo_GetPCFrequency(uint64 *pcHz);
-Bool Hostinfo_GetMhzOfProcessor(int32 processorNumber, 
-				uint32 *currentMhz, uint32 *maxMhz);
+Bool Hostinfo_GetMhzOfProcessor(int32 processorNumber,
+				uint32 *currentMhz,
+                                uint32 *maxMhz);
 uint64 Hostinfo_SystemIdleTime(void);
 Bool Hostinfo_GetAllCpuid(CPUIDQuery *query);
+
+static INLINE Bool
+Hostinfo_AtLeastVista(void)
+{
+   return (Hostinfo_GetOSType() >= OS_VISTA);
+}
 #endif
 void Hostinfo_LogLoadAverage(void);
 Bool Hostinfo_GetLoadAverage(uint32 *l);
 
+#ifdef __APPLE__
+size_t Hostinfo_GetKernelZoneElemSize(char const *name);
+#endif
 
 #endif /* ifndef _HOSTINFO_H_ */

@@ -24,6 +24,8 @@ libguestlib_la_LIBADD =
 libguestlib_la_LIBADD += @VMTOOLS_LIBS@
 
 libguestlib_la_SOURCES =
+libguestlib_la_SOURCES += guestlibV3_xdr.c
+libguestlib_la_SOURCES += guestlibIoctl_xdr.c
 libguestlib_la_SOURCES += vmGuestLib.c
 
 libguestlib_la_LDFLAGS =
@@ -39,10 +41,34 @@ libguestlib_include_HEADERS += $(top_srcdir)/lib/include/vmGuestLib.h
 libguestlib_include_HEADERS += $(top_srcdir)/lib/include/vmSessionId.h
 libguestlib_include_HEADERS += $(top_srcdir)/lib/include/vm_basic_types.h
 
+BUILT_SOURCES =
+BUILT_SOURCES += guestlibV3.h
+BUILT_SOURCES += guestlibV3_xdr.c
+BUILT_SOURCES += guestlibIoctl.h
+BUILT_SOURCES += guestlibIoctl_xdr.c
+
+CLEANFILES =
+CLEANFILES += $(BUILT_SOURCES)
+
+CFLAGS += -Wno-unused
+
 EXTRA_DIST = vmguestlib.pc.in
 
 pkgconfigdir   = $(libdir)/pkgconfig
 pkgconfig_DATA = vmguestlib.pc
 
 $(pkgconfig_DATA): $(top_builddir)/config.status
+
+guestlibIoctl.h: guestlibIoctl.x
+	@RPCGEN_WRAPPER@ libguestlib/guestlibIoctl.x $@
+
+guestlibIoctl_xdr.c: guestlibIoctl.x guestlibIoctl.h
+	@RPCGEN_WRAPPER@ libguestlib/guestlibIoctl.x $@
+
+guestlibV3.h: guestlibV3.x
+	@RPCGEN_WRAPPER@ libguestlib/guestlibV3.x $@
+
+guestlibV3_xdr.c: guestlibV3.x guestlibV3.h
+	@RPCGEN_WRAPPER@ libguestlib/guestlibV3.x $@
+
 

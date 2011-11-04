@@ -27,7 +27,6 @@
 #include <string.h>
 
 #include "vmware.h"
-#include "vm_app.h"
 #include "debug.h"
 #include "rpcout.h"
 #include "str.h"
@@ -35,16 +34,15 @@
 
 #include "resolutionInt.h"
 
-#include "vmtools.h"
-#include "vmtoolsApp.h"
 #include "xdrutil.h"
+#include "vmware/guestrpc/tclodefs.h"
+#include "vmware/tools/plugin.h"
+#include "vmware/tools/utils.h"
 
 
-#if !defined(__APPLE__)
 #include "embed_version.h"
 #include "vmtoolsd_version.h"
 VM_EMBED_VERSION(VMTOOLSD_VERSION_STRING);
-#endif
 
 /*
  * The maximum number of capabilities we can set.
@@ -68,17 +66,6 @@ static const char *rpcChannelName = NULL;
  */
 ResolutionInfoType resolutionInfo;
 
-/*
- * Local function prototypes
- */
-
-static Bool ResolutionResolutionSetCB(RpcInData *data);
-static Bool ResolutionDisplayTopologySetCB(RpcInData *data);
-static void ResolutionSetServerCapability(unsigned int value);
-
-#if defined(RESOLUTION_WIN32)
-static Bool ResolutionDisplayTopologyModesSetCB(RpcInData *data);
-#endif
 
 /*
  * Global function definitions
@@ -140,19 +127,19 @@ ResolutionCleanup(void)
  * @return TRUE if we can reply, FALSE otherwise.
  */
 
-static Bool
+static gboolean
 ResolutionResolutionSetCB(RpcInData *data)
 {
    uint32 width = 0 ;
    uint32 height = 0;
    unsigned int index = 0;
-   Bool retval = FALSE;
+   gboolean retval = FALSE;
 
    ResolutionInfoType *resInfo = &resolutionInfo;
 
    if (!resInfo->initialized) {
-      Debug("%s: FAIL! Request for resolution set but plugin is not initialized\n",
-            __FUNCTION__);
+      g_debug("%s: FAIL! Request for resolution set but plugin is not initialized\n",
+              __FUNCTION__);
       return RPCIN_SETRETVALS(data, "Invalid guest state: resolution set not initialized", FALSE);
    }
 
@@ -172,6 +159,40 @@ invalid_arguments:
 
 
 #if defined(RESOLUTION_WIN32)
+/**
+ *
+ * Handler for TCLO 'ChangeHost3DAvailabilityHint'.
+ *
+ * Routine unmarshals RPC arguments and passes over to back-end for handling.
+ *
+ * @param[in] data RPC data
+ * @return TRUE if we can reply, FALSE otherwise.
+ */
+
+static gboolean
+ResolutionChangeHost3DAvailabilityHintCB(RpcInData *data)
+{
+   unsigned int set;
+   gboolean success = FALSE;
+   unsigned int index = 0;
+
+   g_debug("%s: enter\n", __FUNCTION__);
+
+   if (!StrUtil_GetNextUintToken(&set, &index, data->args, " ")) {
+      g_debug("%s: invalid arguments\n", __FUNCTION__);
+      return RPCIN_SETRETVALS(data,
+                              "Invalid arguments. Expected \"set\"",
+                              FALSE);
+   }
+
+   success = ResolutionChangeHost3DAvailabilityHint(set?TRUE:FALSE);
+
+   RPCIN_SETRETVALS(data, success ? "" : "ResolutionChangeHost3DAvailabilityHint failed", success);
+
+   g_debug("%s: leave\n", __FUNCTION__);
+   return success;
+}
+
 
 /**
  *
@@ -190,7 +211,7 @@ invalid_arguments:
  * @return TRUE if we can reply, FALSE otherwise.
  */
 
-static Bool
+static gboolean
 ResolutionDisplayTopologyModesSetCB(RpcInData *data)
 {
    DisplayTopologyInfo *displays = NULL;
@@ -198,10 +219,10 @@ ResolutionDisplayTopologyModesSetCB(RpcInData *data)
    unsigned int i;
    unsigned int cmd;
    unsigned int screen;
-   Bool success = FALSE;
+   gboolean success = FALSE;
    const char *p;
 
-   Debug("%s: enter\n", __FUNCTION__);
+   g_debug("%s: enter\n", __FUNCTION__);
 
    /*
     * The argument string will look something like:
@@ -212,7 +233,7 @@ ResolutionDisplayTopologyModesSetCB(RpcInData *data)
     */
 
    if (sscanf(data->args, "%u %u %u", &count, &screen, &cmd) != 3) {
-      Debug("%s: invalid arguments\n", __FUNCTION__);
+      g_debug("%s: invalid arguments\n", __FUNCTION__);
       return RPCIN_SETRETVALS(data,
                               "Invalid arguments. Expected \"count\", \"screen\",  and \"cmd\"",
                               FALSE);
@@ -220,7 +241,7 @@ ResolutionDisplayTopologyModesSetCB(RpcInData *data)
 
    displays = malloc(sizeof *displays * count);
    if (!displays) {
-      Debug("%s: alloc failed\n", __FUNCTION__);
+      g_debug("%s: alloc failed\n", __FUNCTION__);
       RPCIN_SETRETVALS(data,
                        "Failed to alloc buffer for display modes",
                        FALSE);
@@ -230,7 +251,7 @@ ResolutionDisplayTopologyModesSetCB(RpcInData *data)
    for (p = data->args, i = 0; i < count; i++) {
       p = strchr(p, ',');
       if (!p) {
-         Debug("%s: expected comma separated display modes list\n", __FUNCTION__);
+         g_debug("%s: expected comma separated display modes list\n", __FUNCTION__);
          RPCIN_SETRETVALS(data,
                           "Expected comma separated display modes list",
                           FALSE);
@@ -239,7 +260,7 @@ ResolutionDisplayTopologyModesSetCB(RpcInData *data)
       p++; /* Skip past the , */
 
       if (sscanf(p, " %d %d ", &displays[i].width, &displays[i].height) != 2) {
-         Debug("%s: expected w, h in display modes entry\n", __FUNCTION__);
+         g_debug("%s: expected w, h in display modes entry\n", __FUNCTION__);
          RPCIN_SETRETVALS(data,
                           "Expected w, h in display modes entry",
                           FALSE);
@@ -253,7 +274,7 @@ ResolutionDisplayTopologyModesSetCB(RpcInData *data)
 
 out:
    free(displays);
-   Debug("%s: leave\n", __FUNCTION__);
+   g_debug("%s: leave\n", __FUNCTION__);
    return success;
 }
 #endif
@@ -269,19 +290,19 @@ out:
  * @return TRUE if we can reply, FALSE otherwise.
  */
 
-static Bool
+static gboolean
 ResolutionDisplayTopologySetCB(RpcInData *data)
 {
    DisplayTopologyInfo *displays = NULL;
    unsigned int count, i;
-   Bool success = FALSE;
+   gboolean success = FALSE;
    const char *p;
 
    ResolutionInfoType *resInfo = &resolutionInfo;
 
    if (!resInfo->initialized) {
-      Debug("%s: FAIL! Request for topology set but plugin is not initialized\n",
-            __FUNCTION__);
+      g_debug("%s: FAIL! Request for topology set but plugin is not initialized\n",
+              __FUNCTION__);
       RPCIN_SETRETVALS(data, "Invalid guest state: topology set not initialized", FALSE);
       goto out;
    }
@@ -357,24 +378,29 @@ ResolutionSetShutdown(gpointer src,
 /**
  * Sends the tools.capability.resolution_server RPC to the VMX.
  *
+ * @param[in]  chan     The RPC channel.
  * @param[in]  value    The value to send for the capability bit.
  */
-void
-ResolutionSetServerCapability(unsigned int value)
+
+static void
+ResolutionSetServerCapability(RpcChannel *chan,
+                              unsigned int value)
 {
+   gchar *msg;
+
    if (!rpcChannelName) {
       g_debug("Channel name is null, RPC not sent.\n");
       return;
    }
 
-   if (!RpcOut_sendOne(NULL,
-                       NULL,
-                       "tools.capability.resolution_server %s %d",
-                       rpcChannelName,
-                       value)) {
+   msg = g_strdup_printf("tools.capability.resolution_server %s %d",
+                         rpcChannelName,
+                         value);
+   if (!RpcChannel_Send(chan, msg, strlen(msg), NULL, NULL)) {
       g_warning("%s: Unable to set tools.capability.resolution_server\n",
                 __FUNCTION__);
    }
+   g_free(msg);
 }
 
 
@@ -404,36 +430,16 @@ ResolutionSetCapabilities(gpointer src,
 
    ResolutionInfoType *resInfo = &resolutionInfo;
 
-   Debug("%s: enter\n", __FUNCTION__);
+   g_debug("%s: enter\n", __FUNCTION__);
 
    if (!resInfo->initialized) {
       return FALSE;
    }
 
    /*
-    * If we can set the guest resolution, add the resolution_set capability to
-    * our array.
+    * XXX: We must register display_topology_set before resolution_set to avoid
+    *      a race condition in the host. See bug 472343.
     */
-   if (resInfo->canSetResolution) {
-      capabilityArray[capabilityCount].type  = TOOLS_CAP_OLD;
-      capabilityArray[capabilityCount].name  = "resolution_set";
-      capabilityArray[capabilityCount].index = 0;
-      capabilityArray[capabilityCount].value = set ? 1 : 0;
-      capabilityCount++;
-
-      /*
-       * Send the resolution_server RPC to the VMX.
-       *
-       * XXX: We need to send this ourselves, instead of including it in the
-       *      capability array, because the resolution_server RPC includes the
-       *      name of the RPC channel that the VMX should use when sending
-       *      resolution set RPCs as an argument.
-       */
-      if (ctx && ctx->rpc && ctx->isVMware) {
-         ResolutionSetServerCapability(set ? 1 : 0);
-      }
-   }
-
    /*
     * If we can set the guest topology, add the display_topology_set and
     * display_global_offset capabilities to our array.
@@ -457,14 +463,38 @@ ResolutionSetCapabilities(gpointer src,
       capabilityCount++;
    }
 
+   /*
+    * If we can set the guest resolution, add the resolution_set capability to
+    * our array.
+    */
+   if (resInfo->canSetResolution) {
+      capabilityArray[capabilityCount].type  = TOOLS_CAP_OLD;
+      capabilityArray[capabilityCount].name  = "resolution_set";
+      capabilityArray[capabilityCount].index = 0;
+      capabilityArray[capabilityCount].value = set ? 1 : 0;
+      capabilityCount++;
+
+      /*
+       * Send the resolution_server RPC to the VMX.
+       *
+       * XXX: We need to send this ourselves, instead of including it in the
+       *      capability array, because the resolution_server RPC includes the
+       *      name of the RPC channel that the VMX should use when sending
+       *      resolution set RPCs as an argument.
+       */
+      if (ctx && ctx->rpc && ctx->isVMware) {
+         ResolutionSetServerCapability(ctx->rpc, set ? 1 : 0);
+      }
+   }
+
 #if defined(RESOLUTION_WIN32)
    /*
     * XXX: I believe we can always handle these RPCs from the service, even on
     *      Vista, so we always set the capabilities here, regardless of the
     *      value of resInfo->canSetTopology.
     */
-   Debug("%s: setting DPY_TOPO_MODES_SET_IDX to %u\n", __FUNCTION__,
-         set ? 1 : 0);
+   g_debug("%s: setting DPY_TOPO_MODES_SET_IDX to %u\n", __FUNCTION__,
+           set ? 1 : 0);
 
    capabilityArray[capabilityCount].type  = TOOLS_CAP_NEW;
    capabilityArray[capabilityCount].name  = NULL;
@@ -503,6 +533,7 @@ ToolsOnLoad(ToolsAppCtx *ctx)
       { "DisplayTopology_Set",          &ResolutionDisplayTopologySetCB },
 #if defined(RESOLUTION_WIN32)
       { "DisplayTopologyModes_Set",     &ResolutionDisplayTopologyModesSetCB },
+      { "ChangeHost3DAvailabilityHint", &ResolutionChangeHost3DAvailabilityHintCB },
 #endif
    };
 

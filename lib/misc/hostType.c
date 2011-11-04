@@ -30,11 +30,17 @@
 #include "hostType.h"
 #include "str.h"
 
-#ifdef VMX86_SERVER
+/*
+ * XXX see bug 651592 for how to make this not warn on newer linux hosts
+ * that have deprecated sysctl.
+ */
+#if defined(VMX86_SERVER) || ((defined(VMX86_VPX) || defined(VMX86_VMACORE)) && defined(linux))
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/sysctl.h>
+#include <unistd.h>
 #include "uwvmkAPI.h"
+#define DO_REAL_HOST_CHECK
 #endif
 
 #define LGPFX "HOSTTYPE:"
@@ -66,7 +72,7 @@
 static int
 HostTypeOSVMKernelType(void)
 {
-#ifdef VMX86_SERVER
+#ifdef DO_REAL_HOST_CHECK
    static int vmkernelType = -1;
 
    if (vmkernelType == -1) {
@@ -113,7 +119,7 @@ HostTypeOSVMKernelType(void)
 
    return (vmkernelType);
 #else
-   /* Non-ESX builds are never running on the VMKernel. */
+   /* Non-linux builds are never running in a userworld */
    return 0;
 #endif
 }
@@ -196,4 +202,41 @@ Bool
 HostType_OSIsVMK64(void)
 {
    return (HostTypeOSVMKernelType() == 3 || HostTypeOSVMKernelType() == 4);
+}
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * HostType_OSIsSimulator --
+ *
+ *      Are we running on an ESX host simulator? Check presence of the
+ *      mockup file.
+ *
+ * Results:
+ *      TRUE if mockup file exists
+ *      FALSE if the file doesn't exist
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+Bool
+HostType_OSIsSimulator(void)
+{
+#ifdef DO_REAL_HOST_CHECK
+   static int simulatorType = -1;
+   if (simulatorType == -1) {
+      if (access("/etc/vmware/hostd/mockupEsxHost.txt", 0) != -1) {
+         simulatorType = 1;
+      } else {
+         simulatorType = 0;
+      }
+   }
+   return (simulatorType == 1);
+#else
+   /* We are only interested in the case where VMX86_SERVER or friends are defined */
+   return FALSE;
+#endif
 }

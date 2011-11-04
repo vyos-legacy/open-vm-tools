@@ -20,7 +20,7 @@
 #define _VMCI_CALL_DEFS_H_
 
 #define INCLUDE_ALLOW_USERLEVEL
-#define INCLUDE_ALLOW_VMMEXT
+
 #define INCLUDE_ALLOW_MODULE
 #define INCLUDE_ALLOW_VMMON
 #define INCLUDE_ALLOW_VMCORE
@@ -52,8 +52,19 @@ typedef struct VMCIDatagram {
 } VMCIDatagram;
 
 
-/* Flag for creating a wellknown handle instead of a per context handle. */
+/*
+ * Second flag is for creating a well-known handle instead of a per context
+ * handle.  Next flag is for deferring datagram delivery, so that the
+ * datagram callback is invoked in a delayed context (not interrupt context).
+ */
+#define VMCI_FLAG_DG_NONE          0
 #define VMCI_FLAG_WELLKNOWN_DG_HND 0x1
+#define VMCI_FLAG_ANYCID_DG_HND    0x2
+#define VMCI_FLAG_DG_DELAYED_CB    0x4
+
+/* Event callback should fire in a delayed context (not interrupt context.) */
+#define VMCI_FLAG_EVENT_NONE       0
+#define VMCI_FLAG_EVENT_DELAYED_CB 0x1
 
 /* 
  * Maximum supported size of a VMCI datagram for routable datagrams.
@@ -65,12 +76,32 @@ typedef struct VMCIDatagram {
 #define VMCI_DG_HEADERSIZE sizeof(VMCIDatagram)
 #define VMCI_DG_SIZE(_dg) (VMCI_DG_HEADERSIZE + (size_t)(_dg)->payloadSize)
 #define VMCI_DG_SIZE_ALIGNED(_dg) ((VMCI_DG_SIZE(_dg) + 7) & (size_t)CONST64U(0xfffffffffffffff8))
-#define VMCI_MAX_DATAGRAM_QUEUE_SIZE  (VMCI_MAX_DG_SIZE * 2)
+#define VMCI_MAX_DATAGRAM_QUEUE_SIZE (VMCI_MAX_DG_SIZE * 2)
 
-/* 
- * Struct for sending VMCI_DATAGRAM_REQUEST_MAP and VMCI_DATAGRAM_REMOVE_MAP
- * datagrams. Struct size is 32 bytes. All fields in struct are aligned to
- * their natural alignment.
+/*
+ * We allow at least 1024 more event datagrams from the hypervisor past the
+ * normally allowed datagrams pending for a given context.  We define this
+ * limit on event datagrams from the hypervisor to guard against DoS attack
+ * from a malicious VM which could repeatedly attach to and detach from a queue
+ * pair, causing events to be queued at the destination VM.  However, the rate
+ * at which such events can be generated is small since it requires a VM exit
+ * and handling of queue pair attach/detach call at the hypervisor.  Event
+ * datagrams may be queued up at the destination VM if it has interrupts
+ * disabled or if it is not draining events for some other reason.  1024
+ * datagrams is a grossly conservative estimate of the time for which
+ * interrupts may be disabled in the destination VM, but at the same time does
+ * not exacerbate the memory pressure problem on the host by much (size of each
+ * event datagram is small).
+ */
+#define VMCI_MAX_DATAGRAM_AND_EVENT_QUEUE_SIZE \
+   (VMCI_MAX_DATAGRAM_QUEUE_SIZE + \
+    1024 * (sizeof(VMCIDatagram) + sizeof(VMCIEventData_Max)))
+
+/*
+ * Struct for sending VMCI_DATAGRAM_REQUEST_MAP and
+ * VMCI_DATAGRAM_REMOVE_MAP datagrams. Struct size is 32 bytes. All
+ * fields in struct are aligned to their natural alignment. These
+ * datagrams are obsoleted by the removal of VM to VM communication.
  */
 typedef struct VMCIDatagramWellKnownMapMsg {
    VMCIDatagram hdr;
@@ -85,7 +116,7 @@ typedef struct VMCIDatagramWellKnownMapMsg {
  * Struct size is 16 bytes. All fields in struct are aligned to their natural
  * alignment.
  */
-typedef struct VMCIResourcesQueuryHdr {
+typedef struct VMCIResourcesQueryHdr {
    VMCIDatagram hdr;
    uint32       numResources;
    uint32       _padding;
@@ -116,40 +147,47 @@ typedef struct VMCIResourcesQueryMsg {
       + VMCI_RESOURCE_QUERY_MAX_NUM * sizeof(VMCI_Resource)
 
 /* 
- * Struct used for making VMCI_SHAREDMEM_CREATE message. Struct size is 24 bytes.
- * All fields in struct are aligned to their natural alignment.
+ * Struct used for setting the notification bitmap.  All fields in
+ * struct are aligned to their natural alignment.
  */
-typedef struct VMCISharedMemCreateMsg {
+typedef struct VMCINotifyBitmapSetMsg {
+   VMCIDatagram hdr;
+   PPN          bitmapPPN;
+   uint32       _pad;
+} VMCINotifyBitmapSetMsg;
+
+
+/* 
+ * Struct used for linking a doorbell handle with an index in the
+ * notify bitmap. All fields in struct are aligned to their natural
+ * alignment.
+ */
+typedef struct VMCIDoorbellLinkMsg {
    VMCIDatagram hdr;
    VMCIHandle   handle;
-   uint32       memSize;
-   uint32       _padding;
-   /* PPNs placed after struct. */
-} VMCISharedMemCreateMsg;
+   uint64       notifyIdx;
+} VMCIDoorbellLinkMsg;
 
 
 /* 
- * Struct used for sending VMCI_SHAREDMEM_ATTACH messages. Same as struct used 
- * for create messages.
+ * Struct used for unlinking a doorbell handle from an index in the
+ * notify bitmap. All fields in struct are aligned to their natural
+ * alignment.
  */
-typedef VMCISharedMemCreateMsg VMCISharedMemAttachMsg;
-
-
-/* 
- * Struct used for sending VMCI_SHAREDMEM_DETACH messsages. Struct size is 16
- * bytes. All fields in struct are aligned to their natural alignment.
- */
-typedef struct VMCISharedMemDetachMsg {
+typedef struct VMCIDoorbellUnlinkMsg {
    VMCIDatagram hdr;
-   VMCIHandle handle;
-} VMCISharedMemDetachMsg;
+   VMCIHandle   handle;
+} VMCIDoorbellUnlinkMsg;
 
 
 /* 
- * Struct used for sending VMCI_SHAREDMEM_QUERY messages. Same as struct used 
- * for detach messages.
+ * Struct used for generating a notification on a doorbell handle. All
+ * fields in struct are aligned to their natural alignment.
  */
-typedef VMCISharedMemDetachMsg VMCISharedMemQueryMsg;
+typedef struct VMCIDoorbellNotifyMsg {
+   VMCIDatagram hdr;
+   VMCIHandle   handle;
+} VMCIDoorbellNotifyMsg;
 
 
 /* 
@@ -242,8 +280,10 @@ VMCIEventMsgPayload(VMCIEventMsg *eMsg) // IN:
 /* Flags for VMCI QueuePair API. */
 #define VMCI_QPFLAG_ATTACH_ONLY 0x1 /* Fail alloc if QP not created by peer. */
 #define VMCI_QPFLAG_LOCAL       0x2 /* Only allow attaches from local context. */
+#define VMCI_QPFLAG_NONBLOCK    0x4 /* Host won't block when guest is quiesced. */
 /* Update the following (bitwise OR flags) while adding new flags. */
-#define VMCI_QP_ALL_FLAGS       (VMCI_QPFLAG_ATTACH_ONLY | VMCI_QPFLAG_LOCAL)
+#define VMCI_QP_ALL_FLAGS       (VMCI_QPFLAG_ATTACH_ONLY | VMCI_QPFLAG_LOCAL | \
+                                 VMCI_QPFLAG_NONBLOCK)
 
 /*
  * Structs used for QueuePair alloc and detach messages.  We align fields of

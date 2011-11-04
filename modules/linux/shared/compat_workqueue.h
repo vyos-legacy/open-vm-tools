@@ -119,12 +119,13 @@ __compat_delayed_work_timer(unsigned long arg)
 # define compat_schedule_delayed_work(_work, _delay)      \
    (_work)->timer.expires = jiffies + _delay;             \
    add_timer(&(_work)->timer)
-# define COMPAT_WORK_GET_DATA(_p, _type)                  \
+# define COMPAT_WORK_GET_DATA(_p, _type, _member)         \
    (_type *)(_p)
 # define COMPAT_DELAYED_WORK_GET_DATA(_p, _type, _member) \
    (_type *)(_p)
 
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)  /* } { */
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)       \
+      && !defined(__VMKLNX__) /* } { */
 typedef struct work_struct compat_work;
 typedef struct work_struct compat_delayed_work;
 typedef void * compat_work_arg;
@@ -137,7 +138,7 @@ typedef void * compat_delayed_work_arg;
    schedule_work(_work)
 # define compat_schedule_delayed_work(_work, _delay)      \
    schedule_delayed_work(_work, _delay)
-# define COMPAT_WORK_GET_DATA(_p, _type)                  \
+# define COMPAT_WORK_GET_DATA(_p, _type, _member)         \
    (_type *)(_p)
 # define COMPAT_DELAYED_WORK_GET_DATA(_p, _type, _member) \
    (_type *)(_p)
@@ -155,8 +156,8 @@ typedef struct work_struct * compat_delayed_work_arg;
    schedule_work(_work)
 # define compat_schedule_delayed_work(_work, _delay)      \
    schedule_delayed_work(_work, _delay)
-# define COMPAT_WORK_GET_DATA(_p, _type)                  \
-   container_of(_p, _type, work)
+# define COMPAT_WORK_GET_DATA(_p, _type, _member)         \
+   container_of(_p, _type, _member)
 # define COMPAT_DELAYED_WORK_GET_DATA(_p, _type, _member) \
    container_of(_p, _type, _member.work)
 #endif /* } */
