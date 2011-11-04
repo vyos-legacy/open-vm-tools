@@ -14,6 +14,8 @@
 
 . /lib/lsb/init-functions
 
+[ -x /usr/bin/vmtoolsd ] || exit 0
+
 exit_if_not_in_vm () {
 	if [ ! -x /usr/bin/vmware-checkvm ] || ! /usr/bin/vmware-checkvm > /dev/null 2>&1
 	then
@@ -35,7 +37,7 @@ case "${1}" in
 
 		log_daemon_msg "Starting open-vm daemon" "vmtoolsd"
 		start-stop-daemon --start --oknodo --quiet \
-		    --exec /usr/bin/vmtools \
+		    --exec /usr/bin/vmtoolsd \
 		    --pidfile /var/run/vmtools.pid \
 		    -- -background /var/run/vmtoolsd.pid
 		log_end_msg $?
@@ -48,7 +50,7 @@ case "${1}" in
 		log_daemon_msg "Stopping open-vm guest daemon" "vmtoolsd"
 
 		start-stop-daemon --stop --quiet --oknodo \
-		    --exec /usr/bin/vmtools \
+		    --exec /usr/bin/vmtoolsd \
 		    --pidfile /var/run/vmtools.pid
 		log_end_msg $?
 
