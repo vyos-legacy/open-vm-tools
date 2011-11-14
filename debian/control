@@ -6,23 +6,23 @@ Build-Depends: debhelper (>= 8), autotools-dev, libproc-dev, libdumbnet-dev
 Standards-Version: 3.9.2
 Homepage: http://open-vm-tools.sourceforge.net/
 
-Package: open-vm-modules-3.0.8-1-586-vyatta-virt
+Package: open-vm-modules-3.0.9-1-586-vyatta-virt
 Architecture: i386
 Provides: open-vm-modules
 Recommends: open-vm-tools
-Depends: linux-image-3.0.8-1-586-vyatta-virt
+Depends: linux-image-3.0.9-1-586-vyatta-virt
 Description: Vyatta version of the open-vm tools
  This package provides the VmWare accelerated drivers for kernel
- linux-image-3.0.8-1-586-vyatta-virt.
+ linux-image-3.0.9-1-586-vyatta-virt.
 
-Package: open-vm-modules-3.0.8-1-amd64-vyatta-virt
+Package: open-vm-modules-3.0.9-1-amd64-vyatta-virt
 Architecture: amd64
 Provides: open-vm-modules
 Recommends: open-vm-tools
-Depends: linux-image-3.0.8-1-amd64-vyatta-virt
+Depends: linux-image-3.0.9-1-amd64-vyatta-virt
 Description: Vyatta version of the open-vm modules for amd64
  This package provides the accelerated drivers vyatta on VMware for kernel
- linux-image-3.0.8-1-amd64-vyatta-virt.
+ linux-image-3.0.9-1-amd64-vyatta-virt.
 
 Package: open-vm-tools
 Architecture: any
