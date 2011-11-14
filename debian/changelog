@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-5) unstable; urgency=low
+
+  * update to 3.0.9
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 14 Nov 2011 13:30:48 -0800
+
 open-vm-tools (1:8.8.0+vyatta-4) unstable; urgency=low
 
   * Use start-stop-daemon to launch vmtoolsd
