@@ -39,7 +39,7 @@ case "${1}" in
 		start-stop-daemon --start --oknodo --quiet \
 		    --exec /usr/bin/vmtoolsd \
 		    --pidfile /var/run/vmtools.pid \
-		    -- -background /var/run/vmtoolsd.pid
+		    -- --background /var/run/vmtoolsd.pid
 		log_end_msg $?
 		;;
 
