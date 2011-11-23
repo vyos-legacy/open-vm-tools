@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-7) unstable; urgency=low
+
+  * update to 3.0.10
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Wed, 23 Nov 2011 14:29:57 -0800
+
 open-vm-tools (1:8.8.0+vyatta-6) unstable; urgency=low
 
   * Fix typo in open-vm-tools init
