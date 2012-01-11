@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-12) unstable; urgency=low
+
+  * rebuild for 3.0.16+vyatta+3
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Wed, 11 Jan 2012 09:43:55 -0800
+
 open-vm-tools (1:8.8.0+vyatta-11) unstable; urgency=low
 
   * kernel config update
