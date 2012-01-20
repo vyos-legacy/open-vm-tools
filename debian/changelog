@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-13) unstable; urgency=low
+
+  * update to 3.0.17
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Thu, 19 Jan 2012 16:27:13 -0800
+
 open-vm-tools (1:8.8.0+vyatta-12) unstable; urgency=low
 
   * rebuild for 3.0.16+vyatta+3
