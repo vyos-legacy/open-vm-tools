@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-15) unstable; urgency=low
+
+  * update to 3.0.19 kernel
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 06 Feb 2012 08:03:53 -0800
+
 open-vm-tools (1:8.8.0+vyatta-14) unstable; urgency=low
 
   * update to 3.0.18
