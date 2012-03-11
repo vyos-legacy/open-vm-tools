@@ -597,17 +597,17 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
 {
 #ifdef HAVE_NET_DEVICE_OPS
    static const struct net_device_ops vmxnet_netdev_ops = {
-      .ndo_open = &vmxnet_open,
-      .ndo_start_xmit = &vmxnet_start_tx,
-      .ndo_stop = &vmxnet_close,
-      .ndo_get_stats = &vmxnet_get_stats,
-      .ndo_set_multicast_list = &vmxnet_set_multicast_list,
-      .ndo_change_mtu = &vmxnet_change_mtu,
+	   .ndo_open = vmxnet_open,
+	   .ndo_start_xmit = vmxnet_start_tx,
+	   .ndo_stop = vmxnet_close,
+	   .ndo_get_stats = vmxnet_get_stats,
+	   .ndo_set_rx_mode = vmxnet_set_multicast_list,
+	   .ndo_change_mtu = vmxnet_change_mtu,
+	   .ndo_set_mac_address = vmxnet_set_mac_address,
+	   .ndo_tx_timeout = vmxnet_tx_timeout,
 #   ifdef VMW_HAVE_POLL_CONTROLLER
-      .ndo_poll_controller = vmxnet_netpoll,
+	   .ndo_poll_controller = vmxnet_netpoll,
 #   endif
-      .ndo_set_mac_address = &vmxnet_set_mac_address,
-      .ndo_tx_timeout = &vmxnet_tx_timeout,
    };
 #endif /* HAVE_NET_DEVICE_OPS */
    struct Vmxnet_Private *lp;
@@ -1650,11 +1650,8 @@ vmxnet_map_pkt(struct sk_buff *skb,
             offset -= frag->size;
          } else {
             // map the part of the frag that is not copied
-            dma = pci_map_page(lp->pdev,
-                               frag->page,
-                               frag->page_offset + offset,
-                               frag->size - offset,
-                               PCI_DMA_TODEVICE);
+		 dma = skb_frag_dma_map(&lp->pdev->dev, frag, offset,
+					skb_frag_size(frag), DMA_TO_DEVICE);
             VMXNET_FILL_SG(xre->sg.sg[nextSg], dma, frag->size - offset);
             VMXNET_LOG("vmxnet_map_tx: txRing[%u].sg[%d] -> frag[%d]+%u (%uB)\n",
                        dd->txDriverNext, nextSg, nextFrag, offset, frag->size - offset);
@@ -1669,11 +1666,8 @@ vmxnet_map_pkt(struct sk_buff *skb,
    // map the remaining frags, we might need to use additional tx entries
    for ( ; nextFrag < skb_shinfo(skb)->nr_frags; nextFrag++) {
       frag = &skb_shinfo(skb)->frags[nextFrag];
-      dma = pci_map_page(lp->pdev,
-                         frag->page,
-                         frag->page_offset,
-                         frag->size,
-                         PCI_DMA_TODEVICE);
+      dma = skb_frag_dma_map(&lp->pdev->dev, frag, 0,
+			     skb_frag_size(frag), DMA_TO_DEVICE);
 
       if (nextSg == VMXNET2_SG_DEFAULT_LENGTH) {
          xre->flags = VMXNET2_TX_MORE;
@@ -2168,10 +2162,10 @@ vmxnet_rx_frags(Vmxnet_Private *lp, struct sk_buff *skb)
          }
 
          pci_unmap_page(pdev, rre2->paddr, PAGE_SIZE, PCI_DMA_FROMDEVICE);
-         skb_shinfo(skb)->frags[numFrags].page = lp->rxPages[dd->rxDriverNext2];
-         skb_shinfo(skb)->frags[numFrags].page_offset = 0;
-         skb_shinfo(skb)->frags[numFrags].size = rre2->actualLength;
+	 skb_fill_page_desc(skb, numFrags, lp->rxPages[dd->rxDriverNext2],
+			    0, rre2->actualLength);
          skb->data_len += rre2->actualLength;
+	 skb->truesize += PAGE_SIZE;
          numFrags++;
 
          /* refill the buffer */
