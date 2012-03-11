@@ -279,8 +279,6 @@ vmxnet_change_mtu(struct net_device *dev, int new_mtu)
 
 #endif
 
-
-#ifdef SET_ETHTOOL_OPS
 /*
  *----------------------------------------------------------------------------
  *
@@ -316,7 +314,6 @@ vmxnet_get_settings(struct net_device *dev,
    return 0;
 }
 
-
 /*
  *----------------------------------------------------------------------------
  *
@@ -339,403 +336,18 @@ vmxnet_get_drvinfo(struct net_device *dev,
 {
    struct Vmxnet_Private *lp = netdev_priv(dev);
 
-   strncpy(drvinfo->driver, vmxnet_driver.name, sizeof(drvinfo->driver));
-   drvinfo->driver[sizeof(drvinfo->driver) - 1] = '\0';
-
-   strncpy(drvinfo->version, VMXNET_DRIVER_VERSION_STRING,
+   strlcpy(drvinfo->driver, vmxnet_driver.name, sizeof(drvinfo->driver));
+   strlcpy(drvinfo->version, VMXNET_DRIVER_VERSION_STRING,
            sizeof(drvinfo->version));
-   drvinfo->driver[sizeof(drvinfo->version) - 1] = '\0';
-
-   strncpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
-   drvinfo->fw_version[sizeof(drvinfo->fw_version) - 1] = '\0';
-
-   strncpy(drvinfo->bus_info, pci_name(lp->pdev), ETHTOOL_BUSINFO_LEN);
+   strlcpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
+   strlcpy(drvinfo->bus_info, pci_name(lp->pdev), ETHTOOL_BUSINFO_LEN);
 }
 
-
-/*
- *----------------------------------------------------------------------------
- *
- * vmxnet_get_tx_csum --
- *
- *    Ethtool op to check whether or not hw csum offload is enabled.
- *
- * Result:
- *    1 if csum offload is currently used and 0 otherwise.
- *
- * Side-effects:
- *    None
- *
- *----------------------------------------------------------------------------
- */
-
-static uint32
-vmxnet_get_tx_csum(struct net_device *netdev)
-{
-   return (netdev->features & NETIF_F_HW_CSUM) != 0;
-}
-
-/*
- *----------------------------------------------------------------------------
- *
- * vmxnet_get_rx_csum --
- *
- *    Ethtool op to check whether or not rx csum offload is enabled.
- *
- * Result:
- *    Always return 1 to indicate that rx csum is enabled.
- *
- * Side-effects:
- *    None
- *
- *----------------------------------------------------------------------------
- */
-
-static uint32
-vmxnet_get_rx_csum(struct net_device *netdev)
-{
-   return 1;
-}
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * vmxnet_set_tx_csum --
- *
- *    Ethtool op to change if hw csum offloading should be used or not.
- *    If the device supports hardware checksum capability netdev features bit
- *    is set/reset. This bit is referred to while setting hw checksum required
- *    flag (VMXNET2_TX_HW_XSUM) in xmit ring entry.
- *
- * Result:
- *    0 on success. -EOPNOTSUPP if ethtool asks to set hw checksum and device
- *    does not support it.
- *
- * Side-effects:
- *    None
- *
- *----------------------------------------------------------------------------
- */
-
-static int
-vmxnet_set_tx_csum(struct net_device *netdev, uint32 val)
-{
-   if (val) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,0)
-      struct Vmxnet_Private *lp = netdev_priv(netdev);
-      if (lp->capabilities & (VMNET_CAP_IP4_CSUM | VMNET_CAP_HW_CSUM)) {
-         netdev->features |= NETIF_F_HW_CSUM;
-         return 0;
-      }
-#endif
-      return -EOPNOTSUPP;
-   } else {
-      netdev->features &= ~NETIF_F_HW_CSUM;
-   }
-   return 0;
-}
-
-/*
- *----------------------------------------------------------------------------
- *
- * vmxnet_set_rx_csum --
- *
- *    Ethtool op to change if hw csum offloading should be used or not for
- *    received packets. Hardware checksum on received packets cannot be turned
- *    off. Hence we fail the ethtool op which turns h/w csum off.
- *
- * Result:
- *    0 when rx csum is set. -EOPNOTSUPP when ethtool tries to reset rx csum.
- *
- * Side-effects:
- *    None
- *
- *----------------------------------------------------------------------------
- */
-
-static int
-vmxnet_set_rx_csum(struct net_device *netdev, uint32 val)
-{
-   if (val) {
-      return 0;
-   } else {
-      return -EOPNOTSUPP;
-   }
-}
-
-
-/*
- *----------------------------------------------------------------------------
- *
- *  vmxnet_set_tso --
- *
- *    Ethtool handler to set TSO. If the data is non-zero, TSO is
- *    enabled. Othewrise, it is disabled.
- *
- *  Results:
- *    0 if successful, error code otherwise.
- *
- *  Side effects:
- *    None.
- *
- *----------------------------------------------------------------------------
- */
-
-#ifdef VMXNET_DO_TSO
-static int
-vmxnet_set_tso(struct net_device *dev, u32 data)
-{
-   if (data) {
-      struct Vmxnet_Private *lp = netdev_priv(dev);
-
-      if (!lp->tso) {
-         return -EINVAL;
-      }
-      dev->features |= NETIF_F_TSO;
-   } else {
-      dev->features &= ~NETIF_F_TSO;
-   }
-   return 0;
-}
-#endif
-
-
-static struct ethtool_ops
-vmxnet_ethtool_ops = {
+static struct ethtool_ops vmxnet_ethtool_ops = {
    .get_settings        = vmxnet_get_settings,
    .get_drvinfo         = vmxnet_get_drvinfo,
    .get_link            = ethtool_op_get_link,
-   .get_rx_csum         = vmxnet_get_rx_csum,
-   .set_rx_csum         = vmxnet_set_rx_csum,
-   .get_tx_csum         = vmxnet_get_tx_csum,
-   .set_tx_csum         = vmxnet_set_tx_csum,
-   .get_sg              = ethtool_op_get_sg,
-   .set_sg              = ethtool_op_set_sg,
-#ifdef VMXNET_DO_TSO
-   .get_tso             = ethtool_op_get_tso,
-   .set_tso             = vmxnet_set_tso,
-#   if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,15)
-   .get_ufo             = ethtool_op_get_ufo,
-#   endif
-#endif
 };
-
-
-#else   /* !defined(SET_ETHTOOL_OPS) */
-
-
-/*
- *----------------------------------------------------------------------------
- *
- *  vmxnet_get_settings --
- *
- *    Ethtool handler to get device settings.
- *
- *  Results:
- *    0 if successful, error code otherwise. Settings are copied to addr.
- *
- *  Side effects:
- *    None.
- *
- *
- *----------------------------------------------------------------------------
- */
-
-#ifdef ETHTOOL_GSET
-static int
-vmxnet_get_settings(struct net_device *dev, void *addr)
-{
-   struct ethtool_cmd cmd;
-   memset(&cmd, 0, sizeof(cmd));
-   cmd.speed = 1000;     // 1 Gb
-   cmd.duplex = 1;       // full-duplex
-   cmd.maxtxpkt = 1;     // no tx coalescing
-   cmd.maxrxpkt = 1;     // no rx coalescing
-   cmd.autoneg = 0;      // no autoneg
-   cmd.advertising = 0;  // advertise nothing
-
-   return copy_to_user(addr, &cmd, sizeof(cmd));
-}
-#endif
-
-
-/*
- *----------------------------------------------------------------------------
- *
- *  vmxnet_get_link --
- *
- *    Ethtool handler to get the link state.
- *
- *  Results:
- *    0 if successful, error code otherwise. The link status is copied to
- *    addr.
- *
- *  Side effects:
- *    None.
- *
- *----------------------------------------------------------------------------
- */
-
-#ifdef ETHTOOL_GLINK
-static int
-vmxnet_get_link(struct net_device *dev, void *addr)
-{
-   compat_ethtool_value value = {ETHTOOL_GLINK};
-   value.data = netif_carrier_ok(dev) ? 1 : 0;
-   return copy_to_user(addr, &value, sizeof(value));
-}
-#endif
-
-
-/*
- *----------------------------------------------------------------------------
- *
- *  vmxnet_get_tso --
- *
- *    Ethtool handler to get the TSO setting.
- *
- *  Results:
- *    0 if successful, error code otherwise. The TSO setting is copied to
- *    addr.
- *
- *  Side effects:
- *    None.
- *
- *----------------------------------------------------------------------------
- */
-
-#ifdef VMXNET_DO_TSO
-static int
-vmxnet_get_tso(struct net_device *dev, void *addr)
-{
-   compat_ethtool_value value = { ETHTOOL_GTSO };
-   value.data = (dev->features & NETIF_F_TSO) ? 1 : 0;
-   if (copy_to_user(addr, &value, sizeof(value))) {
-       return -EFAULT;
-   }
-   return 0;
-}
-#endif
-
-
-/*
- *----------------------------------------------------------------------------
- *
- *  vmxnet_set_tso --
- *
- *    Ethtool handler to set TSO. If the data in addr is non-zero, TSO is
- *    enabled. Othewrise, it is disabled.
- *
- *  Results:
- *    0 if successful, error code otherwise.
- *
- *  Side effects:
- *    None.
- *
- *----------------------------------------------------------------------------
- */
-
-#ifdef VMXNET_DO_TSO
-static int
-vmxnet_set_tso(struct net_device *dev, void *addr)
-{
-   compat_ethtool_value value;
-   if (copy_from_user(&value, addr, sizeof(value))) {
-      return -EFAULT;
-   }
-
-   if (value.data) {
-      struct Vmxnet_Private *lp = netdev_priv(dev);
-
-      if (!lp->tso) {
-         return -EINVAL;
-      }
-      dev->features |= NETIF_F_TSO;
-   } else {
-      dev->features &= ~NETIF_F_TSO;
-   }
-   return 0;
-}
-#endif
-
-
-/*
- *----------------------------------------------------------------------------
- *
- *  vmxnet_ethtool_ioctl --
- *
- *    Handler for ethtool ioctl calls.
- *
- *  Results:
- *    If ethtool op is supported, the outcome of the op. Otherwise,
- *    -EOPNOTSUPP.
- *
- *  Side effects:
- *
- *
- *----------------------------------------------------------------------------
- */
-
-#ifdef SIOCETHTOOL
-static int
-vmxnet_ethtool_ioctl(struct net_device *dev, struct ifreq *ifr)
-{
-   uint32_t cmd;
-   if (copy_from_user(&cmd, ifr->ifr_data, sizeof(cmd))) {
-      return -EFAULT;
-   }
-   switch (cmd) {
-#ifdef ETHTOOL_GSET
-      case ETHTOOL_GSET:
-         return vmxnet_get_settings(dev, ifr->ifr_data);
-#endif
-#ifdef ETHTOOL_GLINK
-      case ETHTOOL_GLINK:
-         return vmxnet_get_link(dev, ifr->ifr_data);
-#endif
-#ifdef VMXNET_DO_TSO
-      case ETHTOOL_GTSO:
-         return vmxnet_get_tso(dev, ifr->ifr_data);
-      case ETHTOOL_STSO:
-         return vmxnet_set_tso(dev, ifr->ifr_data);
-#endif
-      default:
-         return -EOPNOTSUPP;
-   }
-}
-#endif
-
-
-/*
- *----------------------------------------------------------------------------
- *
- * vmxnet_ioctl --
- *
- *    Handler for ioctl calls.
- *
- * Results:
- *    If ioctl is supported, the result of that operation. Otherwise,
- *    -EOPNOTSUPP.
- *
- * Side effects:
- *    None.
- *
- *----------------------------------------------------------------------------
- */
-
-static int
-vmxnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
-{
-   switch (cmd) {
-#ifdef SIOCETHTOOL
-      case SIOCETHTOOL:
-         return vmxnet_ethtool_ioctl(dev, ifr);
-#endif
-   }
-   return -EOPNOTSUPP;
-}
-#endif /* SET_ETHTOOL_OPS */
 
 
 /*
@@ -1289,21 +901,19 @@ vmxnet_probe_features(struct net_device *dev, // IN:
    lp->lpd = FALSE;
 
    printk(KERN_INFO "features:");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,0)
-   if (lp->capabilities & VMNET_CAP_IP4_CSUM) {
-      dev->features |= NETIF_F_HW_CSUM;
-      printk(" ipCsum");
-   }
    if (lp->capabilities & VMNET_CAP_HW_CSUM) {
-      dev->features |= NETIF_F_HW_CSUM;
+      dev->hw_features |= NETIF_F_HW_CSUM;
       printk(" hwCsum");
    }
-#endif
+   else if (lp->capabilities & VMNET_CAP_IP4_CSUM) {
+      dev->hw_features |= NETIF_F_IP_CSUM;
+      printk(" ipCsum");
+   }
 
 #ifdef VMXNET_DO_ZERO_COPY
-   if (lp->capabilities & VMNET_CAP_SG &&
-       lp->features & VMXNET_FEATURE_ZERO_COPY_TX){
-      dev->features |= NETIF_F_SG;
+   if ((lp->capabilities & VMNET_CAP_SG) &&
+       (lp->features & VMXNET_FEATURE_ZERO_COPY_TX)){
+      dev->hw_features |= NETIF_F_SG;
       lp->zeroCopyTx = TRUE;
       printk(" zeroCopy");
 
@@ -1333,7 +943,7 @@ vmxnet_probe_features(struct net_device *dev, // IN:
        // tso only makes sense if we have hw csum offload
        lp->chainTx && lp->zeroCopyTx &&
        lp->features & VMXNET_FEATURE_TSO) {
-      dev->features |= NETIF_F_TSO;
+      dev->hw_features |= NETIF_F_TSO;
       lp->tso = TRUE;
       printk(" tso");
    }
