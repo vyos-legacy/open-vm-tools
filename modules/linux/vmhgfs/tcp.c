@@ -34,6 +34,7 @@
 #include <linux/inet.h>
 #include <linux/errno.h>
 #include <linux/kthread.h>
+#include <linux/module.h>
 
 #include "compat_kernel.h"
 #include "compat_mutex.h"
