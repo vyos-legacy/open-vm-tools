@@ -607,7 +607,7 @@ HgfsChangeFileAttributes(struct inode *inode,          // IN/OUT: Inode
     * account for '.' and ".."), and find printed a hard link error. So until
     * we have getattr support for nlink, everyone gets 1.
     */
-   inode->i_nlink = 1;
+   inode->__i_nlink = 1;
 
    /*
     * Use the stored uid and gid if we were given them at mount-time, or if
