@@ -1,3 +1,15 @@
+open-vm-tools (1:8.8.0+vyatta-21) unstable; urgency=low
+
+  * Allow building open-vm-tools against any flavor kernel
+  * vmxnet: update to latest network driver api
+  * Update to 3.3.0 kernel version dependency
+  * vmxnet: update to skb frag API
+  * hgfs: override warning about i_nlink
+  * hgfs: add module.h
+  * hgfs: remove fsync
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Sat, 10 Mar 2012 19:25:58 -0800
+
 open-vm-tools (1:8.8.0+vyatta-20) unstable; urgency=low
 
   * new branch
