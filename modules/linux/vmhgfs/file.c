@@ -80,11 +80,6 @@ static loff_t HgfsSeek(struct file *file,
                        loff_t  offset,
                        int origin);
 
-static int HgfsFsync(struct file *file,
-#if defined VMW_FSYNC_OLD
-                     struct dentry *dentry,
-#endif
-                     int datasync);
 static int HgfsMmap(struct file *file,
                     struct vm_area_struct *vma);
 static int HgfsRelease(struct inode *inode,
@@ -125,7 +120,6 @@ struct file_operations HgfsFileFileOperations = {
    .read       = HgfsRead,
    .write      = HgfsWrite,
 #endif
-   .fsync      = HgfsFsync,
    .mmap       = HgfsMmap,
    .release    = HgfsRelease,
 #ifndef VMW_SENDFILE_NONE
@@ -951,50 +945,6 @@ HgfsSeek(struct file *file,  // IN:  File to seek
 
   out:
    return result;
-}
-
-
-/*
- *----------------------------------------------------------------------
- *
- * HgfsFsync --
- *
- *    Called when user process calls fsync() on hgfs file.
- *
- *    The hgfs protocol doesn't support fsync yet, so for now, we punt
- *    and just return success. This is a little less sketchy than it
- *    might sound, because hgfs skips the buffer cache in the guest
- *    anyway (we always write to the host immediately).
- *
- *    In the future we might want to try harder though, since
- *    presumably the intent of an app calling fsync() is to get the
- *    data onto persistent storage, and as things stand now we're at
- *    the whim of the hgfs server code running on the host to fsync or
- *    not if and when it pleases.
- *
- *    Note that do_fsync will call filemap_fdatawrite() before us and
- *    filemap_fdatawait() after us, so there's no need to do anything
- *    here w.r.t. writing out dirty pages.
- *
- * Results:
- *    Returns zero on success. (Currently always succeeds).
- *
- * Side effects:
- *    None.
- *
- *----------------------------------------------------------------------
- */
-
-static int
-HgfsFsync(struct file *file,		// IN: File we operate on
-#if defined VMW_FSYNC_OLD
-          struct dentry *dentry,        // IN: Dentry for this file
-#endif
-          int datasync)	                // IN: fdatasync or fsync
-{
-   LOG(6, (KERN_DEBUG "VMware hgfs: HgfsFsync: was called\n"));
-
-   return 0;
 }
 
 
