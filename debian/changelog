@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard3) unstable; urgency=low
+
+  * force rebuild
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Sat, 10 Mar 2012 18:16:07 -0800
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard2) unstable; urgency=low
 
   * Allow building open-vm-tools against any flavor kernel
