@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard5) precise; urgency=low
+
+  * force rebuild
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 26 Mar 2012 21:12:27 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard4ubuntu1) precise; urgency=low
 
   * force rebuild
