@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard7) precise; urgency=low
+
+  * update to 3.0.32 kernel
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 21 May 2012 11:32:00 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard6) precise; urgency=low
 
   * update to 3.0.31
