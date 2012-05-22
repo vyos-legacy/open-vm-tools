@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-31) unstable; urgency=low
+
+  * update to 3.3.7 kernel
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Tue, 22 May 2012 09:52:35 -0700
+
 open-vm-tools (1:8.8.0+vyatta-30) unstable; urgency=low
 
   * force rebuild
