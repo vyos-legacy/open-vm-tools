@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard8) precise; urgency=low
+
+  * force rebuild new kernel config
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 21 May 2012 17:10:11 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard7) precise; urgency=low
 
   * update to 3.0.32 kernel
