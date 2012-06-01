@@ -165,12 +165,13 @@ LinuxDriver_Freeze(const char *paths,
       if (ioctl(fd, FIFREEZE) == -1) {
          /*
           * If the ioctl does not exist, Linux will return ENOTTY. If it's not
-          * supported on the device, we get EOPNOTSUPP. Ignore the latter,
+          * supported on the device, we get EOPNOTSUPP. If filesystem is already
+	  * frozen, then return EBUSY. Ignore the latter two,
           * since freezing does not make sense for all fs types, and some
           * Linux fs drivers may not have been hooked up in the running kernel.
           */
          close(fd);
-         if (errno != EOPNOTSUPP) {
+         if (errno != EOPNOTSUPP && errno != EBUSY) {
             Debug(LGPFX "ioctl failed: %d (%s)\n", errno, strerror(errno));
             err = first ? SD_UNAVAILABLE : SD_ERROR;
             break;
