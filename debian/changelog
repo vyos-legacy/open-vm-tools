@@ -1,3 +1,10 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard9) precise; urgency=low
+
+  [ Stephen Hemminger ]
+  * Fix snapshot when same filesystem mounted multiple times
+
+ -- Arthur Xiong <arthur@vyatta.com>  Fri, 01 Jun 2012 15:09:50 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard8) precise; urgency=low
 
   * force rebuild new kernel config
