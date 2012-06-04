@@ -153,8 +153,8 @@
 #define   BDOOR_CMD_FIRMWARE_ERROR           71 /* CPL 0 only. */
 #  define BDOOR_CMD_FE_INSUFFICIENT_MEM       0
 #  define BDOOR_CMD_FE_EXCEPTION              1
-#define   BDOOR_CMD_VMK_INFO                 72
-#define   BDOOR_CMD_MAX                      73
+#define   BDOOR_CMD_GET_HW_MODEL             74 /* CPL 0 only. */
+#define   BDOOR_CMD_MAX                      75
 
 
 /* 
@@ -177,9 +177,8 @@
 /* Task applied to backdoor pshare hints */
 #define BDOOR_PSHARE_HINTS_CMD_SHARE   0
 #define BDOOR_PSHARE_HINTS_CMD_DROP    1
-#define BDOOR_PSHARE_HINTS_CMD_MAX     2
 
-#define BDOOR_PSHARE_HINTS_CMD(ecx)   (((ecx) >> 24) & 0xff)
+#define BDOOR_PSHARE_HINTS_CMD(ecx)   (((ecx) >> 24) & 0x1)
 
 /* Nesting control operations */
 
@@ -210,8 +209,6 @@
 #define IS_BDOOR_PMC(index)  (((index) | 3) == 0x10003)
 #define BDOOR_CMD(ecx)       ((ecx) & 0xffff)
 
-/* Sub commands for BDOOR_CMD_VMK_INFO */
-#define BDOOR_CMD_VMK_INFO_ENTRY   1
 
 #ifdef VMM
 /*
