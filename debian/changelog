@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-33) unstable; urgency=low
+
+  * Update to 3.3.8 kernel
+
+ -- Stephen Hemminger <stephen.hemminger@vyatta.com>  Mon, 04 Jun 2012 10:44:09 -0700
+
 open-vm-tools (1:8.8.0+vyatta-32) unstable; urgency=low
 
   * Fix snapshot when same filesystem mounted multiple times
