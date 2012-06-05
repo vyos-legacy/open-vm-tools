@@ -76,7 +76,11 @@ configure	+= --with-kernel-release=$(KVER)
 configure	+= --with-linuxdir=$(KDIR)
 configure	+= --without-root-privileges
 configure	+= --without-x
+ifeq ($(DEB_ARCH),amd64)
+configure	+= --without-procps
+else
 configure	+= --with-procps
+endif
 configure	+= --with-dnet
 configure	+= --without-gtkmm
 configure	+= --without-gtk2
