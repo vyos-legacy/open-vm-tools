@@ -147,10 +147,10 @@ static void process_bitmap(unsigned long data);
 #endif
 
 static vmci_device vmci_dev;
-static int vmci_disable_host = 0;
-static int vmci_disable_guest = 0;
-static int vmci_disable_msi;
-static int vmci_disable_msix = VMCI_DISABLE_MSIX;
+static bool vmci_disable_host = 0;
+static bool vmci_disable_guest = 0;
+static bool vmci_disable_msi;
+static bool vmci_disable_msix = VMCI_DISABLE_MSIX;
 
 DECLARE_TASKLET(vmci_dg_tasklet, dispatch_datagrams,
                 (unsigned long)&vmci_dev);
