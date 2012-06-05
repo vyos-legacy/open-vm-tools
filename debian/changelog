@@ -1,3 +1,12 @@
+open-vm-tools (1:8.8.2+vyatta-1) unstable; urgency=low
+
+  * Update to open-vm-tools 8.8.2
+  * Compile without procps on amd64
+  * vmci: fix warnings
+  * Add umode_t typedef
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 04 Jun 2012 17:53:36 -0700
+
 open-vm-tools (1:8.8.0+vyatta-33) unstable; urgency=low
 
   * Update to 3.3.8 kernel
