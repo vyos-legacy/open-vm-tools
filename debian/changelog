@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-4) unstable; urgency=low
+
+  * force rebuild
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Thu, 21 Jun 2012 11:08:45 -0700
+
 open-vm-tools (1:8.8.2+vyatta-3) unstable; urgency=low
 
   * force rebuild
