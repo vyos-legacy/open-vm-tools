@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-5) unstable; urgency=low
+
+  * Increase max NICs to 256 to avoid assert
+
+ -- James Davidson <james.davidson@vyatta.com>  Thu, 21 Jun 2012 19:04:42 -0700
+
 open-vm-tools (1:8.8.2+vyatta-4) unstable; urgency=low
 
   * force rebuild
