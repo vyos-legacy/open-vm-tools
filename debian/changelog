@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard12) precise; urgency=low
+
+  * force release:kernel upgrade
+
+ -- Gaurav Sinha <gaurav.sinha@vyatta.com>  Thu, 21 Jun 2012 20:07:41 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard11) precise; urgency=low
 
   * Increase max NICs to 256 to avoid assert
