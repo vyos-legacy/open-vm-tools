@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard13) precise; urgency=low
+
+  * Force rebuild; kernel changed
+
+ -- James Davidson <james.davidson@vyatta.com>  Wed, 01 Aug 2012 17:15:23 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard12) precise; urgency=low
 
   * force release:kernel upgrade
