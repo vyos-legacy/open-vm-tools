@@ -16,3 +16,4 @@ Mon Mar 26 21:12:25 PDT 2012: [force rebuild] at [debian/8.8.0+vyatta-19+oxnard4
 Mon May 21 17:10:10 PDT 2012: [force rebuild new kernel config] at [debian/8.8.0+vyatta-19+oxnard7]
 Thu Jun 21 11:40:56 PDT 2012: [force release] at [debian/8.8.0+vyatta-19+oxnard9]
 Thu Jun 21 20:07:40 PDT 2012: [force release:kernel upgrade] at [debian/8.8.0+vyatta-19+oxnard11]
+Wed Aug  1 17:15:19 PDT 2012: [Force rebuild; kernel changed] at [debian/8.8.0+vyatta-19+oxnard12]
