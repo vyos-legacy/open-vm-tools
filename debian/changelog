@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-6) unstable; urgency=low
+
+  * Force rebuild; kernel changed
+
+ -- James Davidson <james.davidson@vyatta.com>  Wed, 01 Aug 2012 18:55:52 -0700
+
 open-vm-tools (1:8.8.2+vyatta-5) unstable; urgency=low
 
   * Increase max NICs to 256 to avoid assert
