@@ -23,7 +23,7 @@ DEB_KFLAVOR=586-vyatta-virt
 else
 ifeq ($(DEB_ARCH),amd64)
 DEB_KSUBARCH=none
-DEB_KFLAVOR=amd64-vyatta-virt
+DEB_KFLAVOR=amd64-vyatta
 endif
 endif
 kbdir=debian/build/build-$(DEB_ARCH)-$(DEB_KSUBARCH)-$(DEB_KFLAVOR)
