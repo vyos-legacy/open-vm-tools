@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-7) unstable; urgency=low
+
+  * Merge 64bit standard and virt iso builds
+
+ -- John Southworth <john.southworth@vyatta.com>  Wed, 15 Aug 2012 10:20:51 -0700
+
 open-vm-tools (1:8.8.2+vyatta-6) unstable; urgency=low
 
   * Force rebuild; kernel changed
