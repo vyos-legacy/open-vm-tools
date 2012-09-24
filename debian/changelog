@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard14) precise; urgency=low
+
+  * force release
+
+ -- Gaurav Sinha <gaurav.sinha@vyatta.com>  Sun, 23 Sep 2012 21:30:11 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard13) precise; urgency=low
 
   * Force rebuild; kernel changed
