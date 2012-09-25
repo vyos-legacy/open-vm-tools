@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard15) precise; urgency=low
+
+  * Force build
+
+ -- John Southworth <john.southworth@vyatta.com>  Tue, 25 Sep 2012 07:52:25 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard14) precise; urgency=low
 
   * force release
