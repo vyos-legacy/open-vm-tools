@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-9) kernel; urgency=low
+
+  * Rebuild for kernel patch
+
+ -- John Southworth <john.southworth@vyatta.com>  Fri, 05 Oct 2012 12:04:47 -0700
+
 open-vm-tools (1:8.8.2+vyatta-8) unstable; urgency=low
 
   * Force rebuild for new kernel
