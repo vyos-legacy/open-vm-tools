@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.0+vyatta-19+oxnard16) precise; urgency=low
+
+  * force release
+
+ -- Gaurav Sinha <gaurav.sinha@vyatta.com>  Mon, 08 Oct 2012 15:07:32 -0700
+
 open-vm-tools (1:8.8.0+vyatta-19+oxnard15) precise; urgency=low
 
   * Force build
