@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-9+pacifica2) kernel; urgency=low
+
+  * new branch
+
+ -- John Southworth <john.southworth@vyatta.com>  Fri, 12 Oct 2012 18:44:42 -0700
+
 open-vm-tools (1:8.8.2+vyatta-9+pacifica1) kernel; urgency=low
 
   * new branch
