@@ -19,3 +19,4 @@ Wed Aug  1 18:55:51 PDT 2012: [Force rebuild; kernel changed] at [debian/8.8.2+v
 Thu Sep 13 17:08:43 PDT 2012: [Force rebuild for new kernel] at [debian/8.8.2+vyatta-7]
 Fri Oct  5 12:04:46 PDT 2012: [Rebuild for kernel patch] at [debian/8.8.2+vyatta-8]
 Fri Oct 12 19:45:47 PDT 2012: [new branch] at [debian/8.8.2+vyatta-9]
+Sat Oct 20 09:56:25 PDT 2012: [Rebuild for kernel upgrade] at [debian/8.8.2+vyatta-10]
