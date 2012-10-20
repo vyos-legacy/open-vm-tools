@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-11) kernel; urgency=low
+
+  * Rebuild for kernel upgrade
+
+ -- John Southworth <john.southworth@vyatta.com>  Sat, 20 Oct 2012 09:56:26 -0700
+
 open-vm-tools (1:8.8.2+vyatta-10) kernel; urgency=low
 
   * new branch
