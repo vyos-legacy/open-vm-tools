@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-12) kernel; urgency=low
+
+  * Update for 3.6.2
+
+ -- John Southworth <john.southworth@vyatta.com>  Sun, 21 Oct 2012 08:24:53 -0700
+
 open-vm-tools (1:8.8.2+vyatta-11) kernel; urgency=low
 
   * Rebuild for kernel upgrade
