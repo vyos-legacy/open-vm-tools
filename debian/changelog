@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-13) kernel; urgency=low
+
+  * rebuild for kernel update
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Wed, 24 Oct 2012 09:58:32 -0700
+
 open-vm-tools (1:8.8.2+vyatta-12) kernel; urgency=low
 
   * Update for 3.6.2
