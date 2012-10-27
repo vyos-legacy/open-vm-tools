@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-10+daisy2) kernel; urgency=low
+
+  * Force rebuild
+
+ -- James Davidson <james.davidson@vyatta.com>  Fri, 26 Oct 2012 20:51:38 -0700
+
 open-vm-tools (1:8.8.2+vyatta-10+daisy1) kernel; urgency=low
 
   * create daisy branch
