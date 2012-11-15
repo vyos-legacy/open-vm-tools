@@ -55,8 +55,6 @@ struct MXUserCondVar {
 #endif
 };
 
-#define MXUSER_CONDVAR_SIGNATURE 0x444E4F43 // 'COND' in memory
-
 #if defined(_WIN32)
 typedef VOID (WINAPI *InitializeConditionVariableFn)(PCONDITION_VARIABLE cv);
 typedef BOOL (WINAPI *SleepConditionVariableCSFn)(PCONDITION_VARIABLE cv,
@@ -234,7 +232,7 @@ MXUserWaitInternal(MXRecLock *lock,         // IN:
                    MXUserCondVar *condVar,  // IN:
                    uint32 msecWait)         // IN:
 {
-   uint32 lockCount = MXRecLockCount(lock);
+   int lockCount = MXRecLockCount(lock);
    DWORD waitTime = (msecWait == MXUSER_WAIT_INFINITE) ? INFINITE : msecWait;
 
    if (pSleepConditionVariableCS) {
@@ -302,11 +300,13 @@ MXUserWaitInternal(MXRecLock *lock,         // IN:
          LeaveCriticalSection(&condVar->x.compat.condVarLock);
       } while (!done);
 
-      MXRecLockAcquire(lock);
+      MXRecLockAcquire(lock,
+                       NULL);  // non-stats
+
       MXRecLockIncCount(lock, lockCount - 1);
 
       if (err != ERROR_SUCCESS) {
-         Panic("%s: failure %d on condVar (%p; %s)\n", __FUNCTION__, err,
+         Panic("%s: failure %d on condVar (0x%p; %s)\n", __FUNCTION__, err,
                condVar, condVar->header->name);
       }
    }
@@ -463,7 +463,7 @@ MXUserWaitInternal(MXRecLock *lock,         // IN:
                    uint32 msecWait)         // IN:
 {
    int err;
-   uint32 lockCount = MXRecLockCount(lock);
+   int lockCount = MXRecLockCount(lock);
 
    /*
     * When using the native lock found within the MXUser lock, be sure to
@@ -505,7 +505,7 @@ MXUserWaitInternal(MXRecLock *lock,         // IN:
 
    if (err != 0) {
       if (err != ETIMEDOUT) {
-         Panic("%s: failure %d on condVar (%p; %s)\n", __FUNCTION__, err,
+         Panic("%s: failure %d on condVar (0x%p; %s)\n", __FUNCTION__, err,
                condVar, condVar->header->name);
       }
    }
@@ -589,7 +589,7 @@ MXUserCreateCondVar(MXUserHeader *header,  // IN:
    MXUserCondVar *condVar = Util_SafeCalloc(1, sizeof(*condVar));
 
    if (MXUserCreateInternal(condVar)) {
-      condVar->signature = MXUSER_CONDVAR_SIGNATURE;
+      condVar->signature = MXUserGetSignature(MXUSER_TYPE_CONDVAR);
       condVar->header = header;
       condVar->ownerLock = lock;
    } else {
@@ -626,15 +626,16 @@ MXUserWaitCondVar(MXUserHeader *header,    // IN:
 {
    ASSERT(header);
    ASSERT(lock);
-   ASSERT(condVar && (condVar->signature == MXUSER_CONDVAR_SIGNATURE));
+   ASSERT(condVar);
+   ASSERT(condVar->signature == MXUserGetSignature(MXUSER_TYPE_CONDVAR));
 
    if (condVar->ownerLock != lock) {
-      Panic("%s: invalid use of lock %s with condVar (%p; %s)\n",
+      Panic("%s: invalid use of lock %s with condVar (0x%p; %s)\n",
              __FUNCTION__, header->name, condVar, condVar->header->name);
    }
 
    if (!MXRecLockIsOwner(lock)) {
-      Panic("%s: lock %s for condVar (%p) not owned\n",
+      Panic("%s: lock %s for condVar (0x%p) not owned\n",
             __FUNCTION__, condVar->header->name, condVar);
    }
 
@@ -666,12 +667,13 @@ MXUser_SignalCondVar(MXUserCondVar *condVar)  // IN:
 {
    int err;
 
-   ASSERT(condVar && (condVar->signature == MXUSER_CONDVAR_SIGNATURE));
+   ASSERT(condVar);
+   ASSERT(condVar->signature == MXUserGetSignature(MXUSER_TYPE_CONDVAR));
 
    err = MXUserSignalInternal(condVar);
 
    if (err != 0) {
-      Panic("%s: failure %d on condVar (%p; %s) \n", __FUNCTION__, err,
+      Panic("%s: failure %d on condVar (0x%p; %s) \n", __FUNCTION__, err,
             condVar, condVar->header->name);
    }
 }
@@ -699,12 +701,13 @@ MXUser_BroadcastCondVar(MXUserCondVar *condVar)  // IN:
 {
    int err;
 
-   ASSERT(condVar && (condVar->signature == MXUSER_CONDVAR_SIGNATURE));
+   ASSERT(condVar);
+   ASSERT(condVar->signature == MXUserGetSignature(MXUSER_TYPE_CONDVAR));
 
    err = MXUserBroadcastInternal(condVar);
 
    if (err != 0) {
-      Panic("%s: failure %d on condVar (%p; %s) \n", __FUNCTION__, err,
+      Panic("%s: failure %d on condVar (0x%p; %s) \n", __FUNCTION__, err,
             condVar, condVar->header->name);
    }
 }
@@ -732,16 +735,17 @@ void
 MXUser_DestroyCondVar(MXUserCondVar *condVar)  // IN:
 {
    if (condVar != NULL) {
-      ASSERT(condVar && (condVar->signature == MXUSER_CONDVAR_SIGNATURE));
+      ASSERT(condVar->signature == MXUserGetSignature(MXUSER_TYPE_CONDVAR));
 
       if (Atomic_Read(&condVar->referenceCount) != 0) {
-         Panic("%s: Attempted destroy on active condVar (%p; %s)\n",
+         Panic("%s: Attempted destroy on active condVar (0x%p; %s)\n",
                __FUNCTION__, condVar, condVar->header->name);
       }
 
+      condVar->signature = 0;  // just in case...
+
       MXUserDestroyInternal(condVar);
 
-      condVar->signature = 0;  // just in case...
       condVar->header = NULL;
       condVar->ownerLock = NULL;
 

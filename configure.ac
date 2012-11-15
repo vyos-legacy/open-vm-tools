@@ -39,10 +39,10 @@
 ### Initialization
 ###
 
-TOOLS_VERSION="8.8.0"
+TOOLS_VERSION="9.0.0"
 AC_INIT(
    [open-vm-tools],
-   [8.8.0],
+   [9.0.0],
    [open-vm-tools-devel@lists.sourceforge.net])
 
 # In order to make this configure script auto-detect situations where
@@ -148,7 +148,7 @@ if test "$with_kernel_modules" = "yes"; then
          if test ! -d "$LINUXDIR/kernel/"; then
              AC_MSG_ERROR([$LINUXDIR/kernel does not exist])
          fi
-         LINUXINCLUDE="$LINUXDIR/include"
+         LINUXINCLUDE="$LINUXDIR/build/include"
          if test ! -d "$LINUXINCLUDE"; then
             AC_MSG_ERROR([Can't find include dir under $LINUXDIR])
          fi
@@ -744,6 +744,8 @@ if test "$with_icu" = "yes"; then
 
    # Easier to give all modules the ICU defines/includes...
    CPPFLAGS="$CPPFLAGS $ICU_CPPFLAGS"
+else
+   CPPFLAGS="$CPPFLAGS -DNO_ICU"
 fi
 
 AC_PATH_PROG(
@@ -800,6 +802,14 @@ if test "$enable_multimon" != "no"; then
        #include <X11/Xmd.h>])
 fi
 
+bsdPrintfWrappers=no
+if test "$os" = "linux"; then
+   AC_CHECK_LIB([c],
+                [ecvt],
+                [bsdPrintfWrappers=yes],
+                [])
+fi
+
 ###
 ### Typdefs, structs, and compiler quarks.
 ###
@@ -842,7 +852,7 @@ for TEST_CFLAG in -Wno-pointer-sign -Wno-unused-value -fno-strict-aliasing \
    CFLAGS="$ORIGINAL_CFLAGS$NEW_CFLAG"
 done
 CPPFLAGS="$CPPFLAGS -DVMX86_TOOLS"
-CPPFLAGS="$CPPFLAGS -DNO_CORE_ICU"
+CPPFLAGS="$CPPFLAGS"
 
 # -fvisibility is used by "core service" plugins, but not required.
 ORIGINAL_CFLAGS="$CFLAGS"
@@ -1023,6 +1033,7 @@ AM_CONDITIONAL(HAVE_GNU_LD, test "$with_gnu_ld" = "yes")
 AM_CONDITIONAL(HAVE_GTKMM, test "$have_x" = "yes" -a "$with_gtkmm" = "yes")
 AM_CONDITIONAL(HAVE_PAM, test "$with_pam" = "yes")
 AM_CONDITIONAL(USE_SLASH_PROC, test "os" = "linux" -a "$have_glib_2_14" = "yes")
+AM_CONDITIONAL(USE_PRINTF_WRAPPERS, test "$bsdPrintfWrappers" = "yes")
 
 if test "$have_xsm" != "yes"; then
 AC_DEFINE([NO_XSM], 1, [])
@@ -1139,6 +1150,7 @@ AC_CONFIG_FILES([                      \
    lib/err/Makefile                    \
    lib/file/Makefile                   \
    lib/foundryMsg/Makefile             \
+   lib/glibUtils/Makefile              \
    lib/guestApp/Makefile               \
    lib/guestRpc/Makefile               \
    lib/hgfs/Makefile                   \

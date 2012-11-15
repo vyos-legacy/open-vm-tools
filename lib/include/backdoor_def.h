@@ -141,6 +141,8 @@
 #  define BDOOR_CMD_FAS_GET_TABLE_DATA        1
 #  define BDOOR_CMD_FAS_GET_PLATFORM_NAME     2
 #  define BDOOR_CMD_FAS_GET_PCIE_OSC_MASK     3
+#  define BDOOR_CMD_FAS_GET_APIC_ROUTING      4
+#  define BDOOR_CMD_FAS_GET_SLEEP_ENABLES     6
 #define   BDOOR_CMD_SENDPSHAREHINTS          66
 #define   BDOOR_CMD_ENABLE_USB_MOUSE         67
 #define   BDOOR_CMD_GET_VCPU_INFO            68
@@ -153,8 +155,13 @@
 #define   BDOOR_CMD_FIRMWARE_ERROR           71 /* CPL 0 only. */
 #  define BDOOR_CMD_FE_INSUFFICIENT_MEM       0
 #  define BDOOR_CMD_FE_EXCEPTION              1
+#define   BDOOR_CMD_VMK_INFO                 72
+#define   BDOOR_CMD_EFI_BOOT_CONFIG          73 /* CPL 0 only. */
+#  define BDOOR_CMD_EBC_LEGACYBOOT_ENABLED    0
+#  define BDOOR_CMD_EBC_GET_ORDER             1
 #define   BDOOR_CMD_GET_HW_MODEL             74 /* CPL 0 only. */
-#define   BDOOR_CMD_MAX                      75
+#define   BDOOR_CMD_GET_SVGA_CAPABILITIES    75 /* CPL 0 only. */
+#define   BDOOR_CMD_MAX                      76
 
 
 /* 
@@ -177,8 +184,9 @@
 /* Task applied to backdoor pshare hints */
 #define BDOOR_PSHARE_HINTS_CMD_SHARE   0
 #define BDOOR_PSHARE_HINTS_CMD_DROP    1
+#define BDOOR_PSHARE_HINTS_CMD_MAX     2
 
-#define BDOOR_PSHARE_HINTS_CMD(ecx)   (((ecx) >> 24) & 0x1)
+#define BDOOR_PSHARE_HINTS_CMD(ecx)   (((ecx) >> 24) & 0xff)
 
 /* Nesting control operations */
 
@@ -186,6 +194,11 @@
 #define NESTING_CONTROL_OPEN_BACKDOOR     1
 #define NESTING_CONTROL_QUERY             2
 #define NESTING_CONTROL_MAX               2
+
+/* EFI Boot Order options, nibble-sized. */
+#define EFI_BOOT_ORDER_TYPE_EFI           0x0
+#define EFI_BOOT_ORDER_TYPE_LEGACY        0x1
+#define EFI_BOOT_ORDER_TYPE_NONE          0xf
 
 /* High-bandwidth backdoor port. --hpreg */
 
@@ -209,6 +222,8 @@
 #define IS_BDOOR_PMC(index)  (((index) | 3) == 0x10003)
 #define BDOOR_CMD(ecx)       ((ecx) & 0xffff)
 
+/* Sub commands for BDOOR_CMD_VMK_INFO */
+#define BDOOR_CMD_VMK_INFO_ENTRY   1
 
 #ifdef VMM
 /*

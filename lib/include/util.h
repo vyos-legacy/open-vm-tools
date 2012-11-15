@@ -121,6 +121,11 @@ void Util_BacktraceWithFunc(int bugNr,
 void Util_BacktraceToBuffer(uintptr_t *basePtr,
                             uintptr_t *buffer, int len);
 
+// sleep functions
+
+void Util_Usleep(long usec);
+void Util_Sleep(unsigned int sec);
+
 int Util_CompareDotted(const char *s1, const char *s2);
 
 /*
@@ -316,6 +321,8 @@ EXTERN char *Util_SafeInternalStrdup(int bugNumber, const char *s,
 
 EXTERN char *Util_SafeInternalStrndup(int bugNumber, const char *s, size_t n,
                                       const char *file, int lineno);
+
+EXTERN void *Util_Memcpy(void *dest, const void *src, size_t count);
 
 #define Util_SafeMalloc(_size) \
    Util_SafeInternalMalloc(-1, (_size), __FILE__, __LINE__)
@@ -547,4 +554,5 @@ Util_FreeStringList(char **list,      // IN/OUT: the list to free
 {
    Util_FreeList((void **) list, length);
 }
+
 #endif /* UTIL_H */

@@ -278,18 +278,27 @@ typedef enum {
    HGFS_SESSION_TYPE_INTERNAL,     /* This is a static session. */
 } HgfsSessionInfoType;
 
-/* HgfsTransportSessionState, used for session status. */
+/* HgfsSessionState, used for session status. */
 typedef enum {
    HGFS_SESSION_STATE_OPEN,
    HGFS_SESSION_STATE_CLOSED,
 } HgfsSessionInfoState;
 
-typedef struct HgfsSessionInfo {
-   /* Unique session id. */
-   uint64 sessionId;
+typedef struct HgfsTransportSessionInfo {
+   /* Default session id. */
+   uint64 defaultSessionId;
+
+   /* Lock to manipulate the list of sessions */
+   MXUserExclLock *sessionArrayLock;
+
+   /* List of sessions */
+   DblLnkLst_Links sessionArray;
 
    /* Max packet size that is supported by both client and server. */
    uint32 maxPacketSize;
+
+   /* Total number of sessions present this transport session*/
+   uint32 numSessions;
 
    /* Transport session context. */
    void *transportData;
@@ -303,8 +312,33 @@ typedef struct HgfsSessionInfo {
    /* Function callbacks into Hgfs Channels. */
    HgfsServerChannelCallbacks *channelCbTable;
 
+   Atomic_uint32 refCount;    /* Reference count for session. */
+
+   uint32 channelCapabilities;
+} HgfsTransportSessionInfo;
+
+typedef struct HgfsSessionInfo {
+
+   DblLnkLst_Links links;
+
+   Bool isInactive;
+
+   /* Unique session id. */
+   uint64 sessionId;
+
+   /* Max packet size that is supported by both client and server. */
+   uint32 maxPacketSize;
+
+   /* Transport session context. */
+   HgfsTransportSessionInfo *transportSession;
+
+   /* Current state of the session. */
+   HgfsSessionInfoState state;
+
    /* Lock to ensure some fileIO requests are atomic for a handle. */
    MXUserExclLock *fileIOLock;
+
+   int numInvalidationAttempts;
 
    Atomic_uint32 refCount;    /* Reference count for session. */
 
@@ -359,9 +393,23 @@ typedef struct HgfsSessionInfo {
    uint32 numberOfCapabilities;
 
    Bool activeNotification;
-
 } HgfsSessionInfo;
 
+/*
+ * This represents the maximum number of HGFS sessions that can be
+ * created in a HGFS transport session. We picked a random value
+ * for this variable. There is no specific reason behind picking
+ * this value.
+ */
+#define MAX_SESSION_COUNT 1024
+
+/*
+ * This represents the maximum number attempts made by the HGFS
+ * invalidator before completely destroying the HGFS session. We
+ * picked a random value and there is no specific reason behind
+ * the value 4 for thie variable.
+ */
+#define MAX_SESSION_INVALIDATION_ATTEMPTS 4
 
 /*
  * These structs represent information about file open requests, file
@@ -474,6 +522,7 @@ typedef struct HgfsInputParam {
    const char *metaPacket;
    size_t metaPacketSize;
    HgfsSessionInfo *session;
+   HgfsTransportSessionInfo *transportSession;
    HgfsPacket *packet;
    void const *payload;
    uint32 payloadOffset;
@@ -563,12 +612,22 @@ HgfsServerSearchVirtualDir(HgfsGetNameFunc *getName,     // IN: Name enumerator
                            HgfsSessionInfo *session,     // IN: Session info
                            HgfsHandle *handle);          // OUT: Search handle
 
+/* Allocate/Add sessions helper functions. */
+
+Bool HgfsServerAllocateSession(HgfsTransportSessionInfo *transportSession,
+                               uint32 channelCapabilities,
+                               HgfsSessionInfo **sessionData);
+
+void HgfsServerSessionGet(HgfsSessionInfo *session);
+
+HgfsInternalStatus HgfsServerTransportAddSessionToList(HgfsTransportSessionInfo *transportSession,
+                                                       HgfsSessionInfo *sessionInfo);
 
 /* Unpack/pack requests/reply helper functions. */
 
 Bool
 HgfsParseRequest(HgfsPacket *packet,          // IN: request packet
-                 HgfsSessionInfo *session,    // IN: current session
+                 HgfsTransportSessionInfo *transportSession,    // IN: current session
                  HgfsInputParam **input,      // OUT: request parameters
                  HgfsInternalStatus *status); // OUT: error code
 
@@ -1032,14 +1091,19 @@ HgfsPackAndSendPacket(HgfsPacket *packet,           // IN/OUT: Hgfs Packet
                       size_t packetOutLen,          // IN: Output packet size
                       HgfsInternalStatus status,    // IN: status
                       HgfsHandle id,                // IN: id of the request packet
-                      HgfsSessionInfo *session,     // IN: session info
+                      HgfsTransportSessionInfo *transportSession,     // IN: session info
                       HgfsSendFlags flags);         // IN: flags how to send
+
+/* Get the session with a specific session id */
+HgfsSessionInfo *
+HgfsServerTransportGetSessionInfo(HgfsTransportSessionInfo *transportSession,   // IN: transport session info
+                                  uint64 sessionId);                            // IN: session id
 
 Bool
 HgfsPacketSend(HgfsPacket *packet,            // IN/OUT: Hgfs Packet
                char *packetOut,               // IN: Output packet buffer
                size_t packetOutLen,           // IN: Output packet size
-               HgfsSessionInfo *session,      // IN: session info
+               HgfsTransportSessionInfo *transportSession,      // IN: session info
                HgfsSendFlags flags);          // IN: flags how to send
 
 Bool
@@ -1163,8 +1227,6 @@ HgfsPlatformValidateOpen(HgfsFileOpenInfo *openInfo, // IN: Open info struct
                          HgfsSessionInfo *session,   // IN: Session info
                          HgfsLocalId *localId,       // OUT: Local unique file ID
                          fileDesc *newHandle);       // OUT: Handle to the file
-void HgfsServerSessionGet(HgfsSessionInfo *session); // IN: session context
-
 void *
 HSPU_GetBuf(HgfsPacket *packet,           // IN/OUT: Hgfs Packet
             uint32 startIndex,            // IN: start index of iov
@@ -1172,21 +1234,21 @@ HSPU_GetBuf(HgfsPacket *packet,           // IN/OUT: Hgfs Packet
             size_t bufSize,               // IN: Size of buffer
             Bool *isAllocated,            // OUT: Was buffer allocated ?
             MappingType mappingType,      // IN: Readable/ Writeable ?
-            HgfsSessionInfo *session);    // IN: Session Info
+            HgfsTransportSessionInfo *transportSession);    // IN: Session Info
 
 void *
 HSPU_GetMetaPacket(HgfsPacket *packet,          // IN/OUT: Hgfs Packet
                    size_t *metaPacketSize,      // OUT: Size of metaPacket
-                   HgfsSessionInfo *session);   // IN: Session Info
+                   HgfsTransportSessionInfo *transportSession);   // IN: Session Info
 
 void *
 HSPU_GetDataPacketBuf(HgfsPacket *packet,        // IN/OUT: Hgfs Packet
                       MappingType mappingType,   // IN: Readable/ Writeable ?
-                      HgfsSessionInfo *session); // IN: Session Info
+                      HgfsTransportSessionInfo *transportSession); // IN: Session Info
 
 void
 HSPU_PutPacket(HgfsPacket *packet,         // IN/OUT: Hgfs Packet
-               HgfsSessionInfo *session);  // IN: Session Info
+               HgfsTransportSessionInfo *transportSession);  // IN: Session Info
 
 void
 HSPU_PutBuf(HgfsPacket *packet,        // IN/OUT: Hgfs Packet
@@ -1195,33 +1257,33 @@ HSPU_PutBuf(HgfsPacket *packet,        // IN/OUT: Hgfs Packet
             size_t *bufSize,           // IN: Size of the buffer
             Bool *isAllocated,         // IN: Was buffer allocated ?
             MappingType mappingType,   // IN: Readable/ Writeable ?
-            HgfsSessionInfo *session); // IN: Session info
+            HgfsTransportSessionInfo *transportSession); // IN: Session info
 
 void
 HSPU_PutDataPacketBuf(HgfsPacket *packet,         // IN/OUT: Hgfs Packet
-                      HgfsSessionInfo *session);  // IN: Session Info
+                      HgfsTransportSessionInfo *transportSession);  // IN: Session Info
 
 void
 HSPU_PutMetaPacket(HgfsPacket *packet,        // IN/OUT: Hgfs Packet
-                   HgfsSessionInfo *session); // IN: Session Info
+                   HgfsTransportSessionInfo *transportSession); // IN: Session Info
 
 void
 HSPU_CopyBufToDataIovec(HgfsPacket *packet,       // IN/OUT: Hgfs packet
                         void *buf,                // IN: Buffer to copy from
                         uint32 bufSize,           // IN: Size of buffer
-                        HgfsSessionInfo *session);// IN: Session Info
+                        HgfsTransportSessionInfo *transportSession);// IN: Session Info
 void
 HSPU_CopyBufToIovec(HgfsPacket *packet,       // IN/OUT: Hgfs Packet
                     uint32 startIndex,        // IN: start index into iov
                     void *buf,                // IN: Buffer
                     size_t bufSize,           // IN: Size of buffer
-                    HgfsSessionInfo *session); // IN: Session Info
+                    HgfsTransportSessionInfo *transportSession); // IN: Session Info
 void *
 HSPU_GetReplyPacket(HgfsPacket *packet,        // IN/OUT: Hgfs Packet
                     size_t *replyPacketSize,   //IN/OUT: Size of reply Packet
-                    HgfsSessionInfo *session); // IN: Session Info
+                    HgfsTransportSessionInfo *transportSession); // IN: Session Info
 
 void
 HSPU_PutReplyPacket(HgfsPacket *packet,        // IN/OUT: Hgfs Packet
-                    HgfsSessionInfo *session); // IN: Session Info
+                    HgfsTransportSessionInfo *transportSession); // IN: Session Info
 #endif /* __HGFS_SERVER_INT_H__ */

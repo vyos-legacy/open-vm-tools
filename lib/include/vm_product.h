@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2006 VMware, Inc. All rights reserved.
+ * Copyright (C) 2006-2011 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -127,6 +127,12 @@
 
 #define PRODUCT_FDM_NAME MAKE_NAME("Fault Domain Manager")
 
+#define PRODUCT_NGCINSTALLER_NAME MAKE_NAME("vSphere Web Client")
+
+#define PRODUCT_SSOINSTALLER_NAME MAKE_NAME("Single Sign On")
+
+#define PRODUCT_SSOREGMM_NAME MAKE_NAME("vCenter Registration Tool")
+
 #define PRODUCT_WBC_NAME MAKE_NAME("WebCenter")
 
 #define PRODUCT_SDK_NAME MAKE_NAME("SDK")
@@ -138,7 +144,7 @@
 // #define PRODUCT_VDM_NAME MAKE_NAME("Virtual Desktop Manager")
 
 #define PRODUCT_VDDK_SHORT_NAME "VDDK"
-#define PRODUCT_VDDK_NAME MAKE_NAME("VMware Virtual Disk Development Kit")
+#define PRODUCT_VDDK_NAME MAKE_NAME("Virtual Disk Development Kit")
 
 #define PRODUCT_VDM_CLIENT_NAME MAKE_NAME("View Client")
 #define PRODUCT_VDM_CLIENT_NAME_FOR_LICENSE PRODUCT_VDM_CLIENT_NAME
@@ -155,6 +161,7 @@
 #define PRODUCT_VIEW_NAME MAKE_NAME("View")
 #define PRODUCT_VIEW_NAME_FOR_LICENSE PRODUCT_VIEW_NAME
 
+#define PRODUCT_VMCF_NAME MAKE_NAME("VMCF")
 
 // XXX VMvisor is the underlying technology for possibly several products,
 // XXX not the product. Fix when names are decided.
@@ -188,8 +195,8 @@
  *
  * VMRC is versioned x.y.z - ProgID is intentionally built using only x.y
  */
-#define PRODUCT_VMRC_PLUGIN_GUID_EMBEDDED      6FB1850B-AC2A-4AEA-9847-EBCE6AB2A62E
-#define PRODUCT_VMRC_PLUGIN_GUID_TYPELIB       EC950991-C7CE-455C-ABF3-12FC11F9C136
+#define PRODUCT_VMRC_PLUGIN_GUID_EMBEDDED      4AEA1010-0A0C-405E-9B74-767FC8A998CB
+#define PRODUCT_VMRC_PLUGIN_GUID_TYPELIB       E82F3B76-A628-4486-B197-03780F86063A
 #define PRODUCT_VMRC_PLUGIN_PROGID_EMBEDDED_BASE "VMware.RemoteConsole"
 #define PRODUCT_VMRC_PLUGIN_PROGID_EMBEDDED    PRODUCT_VMRC_PLUGIN_PROGID_EMBEDDED_BASE "." \
                                                XSTR(VMRC_PLUGIN_VERSION_BASE)
@@ -206,19 +213,7 @@
 #endif
 
 #define PRODUCT_VMRC_PLUGIN_CURRENT_MIMETYPE \
-   "application/x-vmware-remote-console"
-
-/*
- * legacy plugin mimetypes (currently unused but here for reference)
- */
-#define PRODUCT_VMRC_PLUGIN_LEGACY_MIMETYPES \
-   "application/x-vmware-vmrc;version=2.5.0.199067" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-vmrc;version=2.5.0.158248" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-vmrc;version=2.5.0.116460" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-vmrc;version=2.5.0.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-mks;version=2.1.0.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-mks;version=2.0.1.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR \
-   "application/x-vmware-mks;version=2.0.0.0" PRODUCT_VMRC_MIMETYPE_SEPARATOR
+   "application/x-vmware-remote-console-2012"
 
 /*
  * All supported plugin mimetypes
@@ -269,7 +264,8 @@
       || defined(VMX86_VDDK)     \
       || defined(VMX86_NETDUMP) \
       || defined(VMX86_BOOMERANG) \
-      || defined(VMX86_HBR_SERVER))
+      || defined(VMX86_HBR_SERVER) \
+      || defined(VMX86_VMCF))
 #   if defined(_WIN32) || defined(__APPLE__)
       /*
        * XXX Make the product be Workstation by default if none of the defines
@@ -319,6 +315,12 @@
 #     define PRODUCT_SHORT_NAME PRODUCT_VPXA_NAME
 #  elif defined(XVP)
 #     define PRODUCT_SHORT_NAME PRODUCT_XVP_NAME
+#  elif defined(INSTALL_NGC)
+#     define PRODUCT_SHORT_NAME PRODUCT_NGCINSTALLER_NAME
+#  elif defined(INSTALL_SSO)
+#     define PRODUCT_SHORT_NAME PRODUCT_SSOINSTALLER_NAME
+#  elif defined(INSTALL_SSOREGMM)
+#     define PRODUCT_SHORT_NAME PRODUCT_SSOREGMM_NAME
 #  else
 #     define PRODUCT_SHORT_NAME PRODUCT_VPX_NAME
 #  endif
@@ -350,6 +352,8 @@
 # define PRODUCT_SHORT_NAME PRODUCT_HBR_SERVER_NAME
 #elif defined(VMX86_VIEW)
 # define PRODUCT_SHORT_NAME PRODUCT_VIEW_NAME
+#elif defined(VMX86_VMCF)
+# define PRODUCT_SHORT_NAME PRODUCT_VMCF_NAME
 #endif
 
 

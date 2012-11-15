@@ -32,13 +32,103 @@
 #   include <errno.h>
 #   include <fcntl.h>
 #   include <unistd.h>
+
+#   define GENERIC_RANDOM_DEVICE "/dev/urandom"
 #endif
 
 #include "vmware.h"
 #include "random.h"
 
-#define ESX_RANDOM_DEVICE     "/vmfs/devices/char/vmkdriver/urandom"
-#define GENERIC_RANDOM_DEVICE "/dev/urandom"
+
+#if defined(_WIN32)
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * RandomBytesWin32 --
+ *
+ *      Generate 'size' bytes of cryptographically strong random bits in
+ *      'buffer'.
+ *
+ * Results:
+ *      TRUE   success
+ *      FALSE  failure
+ *
+ *-----------------------------------------------------------------------------
+ */
+ 
+static Bool
+RandomBytesWin32(unsigned int size,  // IN:
+                 void *buffer)       // OUT:
+{
+   HCRYPTPROV csp;
+
+   if (CryptAcquireContext(&csp, NULL, NULL, PROV_RSA_FULL,
+                           CRYPT_VERIFYCONTEXT) == FALSE) {
+      return FALSE;
+   }
+
+   if (CryptGenRandom(csp, size, buffer) == FALSE) {
+      CryptReleaseContext(csp, 0);
+      return FALSE;
+   }
+
+   if (CryptReleaseContext(csp, 0) == FALSE) {
+      return FALSE;
+   }
+
+   return TRUE;
+}
+#else
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * RandomBytesPosix --
+ *
+ *      Generate 'size' bytes of cryptographically strong random bits in
+ *      'buffer'.
+ *
+ * Results:
+ *      TRUE   success
+ *      FALSE  failure
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static Bool
+RandomBytesPosix(const char *name,   // IN:
+                 unsigned int size,  // IN:
+                 void *buffer)       // OUT:
+{
+   int fd = open(name, O_RDONLY);
+
+   if (fd == -1) {
+      return FALSE;
+   }
+
+   /* Although /dev/urandom does not block, it can return short reads. */
+
+   while (size > 0) {
+      ssize_t bytesRead = read(fd, buffer, size);
+
+      if ((bytesRead == 0) || ((bytesRead == -1) && (errno != EINTR))) {
+         close(fd);
+
+         return FALSE;
+      }
+
+      if (bytesRead > 0) {
+         size -= bytesRead;
+         buffer = ((uint8 *) buffer) + bytesRead; 
+      }
+   }
+
+   if (close(fd) == -1) {
+      return FALSE;
+   }
+
+   return TRUE;
+}
+#endif
 
 
 /*
@@ -48,12 +138,15 @@
  *
  *      Generate 'size' bytes of cryptographically strong random bits in
  *      'buffer'. Use this function when you need non-predictable random
- *      bits, typically in security applications. Use Random_Quick below
- *      otherwise.
+ *      bits, typically in security applications, where the bits are generated
+ *      external to the application.
+ *
+ *      DO NOT USE THIS FUNCTION UNLESS YOU HAVE AN ABSOLUTE, EXPLICIT
+ *      NEED FOR CRYPTOGRAPHICALLY VALID RANDOM NUMBERS.
  *
  * Results:
- *      TRUE on success
- *      FALSE on failure
+ *      TRUE   success
+ *      FALSE  failure
  *
  * Side effects:
  *      None
@@ -66,99 +159,17 @@ Random_Crypto(unsigned int size,  // IN:
               void *buffer)       // OUT:
 {
 #if defined(_WIN32)
-   HCRYPTPROV csp;
-
-   if (CryptAcquireContext(&csp, NULL, NULL, PROV_RSA_FULL,
-                           CRYPT_VERIFYCONTEXT) == FALSE) {
-      Log("%s: CryptAcquireContext failed %d\n", __FUNCTION__,
-          GetLastError());
-      return FALSE;
-   }
-
-   if (CryptGenRandom(csp, size, buffer) == FALSE) {
-      CryptReleaseContext(csp, 0);
-      Log("%s: CryptGenRandom failed %d\n", __FUNCTION__, GetLastError());
-
-      return FALSE;
-   }
-
-   if (CryptReleaseContext(csp, 0) == FALSE) {
-      Log("%s: CryptReleaseContext failed %d\n", __FUNCTION__,
-          GetLastError());
-
-      return FALSE;
-   }
+   return RandomBytesWin32(size, buffer);
 #else
-   int fd;
-
    /*
     * We use /dev/urandom and not /dev/random because it is good enough and
     * because it cannot block. --hpreg
-    *
-    * Bug 352496: On ESX, /dev/urandom is proxied into COS, and hence is
-    * expensive. The VMkernel RNG is available through VMFS and is not
-    * proxied. So we use that instead.
     */
 
-#if defined(VMX86_SERVER)
-   /*
-    * ESX: attempt to use the wonderful random device.
-    */
-
-   fd = open(ESX_RANDOM_DEVICE, O_RDONLY);
-
-#if defined(VMX86_DEVEL)
-   /*
-    * On developer builds, attempt to fall back to the generic random
-    * device, even if it is much slower. This has a nice side-effect -
-    * some things built for ESX will actually work in a Linux hosted
-    * environment.
-    */
-
-   if (fd == -1) {
-      Log("%s: open of %s failed, attempting to use %s\n", __FUNCTION__,
-          ESX_RANDOM_DEVICE, GENERIC_RANDOM_DEVICE);
-
-      fd = open(GENERIC_RANDOM_DEVICE, O_RDONLY);
-   }
+   return RandomBytesPosix(GENERIC_RANDOM_DEVICE, size, buffer);
 #endif
-#else
-   fd = open(GENERIC_RANDOM_DEVICE, O_RDONLY);
-#endif
-
-   if (fd == -1) {
-      Log("%s: Failed to open random device: %d\n", __FUNCTION__, errno);
-
-      return FALSE;
-   }
-
-   /* Although /dev/urandom does not block, it can return short reads. */
-   while (size > 0) {
-      ssize_t bytesRead = read(fd, buffer, size);
-
-      if (bytesRead == 0 || (bytesRead == -1 && errno != EINTR)) {
-         int error = errno;
-
-         close(fd);
-         Log("%s: Short read: %d\n", __FUNCTION__, error);
-
-         return FALSE;
-      }
-      if (bytesRead > 0) {
-         size -= bytesRead;
-         buffer = ((uint8 *) buffer) + bytesRead; 
-      }
-   }
-
-   if (close(fd) == -1) {
-      Log("%s: Failed to close: %d\n", __FUNCTION__, errno);
-
-      return FALSE;
-   }
-#endif
-
-   return TRUE;
 }
+
 
 
 /*

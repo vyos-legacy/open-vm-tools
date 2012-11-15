@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2006 VMware, Inc. All rights reserved.
+ * Copyright (C) 2006-2011 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -156,7 +156,7 @@ typedef int (*VMCIEventReleaseCB)(void *clientData);
   typedef SP_Rank VMCILockRank;
   typedef SemaRank VMCISemaRank;
 
-  #define VMCI_SEMA_RANK_QPHEADER       (SEMA_RANK_LEAF - 1)
+  #define VMCI_SEMA_RANK_QPHEADER       (SEMA_RANK_FS - 1)
 
   #define VMCI_LOCK_RANK_MAX            (MIN(SP_RANK_WAIT, \
                                              SP_RANK_HEAPLOCK_DYNAMIC) - 1)
@@ -174,6 +174,7 @@ typedef int (*VMCIEventReleaseCB)(void *clientData);
 #define VMCI_LOCK_RANK_EVENT            VMCI_LOCK_RANK_MAX
 #define VMCI_LOCK_RANK_HASHTABLE        VMCI_LOCK_RANK_MAX
 #define VMCI_LOCK_RANK_RESOURCE         VMCI_LOCK_RANK_MAX
+#define VMCI_LOCK_RANK_QPHEADER         VMCI_LOCK_RANK_MAX
 #define VMCI_LOCK_RANK_DOORBELL         (VMCI_LOCK_RANK_HASHTABLE - 1)
 #define VMCI_LOCK_RANK_CONTEXTFIRE      (MIN(VMCI_LOCK_RANK_CONTEXT, \
                                          MIN(VMCI_LOCK_RANK_CONTEXTLIST, \
@@ -182,6 +183,7 @@ typedef int (*VMCIEventReleaseCB)(void *clientData);
 #define VMCI_LOCK_RANK_QPHIBERNATE      (VMCI_LOCK_RANK_EVENT - 1)
 
 #define VMCI_SEMA_RANK_QUEUEPAIRLIST    (VMCI_SEMA_RANK_QPHEADER - 1)
+#define VMCI_SEMA_RANK_GUESTMEM         (VMCI_SEMA_RANK_QUEUEPAIRLIST - 1)
 
 /*
  * Host specific struct used for signalling.
@@ -360,17 +362,31 @@ typedef uint32 VMCIGuestMemID;
                            struct VMCIQueue *consumeQ);
   void VMCI_CleanupQueueMutex(struct VMCIQueue *produceQ,
                               struct VMCIQueue *consumeQ);
-  void VMCI_AcquireQueueMutex(struct VMCIQueue *queue);
+  int VMCI_AcquireQueueMutex(struct VMCIQueue *queue, Bool canBlock);
   void VMCI_ReleaseQueueMutex(struct VMCIQueue *queue);
 #else // Below are the guest OS'es without host side support.
 #  define VMCI_InitQueueMutex(_pq, _cq)
 #  define VMCI_CleanupQueueMutex(_pq, _cq)
-#  define VMCI_AcquireQueueMutex(_q)
+#  define VMCI_AcquireQueueMutex(_q, _cb) VMCI_SUCCESS
 #  define VMCI_ReleaseQueueMutex(_q)
 #  define VMCIHost_RegisterUserMemory(_ps, _pq, _cq) VMCI_ERROR_UNAVAILABLE
 #  define VMCIHost_UnregisterUserMemory(_pq, _cq)
 #  define VMCIHost_MapQueueHeaders(_pq, _cq) VMCI_SUCCESS
 #  define VMCIHost_UnmapQueueHeaders(_gid, _pq, _cq) VMCI_SUCCESS
+#endif
+
+#if defined(VMKERNEL)
+  void VMCIHost_MarkQueuesAvailable(struct VMCIQueue *produceQ,
+                                    struct VMCIQueue *consumeQ);
+  void VMCIHost_MarkQueuesUnavailable(struct VMCIQueue *produceQ,
+                                      struct VMCIQueue *consumeQ);
+  void VMCI_LockQueueHeader(struct VMCIQueue *queue);
+  void VMCI_UnlockQueueHeader(struct VMCIQueue *queue);
+#else
+#  define VMCIHost_MarkQueuesAvailable(_q, _p) while(0) { }
+#  define VMCIHost_MarkQueuesUnavailable(_q, _p) while(0) { }
+#  define VMCI_LockQueueHeader(_q) ASSERT_NOT_IMPLEMENTED(FALSE)
+#  define VMCI_UnlockQueueHeader(_q) ASSERT_NOT_IMPLEMENTED(FALSE)
 #endif
 
 #if (!defined(VMKERNEL) && defined(__linux__)) || defined(_WIN32) ||  \

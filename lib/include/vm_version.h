@@ -83,18 +83,22 @@
  * hard-coded value for every other product.
  */
 #if defined(VMX86_DESKTOP)
-   #define PRODUCT_VERSION    8,0,2,PRODUCT_BUILD_NUMBER_NUMERIC  /* WORKSTATION_VERSION_NUMBER below has to match this */
+   #define PRODUCT_VERSION    8,0,0,PRODUCT_BUILD_NUMBER_NUMERIC  /* WORKSTATION_VERSION_NUMBER below has to match this */
 #elif defined(VMX86_TOOLS)
    #define PRODUCT_VERSION    TOOLS_VERSION_EXT_CURRENT_CSV
 #elif defined(VMX86_VCB)
    #define PRODUCT_VERSION    1,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #elif defined(VMX86_VLICENSE)
-   #define PRODUCT_VERSION    1,1,2,PRODUCT_BUILD_NUMBER_NUMERIC
+   #define PRODUCT_VERSION    1,1,5,PRODUCT_BUILD_NUMBER_NUMERIC
 #elif defined(VMX86_VPX)
    /* this should be kept in sync with the corresponding vpx branch. */
-   #define PRODUCT_VERSION    5,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
+   #define PRODUCT_VERSION    5,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
+#elif defined(VMX86_BOOMERANG)
+   #define PRODUCT_VERSION    1,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
+#elif defined(VMX86_VIEW)
+   #define PRODUCT_VERSION    0,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #else
-   #define PRODUCT_VERSION    4,0,2,PRODUCT_BUILD_NUMBER_NUMERIC  /* PLAYER_VERSION_NUMBER below has to match this */
+   #define PRODUCT_VERSION    4,0,0,PRODUCT_BUILD_NUMBER_NUMERIC  /* PLAYER_VERSION_NUMBER below has to match this */
 #endif
 
 /*
@@ -121,7 +125,7 @@
  * VMI 2.0      : 3.1.0
  * P2VA 3.0     : 3.?.?
  */
-#define VIE_FILEVERSION 5,0,0,PRODUCT_BUILD_NUMBER_NUMERIC
+#define VIE_FILEVERSION 5,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
 
 /*
  * This string can be a little more "free form".  The license
@@ -186,7 +190,7 @@
  * 4.0.0-1.8: patch 3
  */
 #define ESX_VERSION_MAJOR "5"
-#define ESX_VERSION_MINOR "0"
+#define ESX_VERSION_MINOR "1"
 #define ESX_VERSION_MAINT "0"
 #define ESX_VERSION ESX_VERSION_MAJOR "." ESX_VERSION_MINOR "." \
                     ESX_VERSION_MAINT
@@ -197,52 +201,76 @@
 #define ESX_RELEASE ESX_RELEASE_UPDATE "." ESX_RELEASE_PATCH
 #define GSX_VERSION "e.x.p"
 #define VMSERVER_VERSION "e.x.p"
-#define WORKSTATION_VERSION_NUMBER "8.0.2" /* this version number should always match real WS version number */
-#define WORKSTATION_VERSION "8.0.2"
-#define WORKSTATION_ENTERPRISE_VERSION "8.0.2"
+#define WORKSTATION_VERSION_NUMBER "8.0.0" /* this version number should always match real WS version number */
+#define WORKSTATION_VERSION "e.x.p"
+#define WORKSTATION_RELEASE_DESCRIPTION ""
+#define WORKSTATION_ENTERPRISE_VERSION "e.x.p"
 #define ACE_MANAGEMENT_SERVER_VERSION "e.x.p"
 #define MUI_VERSION "4.1.0"
 #define CONSOLE_VERSION "4.1.0"
 #define P2V_VERSION "e.x.p"
 #define P2V_FILE_VERSION 3,0,0,0
-#define PLAYER_VERSION_NUMBER "4.0.2" /* this version number should always match real Player version number */
-#define PLAYER_VERSION "4.0.2"
+#define PLAYER_VERSION_NUMBER "4.0.0" /* this version number should always match real Player version number */
+#define PLAYER_VERSION "e.x.p"
 #define V2V_VERSION "e.x.p"
 #define V2V_FILE_VERSION 1,0,0,0
-#define FUSION_VERSION "4.1.1"
+/*
+ * When updating FUSION_VERSION from e.x.p to GA, you will also need to update
+ * lastVersion{Major,Minor,Patch} in bora/scons/package/fusion/fusion.sc
+ * which controls what versions are allowed to automatically update for free.
+ */
+#define FUSION_VERSION "e.x.p"
+#define BOOMERANG_VERSION "e.x.p"
+#define HBR_SERVER_VERSION "1.1.0"
 
 // These must match VIE_FILEVERSION above
-#define SYSIMAGE_VERSION "5.0.0"
+#define SYSIMAGE_VERSION "5.1.0"
 #define SYSIMAGE_FILE_VERSION VIE_FILEVERSION
 
 #define VCB_VERSION "4.0.0"
 #define VCB_FILE_VERSION 4,0,0,0
-#define VIM_VERSION "5.0.0"
-#define VPX_VERSION "5.0.0"
+#define VIM_VERSION "5.1.0"
+
+// Put VPX_VERSION first, because vpx/make/defs.mk doesn't check for suffix.
+#define VPX_VERSION "5.1.0"
+#define VPX_VERSION_MAJOR "5"
+#define VPX_VERSION_MINOR "1"
+#define VPX_VERSION_MAINT "0"
+#define VPX_VERSION_THIRD_PARTY VPX_VERSION_MAJOR VPX_VERSION_MINOR \
+                                VPX_VERSION_MAINT
 #define VPX_RELEASE_UPDATE "0" /* 0 = Pre-release/GA, 1 = Update 1 */
+#define VPX_RELEASE_PATCH "0"  /* 0 = experimental */
+#define VPX_RELEASE VPX_RELEASE_UPDATE "." VPX_RELEASE_PATCH
+
 #define SVA_VERSION "1.0.0"
-#define WBC_VERSION "5.0.0"
+#define SSO_VERSION "1.0.0"
+#define WBC_VERSION "5.1.0"
 #define SDK_VERSION "4.1.0"
-#define FOUNDRY_VERSION "1.11.2"
-#define FOUNDRY_FILE_VERSION 1,11,2,PRODUCT_BUILD_NUMBER_NUMERIC
+#define FOUNDRY_VERSION "1.11.0"
+#define FOUNDRY_FILE_VERSION 1,11,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #define VMLS_VERSION "e.x.p"
-#define VLICENSE_VERSION "1.1.2"
+#define VLICENSE_VERSION "1.1.5"
 #define DDK_VERSION "e.x.p"
 #define VIPERL_VERSION "1.1.0"
-#define RCLI_VERSION "5.0.0"
+#define RCLI_VERSION "5.1.0"
 #define VDM_VERSION "e.x.p"
 #define VMSAFE_VERSION        "1.2.0"
 #define VMSAFE_FILE_VERSION    1,2,0,PRODUCT_BUILD_NUMBER_NUMERIC
-#define NETDUMP_VERSION        "1.1.0"
-#define NETDUMP_FILE_VERSION    1,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
+#define NETDUMP_VERSION        "5.1.0"
+#define NETDUMP_FILE_VERSION    5,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
 #define VDDK_VERSION          "5.1.0"
 #define VDDK_FILE_VERSION      5,1,0,PRODUCT_BUILD_NUMBER_NUMERIC
-#define OVFTOOL_VERSION "2.1.0"
-#define VDM_CLIENT_VERSION "5.0.0"
+#define OVFTOOL_VERSION "e.x.p"
+#define VDM_CLIENT_VERSION "e.x.p"
+#define VGAUTH_VERSION "e.x.p"
 #define VIEWY_VERSION "e.x.p"
+#define VMCFSDK_VERSION "e.x.p"
+#define PCOIP_VERSION "e.x.p"
+#define VIEW_VERSION "0.0.0"
+#define HOSTD_VERSION "e.x.p"
+#define RECOVERYLIBS_VERSION "2.0.0"
 
 
-// VMRC_PLUGIN_VERSION should match PLAYER_VERSION but can't be e.x.p
 #ifndef MAKESTR
 #define MAKESTR(x) #x
 #define XSTR(x) MAKESTR(x)
@@ -251,8 +279,8 @@
 // This extra version define is here so the Makefiles can easily pick it up.
 // See the VMRC_PLUGIN_VERSION section in /mk/defs-onetime.mk
 
-#define VMRC_PLUGIN_VERSION_MAJOR 4
-#define VMRC_PLUGIN_VERSION_MINOR 0
+#define VMRC_PLUGIN_VERSION_MAJOR 5
+#define VMRC_PLUGIN_VERSION_MINOR 1
 #define VMRC_PLUGIN_VERSION_Z     0
 
 /*
@@ -260,7 +288,7 @@
  * #define VMRC_PLUGIN_VERSION_NUMBER       \
  *         XSTR(VMRC_PLUGIN_VERSION_MAJOR) "." XSTR(VMRC_PLUGIN_VERSION_MINOR) "." XSTR(VMRC_PLUGIN_VERSION_Z)
  */
-#define VMRC_PLUGIN_VERSION_NUMBER "4.0.0"
+#define VMRC_PLUGIN_VERSION_NUMBER "5.1.0"
 
 /* this version number should always match real VMRC & plugin version number */
 #define VMRC_VERSION VMRC_PLUGIN_VERSION_NUMBER
@@ -277,9 +305,9 @@
  */
 #define TOOLS_VERSION TOOLS_VERSION_CURRENT_STR
 
-#define USB_ARBITRATOR_VERSION_MAJOR 8
-#define USB_ARBITRATOR_VERSION_MINOR 4
-#define USB_ARBITRATOR_VERSION_Z     19
+#define USB_ARBITRATOR_VERSION_MAJOR 9
+#define USB_ARBITRATOR_VERSION_MINOR 0
+#define USB_ARBITRATOR_VERSION_Z     75
 
 #define USB_ARBITRATOR_VERSION_BASE  USB_ARBITRATOR_VERSION_MAJOR.\
                                      USB_ARBITRATOR_VERSION_MINOR
@@ -295,7 +323,8 @@
  * USB Arbitrator Component version. This version is used by the linux
  * installer. See USB_ARBITRATOR_COMPONENT_VERSION_NUMBER in mk/defs-onetime.mk
  */
-#define USB_ARBITRATOR_COMPONENT_VERSION_NUMBER "8.4.18"
+
+#define USB_ARBITRATOR_COMPONENT_VERSION_NUMBER "9.0.75"
 
 #ifdef VMX86_VPX
 #define VIM_API_TYPE "VirtualCenter"
@@ -360,6 +389,12 @@
 #  define PRODUCT_VERSION_NUMBER TOOLS_VERSION
 #elif defined(VMX86_VDDK)
 #  define PRODUCT_VERSION_NUMBER VDDK_VERSION
+#elif defined(VMX86_BOOMERANG)
+#  define PRODUCT_VERSION_NUMBER BOOMERANG_VERSION
+#elif defined(VMX86_HBR_SERVER)
+#  define PRODUCT_VERSION_NUMBER HBR_SERVER_VERSION
+#elif defined(VMX86_VIEW)
+#  define PRODUCT_VERSION_NUMBER VIEW_VERSION
 #endif
 
 /*
@@ -399,9 +434,9 @@
 #    define PRODUCT_LICENSE_VERSION "1.0"
 #  elif defined(VMX86_DESKTOP)
 #    if defined(__APPLE__)
-#      define PRODUCT_LICENSE_VERSION "4.0+"
+#      define PRODUCT_LICENSE_VERSION "5.0"
 #    else
-#      define PRODUCT_LICENSE_VERSION "8.0+"
+#      define PRODUCT_LICENSE_VERSION "9.0"
 #    endif
 #  elif defined(VMX86_VPX)
 #    define PRODUCT_LICENSE_VERSION "5.0"
@@ -488,6 +523,7 @@
 #define PRODUCT_VERSION_WORKSTATION_65 PRODUCT_WORKSTATION_BRIEF_NAME " 6.5"
 #define PRODUCT_VERSION_WORKSTATION_7 PRODUCT_WORKSTATION_BRIEF_NAME " 7.x"
 #define PRODUCT_VERSION_WORKSTATION_80 PRODUCT_WORKSTATION_BRIEF_NAME " 8.0"
+#define PRODUCT_VERSION_WORKSTATION_90 PRODUCT_WORKSTATION_BRIEF_NAME " 9.0"
 #define PRODUCT_VERSION_WORKSTATION_ENTERPRISE_1 "ACE 1.x"
 #define PRODUCT_VERSION_WORKSTATION_ENTERPRISE_2 "ACE 2.0"
 #define PRODUCT_VERSION_WORKSTATION_ENTERPRISE_25 "ACE 2.5"
@@ -496,6 +532,7 @@
 #define PRODUCT_VERSION_MAC_DESKTOP_2 PRODUCT_MAC_DESKTOP_BRIEF_NAME " 2.x"
 #define PRODUCT_VERSION_MAC_DESKTOP_3 PRODUCT_MAC_DESKTOP_BRIEF_NAME " 3.x"
 #define PRODUCT_VERSION_MAC_DESKTOP_40 PRODUCT_MAC_DESKTOP_BRIEF_NAME " 4.0"
+#define PRODUCT_VERSION_MAC_DESKTOP_50 PRODUCT_MAC_DESKTOP_BRIEF_NAME " 5.0"
 
 
 /*

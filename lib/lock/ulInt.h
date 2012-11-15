@@ -29,15 +29,17 @@
 #include <errno.h>
 
 #if defined(_WIN32)
-typedef DWORD MXThreadID;
+typedef DWORD MXUserThreadID;
 #define MXUSER_INVALID_OWNER 0xFFFFFFFF
 #else
+#include "safetime.h"
 #include <pthread.h>
-typedef pthread_t MXThreadID;
+typedef pthread_t MXUserThreadID;
 #endif
 
 #include "vm_basic_types.h"
 #include "vthreadBase.h"
+#include "hostinfo.h"
 
 #include "circList.h"
 
@@ -58,7 +60,7 @@ typedef struct {
 #endif
 
    int              referenceCount;   // Acquisition count
-   MXThreadID       nativeThreadID;   // Native thread ID
+   MXUserThreadID   nativeThreadID;   // Native thread ID
 } MXRecLock;
 
 
@@ -70,15 +72,16 @@ typedef struct {
  *     - exclusive (non-recursive) locks catch the recursion and panic
  *       rather than deadlock.
  *
- * There are 8 environment specific primitives:
+ * There are 9 environment specific primitives:
  *
+ * MXUserNativeThreadID         Return native thread ID
  * MXRecLockCreateInternal      Create lock before use
  * MXRecLockDestroyInternal     Destroy lock after use
  * MXRecLockIsOwner             Is lock owned by the caller?
  * MXRecLockSetNoOwner          Set lock as owner by "nobody"
  * MXRecLockSetOwner            Set lock owner
  * MXRecLockAcquireInternal     Lock the lock
- * MXRecLockTryAcquireInternal  conditionally acquire the lock
+ * MXRecLockTryAcquireInternal  Conditionally acquire the lock
  * MXRecLockReleaseInternal     Unlock the lock
  *
  * Windows has a native recursive lock, the CRITICAL_SECTION. POSIXen,
@@ -112,10 +115,17 @@ MXRecLockDestroyInternal(MXRecLock *lock)  // IN/OUT:
 }
 
 
+static INLINE MXUserThreadID
+MXUserNativeThreadID(void)
+{
+   return GetCurrentThreadId();
+}
+
+
 static INLINE Bool
 MXRecLockIsOwner(const MXRecLock *lock)  // IN:
 {
-   return lock->nativeThreadID == GetCurrentThreadId();
+   return lock->nativeThreadID == MXUserNativeThreadID();
 }
 
 
@@ -129,7 +139,7 @@ MXRecLockSetNoOwner(MXRecLock *lock)  // IN:
 static INLINE void
 MXRecLockSetOwner(MXRecLock *lock)  // IN/OUT:
 {
-   lock->nativeThreadID = GetCurrentThreadId();
+   lock->nativeThreadID = MXUserNativeThreadID();
 }
 
 
@@ -171,10 +181,17 @@ MXRecLockDestroyInternal(MXRecLock *lock)  // IN:
 }
 
 
+static INLINE MXUserThreadID
+MXUserNativeThreadID(void)
+{
+   return pthread_self();
+}
+
+
 static INLINE Bool
 MXRecLockIsOwner(const MXRecLock *lock)  // IN:
 {
-   return pthread_equal(lock->nativeThreadID, pthread_self());
+   return pthread_equal(lock->nativeThreadID, MXUserNativeThreadID());
 }
 
 
@@ -189,7 +206,7 @@ MXRecLockSetNoOwner(MXRecLock *lock)  // IN/OUT:
 static INLINE void
 MXRecLockSetOwner(MXRecLock *lock)  // IN:
 {
-   lock->nativeThreadID = pthread_self();
+   lock->nativeThreadID = MXUserNativeThreadID();
 }
 
 
@@ -238,20 +255,25 @@ MXRecLockDestroy(MXRecLock *lock)  // IN/OUT:
    if (vmx86_debug && (err != 0)) {
       Panic("%s: MXRecLockDestroyInternal returned %d\n", __FUNCTION__, err);
    }
-} 
+}
 
 
-static INLINE uint32
+static INLINE int
 MXRecLockCount(const MXRecLock *lock)  // IN:
 {
+   ASSERT(lock->referenceCount >= 0);
+   ASSERT(lock->referenceCount < MXUSER_MAX_REC_DEPTH);
+
    return lock->referenceCount;
 }
 
 
 static INLINE void
 MXRecLockIncCount(MXRecLock *lock,  // IN/OUT:
-                  uint32 count)     // IN:
+                  int count)        // IN:
 {
+   ASSERT(count >= 0);
+
    if (MXRecLockCount(lock) == 0) {
       MXRecLockSetOwner(lock);
    }
@@ -260,82 +282,93 @@ MXRecLockIncCount(MXRecLock *lock,  // IN/OUT:
 }
 
 
-static INLINE Bool
-MXRecLockAcquire(MXRecLock *lock)  // IN/OUT:
+static INLINE void
+MXRecLockAcquire(MXRecLock *lock,       // IN/OUT:
+                 VmTimeType *duration)  // OUT/OPT:
 {
-   Bool contended;
+   int err;
+   VmTimeType start = 0;
 
-   if ((MXRecLockCount(lock) != 0) && MXRecLockIsOwner(lock)) {
-      ASSERT((MXRecLockCount(lock) > 0) &&
-             (MXRecLockCount(lock) < MXUSER_MAX_REC_DEPTH));
+   if ((MXRecLockCount(lock) > 0) && MXRecLockIsOwner(lock)) {
+      MXRecLockIncCount(lock, 1);
 
-      contended = FALSE;
-   } else {
-      int err = MXRecLockTryAcquireInternal(lock);
-
-      if (err == 0) {
-         contended = FALSE;
-      } else {
-         if (vmx86_debug && (err != EBUSY)) {
-            Panic("%s: MXRecLockTryAcquireInternal returned %d\n",
-                  __FUNCTION__, err);
-         }
-
-         err = MXRecLockAcquireInternal(lock);
-         contended = TRUE;
+      if (duration != NULL) {
+         *duration = 0ULL;
       }
 
-      if (vmx86_debug && (err != 0)) {
-         Panic("%s: MXRecLockAcquireInternal returned %d\n", __FUNCTION__,
-               err);
-      }
-
-      ASSERT(lock->referenceCount == 0);
+      return;  // Uncontended
    }
+
+   err = MXRecLockTryAcquireInternal(lock);
+
+   if (err == 0) {
+      MXRecLockIncCount(lock, 1);
+
+      if (duration != NULL) {
+         *duration = 0ULL;
+      }
+
+      return;  // Uncontended
+   }
+
+   if (vmx86_debug && (err != EBUSY)) {
+      Panic("%s: MXRecLockTryAcquireInternal error %d\n", __FUNCTION__, err);
+   }
+
+   if (duration != NULL) {
+      start = Hostinfo_SystemTimerNS();
+   }
+
+   err = MXRecLockAcquireInternal(lock);
+
+   if (duration != NULL) {
+      *duration = Hostinfo_SystemTimerNS() - start;
+   }
+
+   if (vmx86_debug && (err != 0)) {
+      Panic("%s: MXRecLockAcquireInternal error %d\n", __FUNCTION__, err);
+   }
+
+   ASSERT(MXRecLockCount(lock) == 0);
 
    MXRecLockIncCount(lock, 1);
 
-   return contended;
+   return;  // Contended
 }
 
 
 static INLINE Bool
 MXRecLockTryAcquire(MXRecLock *lock)  // IN/OUT:
 {
-   Bool acquired;
+   int err;
 
-   if ((MXRecLockCount(lock) != 0) && MXRecLockIsOwner(lock)) {
-      acquired = TRUE;
-   } else {
-      int err = MXRecLockTryAcquireInternal(lock);
-
-      if (err == 0) {
-         acquired = TRUE;
-      } else {
-         if (vmx86_debug && (err != EBUSY)) {
-            Panic("%s: MXRecLockTryAcquireInternal returned %d\n",
-                  __FUNCTION__, err);
-         }
-
-         acquired = FALSE;
-      }
-   }
-
-   if (acquired) {
+   if ((MXRecLockCount(lock) > 0) && MXRecLockIsOwner(lock)) {
       MXRecLockIncCount(lock, 1);
 
-      ASSERT((MXRecLockCount(lock) > 0) &&
-             (MXRecLockCount(lock) < MXUSER_MAX_REC_DEPTH));
+      return TRUE;  // Was acquired
    }
 
-   return acquired;
+   err = MXRecLockTryAcquireInternal(lock);
+
+   if (err == 0) {
+      MXRecLockIncCount(lock, 1);
+
+      return TRUE;  // Was acquired
+   }
+
+   if (vmx86_debug && (err != EBUSY)) {
+      Panic("%s: MXRecLockTryAcquireInternal error %d\n", __FUNCTION__, err);
+   }
+
+   return FALSE;  // Was not acquired
 }
 
 static INLINE void
 MXRecLockDecCount(MXRecLock *lock,  // IN/OUT:
-                  uint32 count)     // IN:
+                  int count)        // IN:
 {
-   ASSERT(count <= lock->referenceCount);
+   ASSERT(count >= 0);
+
    lock->referenceCount -= count;
 
    if (MXRecLockCount(lock) == 0) {
@@ -347,9 +380,6 @@ MXRecLockDecCount(MXRecLock *lock,  // IN/OUT:
 static INLINE void
 MXRecLockRelease(MXRecLock *lock)  // IN/OUT:
 {
-   ASSERT((MXRecLockCount(lock) > 0) &&
-          (MXRecLockCount(lock) < MXUSER_MAX_REC_DEPTH));
-
    MXRecLockDecCount(lock, 1);
 
    if (MXRecLockCount(lock) == 0) {
@@ -366,11 +396,15 @@ MXRecLockRelease(MXRecLock *lock)  // IN/OUT:
 /*
  *-----------------------------------------------------------------------------
  *
- * MXUserGetThreadID --
+ * MXUserCastedThreadID --
  *
  *      Obtains a unique thread identifier (ID) which can be stored in a
- *      pointer. These thread ID values are NOT necessarily used within
- *      the MXRecLock implementation.
+ *      pointer; typically these thread ID values are used for tracking
+ *      purposes.
+ *
+ *      These values are not typically used with the MXUser MXRecLock
+ *      implementation. Native constructs that are very low overhead are
+ *      used.
  *
  * Results:
  *      As above
@@ -382,14 +416,25 @@ MXRecLockRelease(MXRecLock *lock)  // IN/OUT:
  */
 
 static INLINE void *
-MXUserGetThreadID(void)
+MXUserCastedThreadID(void)
 {
-   /* All thread types must fit into a uintptr_t  */
-
-   ASSERT_ON_COMPILE(sizeof(VThreadID) <= sizeof (void *));
-   return (void *) (uintptr_t) VThread_CurID();
+   return (void *) (uintptr_t) VThread_CurID();  // unsigned
 }
 
+/*
+ * MXUser object type ID values.
+ */
+
+typedef enum {
+   MXUSER_TYPE_NEVER_USE = 0,
+   MXUSER_TYPE_RW = 1,
+   MXUSER_TYPE_REC = 2,
+   MXUSER_TYPE_RANK = 3,
+   MXUSER_TYPE_EXCL = 4,
+   MXUSER_TYPE_SEMA = 5,
+   MXUSER_TYPE_CONDVAR = 6,
+   MXUSER_TYPE_BARRIER = 7
+} MXUserObjectType;
 
 /*
  * MXUser header - all MXUser objects start with this
@@ -416,10 +461,16 @@ void MXUserDumpAndPanic(MXUserHeader *header,
 
 MXRecLock *MXUserInternalSingleton(Atomic_Ptr *storage);
 
+uint32 MXUserGetSignature(MXUserObjectType objectType);
+
 #if defined(MXUSER_DEBUG)
 void MXUserAcquisitionTracking(MXUserHeader *header,
                            Bool checkRank);
+
 void MXUserReleaseTracking(MXUserHeader *header);
+
+void MXUserValidateHeader(MXUserHeader *header,
+                          MXUserObjectType objectType);
 #else
 static INLINE void
 MXUserAcquisitionTracking(MXUserHeader *header,  // IN:
@@ -430,6 +481,13 @@ MXUserAcquisitionTracking(MXUserHeader *header,  // IN:
 
 static INLINE void
 MXUserReleaseTracking(MXUserHeader *header)  // IN:
+{
+   return;
+}
+
+static INLINE void
+MXUserValidateHeader(MXUserHeader *header,         // IN:
+                     MXUserObjectType objectType)  // IN:
 {
    return;
 }

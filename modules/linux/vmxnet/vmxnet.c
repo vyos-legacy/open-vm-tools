@@ -80,6 +80,10 @@ static int vmxnet_close(struct net_device *dev);
 static void vmxnet_set_multicast_list(struct net_device *dev);
 static int vmxnet_set_mac_address(struct net_device *dev, void *addr);
 static struct net_device_stats *vmxnet_get_stats(struct net_device *dev);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
+static int vmxnet_set_features(struct net_device *netdev, compat_netdev_features_t
+			       features);
+#endif
 #if defined(HAVE_CHANGE_MTU) || defined(HAVE_NET_DEVICE_OPS)
 static int vmxnet_change_mtu(struct net_device *dev, int new_mtu);
 #endif
@@ -279,6 +283,8 @@ vmxnet_change_mtu(struct net_device *dev, int new_mtu)
 
 #endif
 
+
+#ifdef SET_ETHTOOL_OPS
 /*
  *----------------------------------------------------------------------------
  *
@@ -314,6 +320,7 @@ vmxnet_get_settings(struct net_device *dev,
    return 0;
 }
 
+
 /*
  *----------------------------------------------------------------------------
  *
@@ -336,18 +343,407 @@ vmxnet_get_drvinfo(struct net_device *dev,
 {
    struct Vmxnet_Private *lp = netdev_priv(dev);
 
-   strlcpy(drvinfo->driver, vmxnet_driver.name, sizeof(drvinfo->driver));
-   strlcpy(drvinfo->version, VMXNET_DRIVER_VERSION_STRING,
+   strncpy(drvinfo->driver, vmxnet_driver.name, sizeof(drvinfo->driver));
+   drvinfo->driver[sizeof(drvinfo->driver) - 1] = '\0';
+
+   strncpy(drvinfo->version, VMXNET_DRIVER_VERSION_STRING,
            sizeof(drvinfo->version));
-   strlcpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
-   strlcpy(drvinfo->bus_info, pci_name(lp->pdev), ETHTOOL_BUSINFO_LEN);
+   drvinfo->driver[sizeof(drvinfo->version) - 1] = '\0';
+
+   strncpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
+   drvinfo->fw_version[sizeof(drvinfo->fw_version) - 1] = '\0';
+
+   strncpy(drvinfo->bus_info, pci_name(lp->pdev), ETHTOOL_BUSINFO_LEN);
 }
 
-static struct ethtool_ops vmxnet_ethtool_ops = {
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 39)
+/*
+ *----------------------------------------------------------------------------
+ *
+ * vmxnet_get_tx_csum --
+ *
+ *    Ethtool op to check whether or not hw csum offload is enabled.
+ *
+ * Result:
+ *    1 if csum offload is currently used and 0 otherwise.
+ *
+ * Side-effects:
+ *    None
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static uint32
+vmxnet_get_tx_csum(struct net_device *netdev)
+{
+   return (netdev->features & NETIF_F_HW_CSUM) != 0;
+}
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * vmxnet_get_rx_csum --
+ *
+ *    Ethtool op to check whether or not rx csum offload is enabled.
+ *
+ * Result:
+ *    Always return 1 to indicate that rx csum is enabled.
+ *
+ * Side-effects:
+ *    None
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static uint32
+vmxnet_get_rx_csum(struct net_device *netdev)
+{
+   return 1;
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * vmxnet_set_tx_csum --
+ *
+ *    Ethtool op to change if hw csum offloading should be used or not.
+ *    If the device supports hardware checksum capability netdev features bit
+ *    is set/reset. This bit is referred to while setting hw checksum required
+ *    flag (VMXNET2_TX_HW_XSUM) in xmit ring entry.
+ *
+ * Result:
+ *    0 on success. -EOPNOTSUPP if ethtool asks to set hw checksum and device
+ *    does not support it.
+ *
+ * Side-effects:
+ *    None
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+vmxnet_set_tx_csum(struct net_device *netdev, uint32 val)
+{
+   if (val) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,0)
+      struct Vmxnet_Private *lp = netdev_priv(netdev);
+      if (lp->capabilities & (VMNET_CAP_IP4_CSUM | VMNET_CAP_HW_CSUM)) {
+         netdev->features |= NETIF_F_HW_CSUM;
+         return 0;
+      }
+#endif
+      return -EOPNOTSUPP;
+   } else {
+      netdev->features &= ~NETIF_F_HW_CSUM;
+   }
+   return 0;
+}
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * vmxnet_set_rx_csum --
+ *
+ *    Ethtool op to change if hw csum offloading should be used or not for
+ *    received packets. Hardware checksum on received packets cannot be turned
+ *    off. Hence we fail the ethtool op which turns h/w csum off.
+ *
+ * Result:
+ *    0 when rx csum is set. -EOPNOTSUPP when ethtool tries to reset rx csum.
+ *
+ * Side-effects:
+ *    None
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+vmxnet_set_rx_csum(struct net_device *netdev, uint32 val)
+{
+   if (val) {
+      return 0;
+   } else {
+      return -EOPNOTSUPP;
+   }
+}
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ *  vmxnet_set_tso --
+ *
+ *    Ethtool handler to set TSO. If the data is non-zero, TSO is
+ *    enabled. Othewrise, it is disabled.
+ *
+ *  Results:
+ *    0 if successful, error code otherwise.
+ *
+ *  Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+#   ifdef VMXNET_DO_TSO
+static int
+vmxnet_set_tso(struct net_device *dev, u32 data)
+{
+   if (data) {
+      struct Vmxnet_Private *lp = netdev_priv(dev);
+
+      if (!lp->tso) {
+         return -EINVAL;
+      }
+      dev->features |= NETIF_F_TSO;
+   } else {
+      dev->features &= ~NETIF_F_TSO;
+   }
+   return 0;
+}
+#   endif
+#endif
+
+
+static struct ethtool_ops
+vmxnet_ethtool_ops = {
    .get_settings        = vmxnet_get_settings,
    .get_drvinfo         = vmxnet_get_drvinfo,
    .get_link            = ethtool_op_get_link,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 39)
+   .get_rx_csum         = vmxnet_get_rx_csum,
+   .set_rx_csum         = vmxnet_set_rx_csum,
+   .get_tx_csum         = vmxnet_get_tx_csum,
+   .set_tx_csum         = vmxnet_set_tx_csum,
+   .get_sg              = ethtool_op_get_sg,
+   .set_sg              = ethtool_op_set_sg,
+#   ifdef VMXNET_DO_TSO
+   .get_tso             = ethtool_op_get_tso,
+   .set_tso             = vmxnet_set_tso,
+#      if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,15)
+   .get_ufo             = ethtool_op_get_ufo,
+#      endif
+#   endif
+#endif
 };
+
+
+#else   /* !defined(SET_ETHTOOL_OPS) */
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ *  vmxnet_get_settings --
+ *
+ *    Ethtool handler to get device settings.
+ *
+ *  Results:
+ *    0 if successful, error code otherwise. Settings are copied to addr.
+ *
+ *  Side effects:
+ *    None.
+ *
+ *
+ *----------------------------------------------------------------------------
+ */
+
+#ifdef ETHTOOL_GSET
+static int
+vmxnet_get_settings(struct net_device *dev, void *addr)
+{
+   struct ethtool_cmd cmd;
+   memset(&cmd, 0, sizeof(cmd));
+   cmd.speed = 1000;     // 1 Gb
+   cmd.duplex = 1;       // full-duplex
+   cmd.maxtxpkt = 1;     // no tx coalescing
+   cmd.maxrxpkt = 1;     // no rx coalescing
+   cmd.autoneg = 0;      // no autoneg
+   cmd.advertising = 0;  // advertise nothing
+
+   return copy_to_user(addr, &cmd, sizeof(cmd));
+}
+#endif
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ *  vmxnet_get_link --
+ *
+ *    Ethtool handler to get the link state.
+ *
+ *  Results:
+ *    0 if successful, error code otherwise. The link status is copied to
+ *    addr.
+ *
+ *  Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+#ifdef ETHTOOL_GLINK
+static int
+vmxnet_get_link(struct net_device *dev, void *addr)
+{
+   compat_ethtool_value value = {ETHTOOL_GLINK};
+   value.data = netif_carrier_ok(dev) ? 1 : 0;
+   return copy_to_user(addr, &value, sizeof(value));
+}
+#endif
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ *  vmxnet_get_tso --
+ *
+ *    Ethtool handler to get the TSO setting.
+ *
+ *  Results:
+ *    0 if successful, error code otherwise. The TSO setting is copied to
+ *    addr.
+ *
+ *  Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+#ifdef VMXNET_DO_TSO
+static int
+vmxnet_get_tso(struct net_device *dev, void *addr)
+{
+   compat_ethtool_value value = { ETHTOOL_GTSO };
+   value.data = (dev->features & NETIF_F_TSO) ? 1 : 0;
+   if (copy_to_user(addr, &value, sizeof(value))) {
+       return -EFAULT;
+   }
+   return 0;
+}
+#endif
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ *  vmxnet_set_tso --
+ *
+ *    Ethtool handler to set TSO. If the data in addr is non-zero, TSO is
+ *    enabled. Othewrise, it is disabled.
+ *
+ *  Results:
+ *    0 if successful, error code otherwise.
+ *
+ *  Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+#ifdef VMXNET_DO_TSO
+static int
+vmxnet_set_tso(struct net_device *dev, void *addr)
+{
+   compat_ethtool_value value;
+   if (copy_from_user(&value, addr, sizeof(value))) {
+      return -EFAULT;
+   }
+
+   if (value.data) {
+      struct Vmxnet_Private *lp = netdev_priv(dev);
+
+      if (!lp->tso) {
+         return -EINVAL;
+      }
+      dev->features |= NETIF_F_TSO;
+   } else {
+      dev->features &= ~NETIF_F_TSO;
+   }
+   return 0;
+}
+#endif
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ *  vmxnet_ethtool_ioctl --
+ *
+ *    Handler for ethtool ioctl calls.
+ *
+ *  Results:
+ *    If ethtool op is supported, the outcome of the op. Otherwise,
+ *    -EOPNOTSUPP.
+ *
+ *  Side effects:
+ *
+ *
+ *----------------------------------------------------------------------------
+ */
+
+#ifdef SIOCETHTOOL
+static int
+vmxnet_ethtool_ioctl(struct net_device *dev, struct ifreq *ifr)
+{
+   uint32_t cmd;
+   if (copy_from_user(&cmd, ifr->ifr_data, sizeof(cmd))) {
+      return -EFAULT;
+   }
+   switch (cmd) {
+#ifdef ETHTOOL_GSET
+      case ETHTOOL_GSET:
+         return vmxnet_get_settings(dev, ifr->ifr_data);
+#endif
+#ifdef ETHTOOL_GLINK
+      case ETHTOOL_GLINK:
+         return vmxnet_get_link(dev, ifr->ifr_data);
+#endif
+#ifdef VMXNET_DO_TSO
+      case ETHTOOL_GTSO:
+         return vmxnet_get_tso(dev, ifr->ifr_data);
+      case ETHTOOL_STSO:
+         return vmxnet_set_tso(dev, ifr->ifr_data);
+#endif
+      default:
+         return -EOPNOTSUPP;
+   }
+}
+#endif
+
+
+/*
+ *----------------------------------------------------------------------------
+ *
+ * vmxnet_ioctl --
+ *
+ *    Handler for ioctl calls.
+ *
+ * Results:
+ *    If ioctl is supported, the result of that operation. Otherwise,
+ *    -EOPNOTSUPP.
+ *
+ * Side effects:
+ *    None.
+ *
+ *----------------------------------------------------------------------------
+ */
+
+static int
+vmxnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
+{
+   switch (cmd) {
+#ifdef SIOCETHTOOL
+      case SIOCETHTOOL:
+         return vmxnet_ethtool_ioctl(dev, ifr);
+#endif
+   }
+   return -EOPNOTSUPP;
+}
+#endif /* SET_ETHTOOL_OPS */
 
 
 /*
@@ -597,17 +993,24 @@ vmxnet_probe_device(struct pci_dev             *pdev, // IN: vmxnet PCI device
 {
 #ifdef HAVE_NET_DEVICE_OPS
    static const struct net_device_ops vmxnet_netdev_ops = {
-	   .ndo_open = vmxnet_open,
-	   .ndo_start_xmit = vmxnet_start_tx,
-	   .ndo_stop = vmxnet_close,
-	   .ndo_get_stats = vmxnet_get_stats,
-	   .ndo_set_rx_mode = vmxnet_set_multicast_list,
-	   .ndo_change_mtu = vmxnet_change_mtu,
-	   .ndo_set_mac_address = vmxnet_set_mac_address,
-	   .ndo_tx_timeout = vmxnet_tx_timeout,
+      .ndo_open = &vmxnet_open,
+      .ndo_start_xmit = &vmxnet_start_tx,
+      .ndo_stop = &vmxnet_close,
+      .ndo_get_stats = &vmxnet_get_stats,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
+      .ndo_set_features = vmxnet_set_features,
+#endif
+#if COMPAT_LINUX_VERSION_CHECK_LT(3, 2, 0)
+      .ndo_set_multicast_list = &vmxnet_set_multicast_list,
+#else
+      .ndo_set_rx_mode = &vmxnet_set_multicast_list,
+#endif
+      .ndo_change_mtu = &vmxnet_change_mtu,
 #   ifdef VMW_HAVE_POLL_CONTROLLER
-	   .ndo_poll_controller = vmxnet_netpoll,
+      .ndo_poll_controller = vmxnet_netpoll,
 #   endif
+      .ndo_set_mac_address = &vmxnet_set_mac_address,
+      .ndo_tx_timeout = &vmxnet_tx_timeout,
    };
 #endif /* HAVE_NET_DEVICE_OPS */
    struct Vmxnet_Private *lp;
@@ -901,19 +1304,21 @@ vmxnet_probe_features(struct net_device *dev, // IN:
    lp->lpd = FALSE;
 
    printk(KERN_INFO "features:");
-   if (lp->capabilities & VMNET_CAP_HW_CSUM) {
-      dev->hw_features |= NETIF_F_HW_CSUM;
-      printk(" hwCsum");
-   }
-   else if (lp->capabilities & VMNET_CAP_IP4_CSUM) {
-      dev->hw_features |= NETIF_F_IP_CSUM;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,0)
+   if (lp->capabilities & VMNET_CAP_IP4_CSUM) {
+      dev->features |= NETIF_F_HW_CSUM;
       printk(" ipCsum");
    }
+   if (lp->capabilities & VMNET_CAP_HW_CSUM) {
+      dev->features |= NETIF_F_HW_CSUM;
+      printk(" hwCsum");
+   }
+#endif
 
 #ifdef VMXNET_DO_ZERO_COPY
-   if ((lp->capabilities & VMNET_CAP_SG) &&
-       (lp->features & VMXNET_FEATURE_ZERO_COPY_TX)){
-      dev->hw_features |= NETIF_F_SG;
+   if (lp->capabilities & VMNET_CAP_SG &&
+       lp->features & VMXNET_FEATURE_ZERO_COPY_TX){
+      dev->features |= NETIF_F_SG;
       lp->zeroCopyTx = TRUE;
       printk(" zeroCopy");
 
@@ -943,7 +1348,7 @@ vmxnet_probe_features(struct net_device *dev, // IN:
        // tso only makes sense if we have hw csum offload
        lp->chainTx && lp->zeroCopyTx &&
        lp->features & VMXNET_FEATURE_TSO) {
-      dev->hw_features |= NETIF_F_TSO;
+      dev->features |= NETIF_F_TSO;
       lp->tso = TRUE;
       printk(" tso");
    }
@@ -1643,18 +2048,31 @@ vmxnet_map_pkt(struct sk_buff *skb,
       offset -= skb_headlen(skb);
 
       for ( ; nextFrag < skb_shinfo(skb)->nr_frags; nextFrag++){
+         int fragSize;
          frag = &skb_shinfo(skb)->frags[nextFrag];
+#if COMPAT_LINUX_VERSION_CHECK_LT(3, 1, 0)
+        fragSize = frag->size;
+#else
+	fragSize = skb_frag_size(frag);
+#endif
 
          // skip those frags that are completely copied
-         if (offset >= frag->size){
-            offset -= frag->size;
+         if (offset >= fragSize){
+            offset -= fragSize;
          } else {
             // map the part of the frag that is not copied
-		 dma = skb_frag_dma_map(&lp->pdev->dev, frag, offset,
-					skb_frag_size(frag), DMA_TO_DEVICE);
-            VMXNET_FILL_SG(xre->sg.sg[nextSg], dma, frag->size - offset);
+            dma = pci_map_page(lp->pdev,
+#if COMPAT_LINUX_VERSION_CHECK_LT(3, 1, 0)
+                               frag->page,
+#else
+                               frag->page.p,
+#endif
+                               frag->page_offset + offset,
+                               fragSize - offset,
+                               PCI_DMA_TODEVICE);
+            VMXNET_FILL_SG(xre->sg.sg[nextSg], dma, fragSize - offset);
             VMXNET_LOG("vmxnet_map_tx: txRing[%u].sg[%d] -> frag[%d]+%u (%uB)\n",
-                       dd->txDriverNext, nextSg, nextFrag, offset, frag->size - offset);
+                       dd->txDriverNext, nextSg, nextFrag, offset, fragSize - offset);
             nextSg++;
             nextFrag++;
 
@@ -1665,9 +2083,23 @@ vmxnet_map_pkt(struct sk_buff *skb,
 
    // map the remaining frags, we might need to use additional tx entries
    for ( ; nextFrag < skb_shinfo(skb)->nr_frags; nextFrag++) {
+      int fragSize;
       frag = &skb_shinfo(skb)->frags[nextFrag];
-      dma = skb_frag_dma_map(&lp->pdev->dev, frag, 0,
-			     skb_frag_size(frag), DMA_TO_DEVICE);
+#if COMPAT_LINUX_VERSION_CHECK_LT(3, 1, 0)
+      fragSize = frag->size;
+#else
+      fragSize = skb_frag_size(frag);
+#endif
+     
+      dma = pci_map_page(lp->pdev,
+#if COMPAT_LINUX_VERSION_CHECK_LT(3, 1, 0)
+                         frag->page,
+#else
+                         frag->page.p,
+#endif
+                         frag->page_offset,
+                         fragSize,
+                         PCI_DMA_TODEVICE);
 
       if (nextSg == VMXNET2_SG_DEFAULT_LENGTH) {
          xre->flags = VMXNET2_TX_MORE;
@@ -1695,9 +2127,9 @@ vmxnet_map_pkt(struct sk_buff *skb,
 
          nextSg = 0;
       }
-      VMXNET_FILL_SG(xre->sg.sg[nextSg], dma, frag->size);
+      VMXNET_FILL_SG(xre->sg.sg[nextSg], dma, fragSize);
       VMXNET_LOG("vmxnet_map_tx: txRing[%u].sg[%d] -> frag[%d] (%uB)\n",
-                 dd->txDriverNext, nextSg, nextFrag, frag->size);
+                 dd->txDriverNext, nextSg, nextFrag, fragSize);
       nextSg++;
    }
 
@@ -2152,7 +2584,7 @@ vmxnet_rx_frags(Vmxnet_Private *lp, struct sk_buff *skb)
          if (UNLIKELY(newPage == NULL)) {
             skb_shinfo(skb)->nr_frags = numFrags;
             skb->len += skb->data_len;
-            skb->truesize += skb->data_len;
+            skb->truesize += PAGE_SIZE;
 
             compat_dev_kfree_skb(skb, FREE_WRITE);
 
@@ -2162,10 +2594,16 @@ vmxnet_rx_frags(Vmxnet_Private *lp, struct sk_buff *skb)
          }
 
          pci_unmap_page(pdev, rre2->paddr, PAGE_SIZE, PCI_DMA_FROMDEVICE);
-	 skb_fill_page_desc(skb, numFrags, lp->rxPages[dd->rxDriverNext2],
-			    0, rre2->actualLength);
+#if COMPAT_LINUX_VERSION_CHECK_LT(3, 1, 0)
+         skb_shinfo(skb)->frags[numFrags].page = lp->rxPages[dd->rxDriverNext2];
+#else
+         __skb_frag_set_page(&skb_shinfo(skb)->frags[numFrags],
+                             lp->rxPages[dd->rxDriverNext2]);
+#endif
+         skb_shinfo(skb)->frags[numFrags].page_offset = 0;
+         skb_shinfo(skb)->frags[numFrags].size = rre2->actualLength;
          skb->data_len += rre2->actualLength;
-	 skb->truesize += PAGE_SIZE;
+         skb->truesize += PAGE_SIZE;
          numFrags++;
 
          /* refill the buffer */
@@ -2183,7 +2621,7 @@ vmxnet_rx_frags(Vmxnet_Private *lp, struct sk_buff *skb)
    VMXNET_ASSERT(numFrags > 0);
    skb_shinfo(skb)->nr_frags = numFrags;
    skb->len += skb->data_len;
-   skb->truesize += skb->data_len;
+   skb->truesize += PAGE_SIZE;
    VMXNET_LOG("vmxnet_rx: %dB from rxRing[%d](%dB)+rxRing2[%d, %d)(%dB)\n",
               skb->len, dd->rxDriverNext, skb_headlen(skb),
               firstFrag, dd->rxDriverNext2, skb->data_len);
@@ -2522,10 +2960,11 @@ vmxnet_load_multicast (struct net_device *dev)
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 34)
     struct netdev_hw_addr *dmi;
 #else
+    int i=0;
     struct dev_mc_list *dmi = dev->mc_list;
 #endif
     u8 *addrs;
-    int i = 0, j, bit, byte;
+    int j, bit, byte;
     u32 crc, poly = CRC_POLYNOMIAL_LE;
 
     /* clear the multicast filter */
@@ -2563,7 +3002,11 @@ vmxnet_load_multicast (struct net_device *dev)
 	 crc = crc >> 26;
 	 mcast_table [crc >> 4] |= 1 << (crc & 0xf);
     }
-    return i;
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 34)
+	return netdev_mc_count(dev);
+#else
+	return i;
+#endif
 }
 
 /*
@@ -2644,9 +3087,6 @@ vmxnet_set_mac_address(struct net_device *dev, void *p)
    unsigned int ioaddr = dev->base_addr;
    int i;
 
-   if (netif_running(dev))
-      return -EBUSY;
-
    memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
    for (i = 0; i < ETH_ALEN; i++) {
@@ -2678,6 +3118,20 @@ vmxnet_get_stats(struct net_device *dev)
 
    return &lp->stats;
 }
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
+static int
+vmxnet_set_features(struct net_device *netdev, compat_netdev_features_t features)
+{
+   compat_netdev_features_t changed = features ^ netdev->features;
+
+   if (changed & (NETIF_F_RXCSUM)) {
+      if (features & NETIF_F_RXCSUM)
+         return 0;
+   }
+   return -1;
+}
+#endif
 
 module_init(vmxnet_init);
 module_exit(vmxnet_exit);

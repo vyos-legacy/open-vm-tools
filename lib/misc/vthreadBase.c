@@ -100,6 +100,7 @@
 #include "str.h"
 #include "util.h"
 #include "hashTable.h"
+#include "hostinfo.h"
 
 
 /*
@@ -205,7 +206,7 @@ static struct {
  */
 
 #if defined __GNUC__
-/* gcc-4.1.0 and gcc-4.1.1 have buggy weak-symbol optimiziation. */
+/* gcc-4.1.0 and gcc-4.1.1 have buggy weak-symbol optimization. */
 #  if __GNUC__ == 4 && __GNUC_MINOR__ == 1 && \
      (__GNUC_PATCHLEVEL__ == 0 || __GNUC_PATCHLEVEL__ == 1)
 #  error Cannot build VThreadBase with weak symbols: buggy gcc version
@@ -394,6 +395,15 @@ VThreadBaseGetKey(void)
 #else
       Bool success = pthread_key_create(&newKey, 
                                         &VThreadBaseSafeDeleteTLS) == 0;
+      if (success && newKey == 0) {
+         /* 
+          * Leak TLS key 0.  System libraries have a habit of destroying
+          * it.  See bugs 702818 and 773420.
+          */
+
+         success = pthread_key_create(&newKey, 
+                                      &VThreadBaseSafeDeleteTLS) == 0;
+      }
       ASSERT_NOT_IMPLEMENTED(success);
 #endif
 
@@ -914,7 +924,8 @@ VThreadBaseGetNative(void)
 static Bool
 VThreadBaseNativeIsAlive(void *native)
 {
-   HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, FALSE,
+   // Different access level due to impersonation see PR#780775
+   HANDLE hThread = OpenThread(Hostinfo_OpenThreadBits(), FALSE,
                                (DWORD)(uintptr_t)native);
 
    if (hThread != NULL) {
@@ -998,7 +1009,7 @@ VThreadBaseSimpleNoID(void)
 
       newID = Atomic_FetchAndInc(&vthreadBaseGlobals.dynamicID);
       /*
-       * Detect VThreadID overflow (~0 is used as a sentinal).
+       * Detect VThreadID overflow (~0 is used as a sentinel).
        * Leave a space of ~10 IDs, since the increment and bounds-check
        * are not atomic.
        */

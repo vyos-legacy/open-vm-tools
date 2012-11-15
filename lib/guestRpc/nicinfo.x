@@ -39,7 +39,7 @@ enum NicInfoVersion {
  */
 const NICINFO_MAX_IP_LEN   = 64;
 const NICINFO_MAX_IPS      = 64;
-const NICINFO_MAX_NICS     = 256;
+const NICINFO_MAX_NICS     = 16;
 
 /* MAC Addresses are "AA:BB:CC:DD:EE:FF" = 18 bytes. */
 const NICINFO_MAC_LEN      = 18;

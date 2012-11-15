@@ -43,7 +43,7 @@ INCLUDE      += -I$(SRCROOT)/shared
 endif
 
 
-VM_UNAME = $(KVERS)
+VM_UNAME = $(shell uname -r)
 
 # Header directory for the running kernel
 ifdef LINUXINCLUDE
@@ -55,7 +55,7 @@ endif
 BUILD_DIR = $(HEADER_DIR)/..
 
 DRIVER := vmci
-PRODUCT := tools
+PRODUCT := tools-source
 
 # Grep program
 GREP = /bin/grep
@@ -127,9 +127,9 @@ prebuild:: ;
 postbuild:: ;
 
 $(DRIVER_KO): prebuild
-	make -C $(BUILD_DIR) SUBDIRS=$$PWD SRCROOT=$$PWD/$(SRCROOT) \
+	$(MAKE) -C $(BUILD_DIR) SUBDIRS=$$PWD SRCROOT=$$PWD/$(SRCROOT) \
 	  MODULEBUILDDIR=$(MODULEBUILDDIR) modules
-	make -C $$PWD SRCROOT=$$PWD/$(SRCROOT) \
+	$(MAKE) -C $$PWD SRCROOT=$$PWD/$(SRCROOT) \
 	  MODULEBUILDDIR=$(MODULEBUILDDIR) postbuild
 endif
 

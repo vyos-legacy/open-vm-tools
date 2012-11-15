@@ -87,6 +87,7 @@ extern Bool Hostinfo_OSIsSMP(void);
 extern Bool Hostinfo_OSIsWinNT(void);
 extern Bool Hostinfo_OSIsWow64(void);
 DWORD Hostinfo_OpenProcessBits(void);
+DWORD Hostinfo_OpenThreadBits(void);
 #else
 extern void Hostinfo_ResetProcessState(const int *keepFds,
                                        size_t numKeepFds);
@@ -172,7 +173,8 @@ typedef enum {
    OS_WINXP                  = 6,
    OS_WIN2K3                 = 7,
    OS_VISTA                  = 8,
-   OS_WINSEVEN               = 9,    // Windows 7
+   OS_WINSEVEN               = 9,
+   OS_WIN8                   = 10,
    OS_UNKNOWN                = 99999 // last, highest value
 } OS_TYPE;
 
@@ -196,8 +198,10 @@ typedef enum {
    OS_DETAIL_WIN2K3_BUS      = 17,
    OS_DETAIL_VISTA           = 18,
    OS_DETAIL_WIN2K8          = 19,
-   OS_DETAIL_WINSEVEN        = 20,    // Windows 7
+   OS_DETAIL_WINSEVEN        = 20,
    OS_DETAIL_WIN2K8R2        = 21,
+   OS_DETAIL_WIN8            = 22,
+   OS_DETAIL_WIN8SERVER      = 23,
    OS_DETAIL_UNKNOWN         = 99999  // last, highest value
 } OS_DETAIL_TYPE;
 
@@ -223,6 +227,7 @@ Bool Hostinfo_GetLoadAverage(uint32 *l);
 
 #ifdef __APPLE__
 size_t Hostinfo_GetKernelZoneElemSize(char const *name);
+char *Hostinfo_GetHardwareModel(void);
 #endif
 
 #endif /* ifndef _HOSTINFO_H_ */

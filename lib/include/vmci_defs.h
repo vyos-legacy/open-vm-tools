@@ -123,10 +123,6 @@ typedef uint32 VMCI_Resource;
 #define VMCI_QUEUEPAIR_ALLOC      10
 #define VMCI_QUEUEPAIR_DETACH     11
 
-/* VMCI reserved host datagram resource IDs */
-/* vsock control channel has resource id 1 */
-#define VMCI_DVFILTER_DATA_CHANNEL  2
-
 /*
  * VMCI_VSOCK_VMX_LOOKUP was assigned to 12 for Fusion 3.0/3.1,
  * WS 7.0/7.1 and ESX 4.1
@@ -134,6 +130,12 @@ typedef uint32 VMCI_Resource;
 #define VMCI_HGFS_TRANSPORT       13
 #define VMCI_UNITY_PBRPC_REGISTER 14
 #define VMCI_RESOURCE_MAX         15
+
+/*
+ * VMCI reserved host datagram resource IDs.
+ * vsock control channel has resource id 1.
+ */
+#define VMCI_DVFILTER_DATA_PATH_DATAGRAM 2
 
 /* VMCI Ids. */
 typedef uint32 VMCIId;

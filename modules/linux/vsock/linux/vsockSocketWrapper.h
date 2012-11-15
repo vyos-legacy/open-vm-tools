@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2007 VMware, Inc. All rights reserved.
+ * Copyright (C) 2007-2011 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -125,6 +125,9 @@
 # if !defined(ENOSYS)
 #  define ENOSYS              WSAEOPNOTSUPP
 # endif
+# if !defined(EAGAIN)
+#  define EAGAIN              WSAEWOULDBLOCK
+# endif
 #  define EWOULDBLOCK         WSAEWOULDBLOCK
 #  define EINPROGRESS         WSAEINPROGRESS
 #  define EALREADY            WSAEALREADY
@@ -205,6 +208,7 @@
 #  define __ECONNINPROGRESS   EINPROGRESS
 #  define __ESNDRCVTIMEDOUT   VMK_WOULD_BLOCK
 #  define ESYSNOTREADY        VMK_NOT_SUPPORTED
+#  define EAGAIN              VMK_RETRY
 #elif defined(__APPLE__)
 #  define __ELOCALSHUTDOWN    ESHUTDOWN
 #  define __ELOCALRCVSHUTDOWN 0

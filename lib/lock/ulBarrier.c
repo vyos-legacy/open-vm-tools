@@ -22,8 +22,6 @@
 #include "userlock.h"
 #include "ulInt.h"
 
-#define MXUSER_BARRIER_SIGNATURE 0x52524142 // 'BARR' in memory
-
 struct BarrierContext
 {
    uint32           count;    // Number of threads currently in this context
@@ -71,7 +69,7 @@ MXUserDumpBarrier(MXUserHeader *header)  // IN:
    Warning("\trank 0x%X\n", barrier->header.rank);
    Warning("\tserial number %u\n", barrier->header.serialNumber);
 
-   Warning("\tlock %p\n", barrier->lock);
+   Warning("\tlock 0x%p\n", barrier->lock);
    Warning("\tconfigured count %u\n", barrier->configCount);
    curContext = barrier->curContext;
 
@@ -111,8 +109,8 @@ MXUserDumpBarrier(MXUserHeader *header)  // IN:
  */
 
 MXUserBarrier *
-MXUser_CreateBarrier(const char *userName,  // IN:
-                     MX_Rank rank,          // IN:
+MXUser_CreateBarrier(const char *userName,  // IN: shall be known as
+                     MX_Rank rank,          // IN: internal lock's rank
                      uint32 count)          // IN:
 {
    char *properName;
@@ -156,7 +154,7 @@ MXUser_CreateBarrier(const char *userName,  // IN:
    barrier->configCount = count;
    barrier->curContext = 0;
 
-   barrier->header.signature = MXUSER_BARRIER_SIGNATURE;
+   barrier->header.signature = MXUserGetSignature(MXUSER_TYPE_BARRIER);
    barrier->header.name = properName;
    barrier->header.rank = rank;
    barrier->header.serialNumber = MXUserAllocSerialNumber();
@@ -189,7 +187,7 @@ void
 MXUser_DestroyBarrier(MXUserBarrier *barrier)  // IN:
 {
    if (LIKELY(barrier != NULL)) {
-      ASSERT(barrier->header.signature == MXUSER_BARRIER_SIGNATURE);
+      MXUserValidateHeader(&barrier->header, MXUSER_TYPE_BARRIER);
 
       if ((barrier->contexts[0].count != 0) ||
           (barrier->contexts[1].count != 0)) {
@@ -198,13 +196,14 @@ MXUser_DestroyBarrier(MXUserBarrier *barrier)  // IN:
                             __FUNCTION__);
       }
 
+      barrier->header.signature = 0;  // just in case...
+
       MXUserRemoveFromList(&barrier->header);
 
       MXUser_DestroyCondVar(barrier->contexts[0].condVar);
       MXUser_DestroyCondVar(barrier->contexts[1].condVar);
       MXUser_DestroyExclLock(barrier->lock);
 
-      barrier->header.signature = 0;  // just in case...
       free(barrier->header.name);
       barrier->header.name = NULL;
       free(barrier);
@@ -240,7 +239,8 @@ MXUser_EnterBarrier(MXUserBarrier *barrier)  // IN/OUT:
    BarrierContext *ptr;
    uint32 context;
 
-   ASSERT(barrier && (barrier->header.signature == MXUSER_BARRIER_SIGNATURE));
+   ASSERT(barrier);
+   MXUserValidateHeader(&barrier->header, MXUSER_TYPE_BARRIER);
 
    MXUser_AcquireExclLock(barrier->lock);
 

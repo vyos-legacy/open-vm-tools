@@ -77,6 +77,7 @@
    LOGLEVEL_VAR(vusbkeyboard), \
    LOGLEVEL_VAR(vusbhid), \
    LOGLEVEL_VAR(vusbtablet), \
+   LOGLEVEL_VAR(vusbaudio), \
    LOGLEVEL_VAR(hidQueue), \
    LOGLEVEL_VAR(pci_1394), \
    LOGLEVEL_VAR(1394), \
@@ -128,6 +129,7 @@
    LOGLEVEL_VAR(mksHostCursor), \
    LOGLEVEL_VAR(mksHostOps), \
    LOGLEVEL_VAR(mksGLManager), \
+   LOGLEVEL_VAR(mksGLFBO), \
    LOGLEVEL_VAR(mksGLShader), \
    LOGLEVEL_VAR(mksGLState), \
    LOGLEVEL_VAR(vdpPlugin), \
@@ -243,12 +245,21 @@
    LOGLEVEL_VAR(digestlib), \
    LOGLEVEL_VAR(inputdevtap), \
    LOGLEVEL_VAR(objlib), \
+   LOGLEVEL_VAR(vsanobj), \
    LOGLEVEL_VAR(svgadevtap), \
    LOGLEVEL_VAR(masReceipt), /* lib/masReceipt */ \
    LOGLEVEL_VAR(serviceImpl), /* lib/serviceImpl */ \
    LOGLEVEL_VAR(serviceUser), /* lib/serviceUser */ \
    LOGLEVEL_VAR(ssl), \
    LOGLEVEL_VAR(vmrc), \
+   LOGLEVEL_VAR(namespaceDb), \
+   LOGLEVEL_VAR(namespaceMgr), \
+   LOGLEVEL_VAR(blobMgr), \
+   LOGLEVEL_VAR(vblobbe), \
+   LOGLEVEL_VAR(blobFileBE), \
+   LOGLEVEL_VAR(blobPythonBE), \
+   LOGLEVEL_VAR(grainTrack), \
+   LOGLEVEL_VAR(shim3D), \
    /* end of list */
 
 LOGLEVEL_EXTENSION_DECLARE(LOGLEVEL_USER);
