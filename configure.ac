@@ -148,7 +148,7 @@ if test "$with_kernel_modules" = "yes"; then
          if test ! -d "$LINUXDIR/kernel/"; then
              AC_MSG_ERROR([$LINUXDIR/kernel does not exist])
          fi
-         LINUXINCLUDE="$LINUXDIR/build/include"
+         LINUXINCLUDE="$LINUXDIR/include"
          if test ! -d "$LINUXINCLUDE"; then
             AC_MSG_ERROR([Can't find include dir under $LINUXDIR])
          fi
