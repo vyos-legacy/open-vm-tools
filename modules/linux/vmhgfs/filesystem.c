@@ -376,7 +376,7 @@ HgfsGetRootDentry(struct super_block *sb,       // IN: Super block object
       goto exit;
    }
 
-   tempRootDentry = d_alloc_root(rootInode);
+   tempRootDentry = d_make_root(rootInode);
    if (tempRootDentry == NULL) {
       LOG(4, (KERN_WARNING "VMware hgfs: %s: Could not get "
               "root dentry\n", __func__));

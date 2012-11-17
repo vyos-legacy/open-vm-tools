@@ -32,7 +32,11 @@
 #include "block.h"
 
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
+static int DentryOpRevalidate(struct dentry *dentry, unsigned int flags);
+#else
 static int DentryOpRevalidate(struct dentry *dentry, struct nameidata *nd);
+#endif
 
 struct dentry_operations LinkDentryOps = {
    .d_revalidate = DentryOpRevalidate,
@@ -58,14 +62,25 @@ struct dentry_operations LinkDentryOps = {
  *----------------------------------------------------------------------------
  */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
+static int
+DentryOpRevalidate(struct dentry *dentry,  // IN: dentry revalidating
+		   unsigned int flags)     // IN: lookup flags & intent
+#else
 static int
 DentryOpRevalidate(struct dentry *dentry,  // IN: dentry revalidating
                    struct nameidata *nd)   // IN: lookup flags & intent
+#endif
 {
    VMBlockInodeInfo *iinfo;
    struct nameidata actualNd;
    struct dentry *actualDentry;
    int ret;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
+   if (flags & LOOKUP_RCU)
+      return -ECHILD;
+#endif
 
    if (!dentry) {
       Warning("DentryOpRevalidate: invalid args from kernel\n");
@@ -101,7 +116,11 @@ DentryOpRevalidate(struct dentry *dentry,  // IN: dentry revalidating
    if (actualDentry &&
        actualDentry->d_op &&
        actualDentry->d_op->d_revalidate) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
+      return actualDentry->d_op->d_revalidate(actualDentry, flags);
+#else
       return actualDentry->d_op->d_revalidate(actualDentry, nd);
+#endif
    }
 
    if (compat_path_lookup(iinfo->name, 0, &actualNd)) {

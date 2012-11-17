@@ -35,8 +35,14 @@
 
 
 /* Inode operations */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
+static struct dentry *InodeOpLookup(struct inode *dir,
+                                    struct dentry *dentry, unsigned int flags);
+#else
 static struct dentry *InodeOpLookup(struct inode *dir,
                                     struct dentry *dentry, struct nameidata *nd);
+#endif
+
 static int InodeOpReadlink(struct dentry *dentry, char __user *buffer, int buflen);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 13)
 static void *InodeOpFollowlink(struct dentry *dentry, struct nameidata *nd);
@@ -75,7 +81,12 @@ static struct inode_operations LinkInodeOps = {
 static struct dentry *
 InodeOpLookup(struct inode *dir,      // IN: parent directory's inode
               struct dentry *dentry,  // IN: dentry to lookup
-              struct nameidata *nd)   // IN: lookup intent and information
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
+	      unsigned int flags
+#else
+              struct nameidata *nd   // IN: lookup intent and information
+#endif
+	      )
 {
    char *filename;
    struct inode *inode;

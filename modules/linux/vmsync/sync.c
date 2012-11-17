@@ -162,7 +162,7 @@ VmSyncThawDevices(void  *_state)  // IN
    cancel_delayed_work(&state->thawTask);
    list_for_each_safe(cur, tmp, &state->devices) {
       dev = list_entry(cur, VmSyncBlockDevice, list);
-      if (dev->sb != NULL && dev->sb->s_frozen != SB_UNFROZEN) {
+      if (dev->sb != NULL && dev->sb->s_writers.frozen != SB_UNFROZEN) {
          thaw_bdev(dev->bdev, dev->sb);
          atomic_dec(&gFreezeCount);
       }
@@ -237,7 +237,7 @@ VmSyncAddPath(const VmSyncState *state,   // IN
     * the superblock is already frozen.
     */
    if (inode->i_sb->s_bdev == NULL ||
-       inode->i_sb->s_frozen != SB_UNFROZEN) {
+       inode->i_sb->s_writers.frozen != SB_UNFROZEN) {
       result = (inode->i_sb->s_bdev == NULL) ? -EINVAL : -EALREADY;
       compat_path_release(&nd);
       goto exit;

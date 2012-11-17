@@ -525,7 +525,7 @@ FsOpReadSuper(struct super_block *sb, // OUT: Superblock object
       return -EINVAL;
    }
 
-   rootDentry = d_alloc_root(rootInode);
+   rootDentry = d_make_root(rootInode);
    if (!rootDentry) {
       iput(rootInode);
       return -ENOMEM;
