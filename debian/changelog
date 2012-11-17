@@ -1,3 +1,13 @@
+open-vm-tools (1:9.9.0+vyatta-1) kernel; urgency=low
+
+  * Manual update to open-vm-tools 9.0.0
+  * Fix linux include path
+  * fix modules install path
+  * adapte to 3.6.6 VFS changes
+  * Update to kernel 3.6.6
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Fri, 16 Nov 2012 16:09:25 -0800
+
 open-vm-tools (1:8.8.2+vyatta-13) kernel; urgency=low
 
   * rebuild for kernel update
