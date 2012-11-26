@@ -1,3 +1,9 @@
+open-vm-tools (1:9.9.0+vyatta-2) kernel; urgency=low
+
+  * update to 3.6.7
+
+ -- Stephen Hemminger <shemminger@vyatta.com>  Mon, 26 Nov 2012 09:57:51 -0800
+
 open-vm-tools (1:9.9.0+vyatta-1) kernel; urgency=low
 
   * Manual update to open-vm-tools 9.0.0
