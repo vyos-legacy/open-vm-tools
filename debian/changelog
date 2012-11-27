@@ -1,3 +1,9 @@
+open-vm-tools (1:9.9.0+vyatta-3) kernel; urgency=low
+
+  * Update to 3.6.8
+
+ -- James Davidson <james.davidson@vyatta.com>  Tue, 27 Nov 2012 10:56:22 -0800
+
 open-vm-tools (1:9.9.0+vyatta-2) kernel; urgency=low
 
   * update to 3.6.7
