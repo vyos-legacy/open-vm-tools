@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-10+daisy3) kernel; urgency=low
+
+  * force release: kernel patch to allow conntrack leak detection
+
+ -- Gaurav Sinha <gaurav.sinha@vyatta.com>  Fri, 14 Dec 2012 13:38:19 -0800
+
 open-vm-tools (1:8.8.2+vyatta-10+daisy2) kernel; urgency=low
 
   * Force rebuild
