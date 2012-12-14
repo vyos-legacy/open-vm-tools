@@ -20,3 +20,4 @@ Wed Aug  1 17:15:19 PDT 2012: [Force rebuild; kernel changed] at [debian/8.8.0+v
 Sun Sep 23 21:30:10 PDT 2012: [force release] at [debian/8.8.0+vyatta-19+oxnard13]
 Tue Sep 25 07:52:22 PDT 2012: [Force build] at [debian/8.8.0+vyatta-19+oxnard14]
 Mon Oct  8 15:07:32 PDT 2012: [force release] at [debian/8.8.0+vyatta-19+oxnard15]
+Fri Dec 14 13:37:14 PST 2012: [force release: kernel patch to allow conntrack leak detection] at [debian/8.8.0+vyatta-19+oxnard16]
