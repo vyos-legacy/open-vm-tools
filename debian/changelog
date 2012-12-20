@@ -1,3 +1,9 @@
+open-vm-tools (1:8.8.2+vyatta-10+daisy4) kernel; urgency=low
+
+  * Force rebuild; kernel changed
+
+ -- James Davidson <james.davidson@vyatta.com>  Thu, 20 Dec 2012 12:18:43 -0800
+
 open-vm-tools (1:8.8.2+vyatta-10+daisy3) kernel; urgency=low
 
   * force release: kernel patch to allow conntrack leak detection
