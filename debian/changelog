@@ -1,3 +1,9 @@
+open-vm-tools (2:9.0.2) kernel; urgency=low
+
+  * Adjust package version to match release version
+
+ -- Sven-Thorsten Dietrich <sven@vyatta.com>  Mon, 04 Mar 2013 17:06:25 -0800
+
 open-vm-tools (2:9.0.1) kernel; urgency=low
 
   * Adjust package version to match release version
