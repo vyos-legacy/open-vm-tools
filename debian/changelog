@@ -1,3 +1,16 @@
+open-vm-tools (3:9.0.0+vyattb) kernel; urgency=low
+
+  * Adjust package version to match release version
+
+ -- Sven-Thorsten Dietrich <sven@vyatta.com>  Mon, 04 Mar 2013 17:08:30 -0800
+
+open-vm-tools (3:9.0.0+vyatta) kernel; urgency=low
+
+  * Adjust package version to software release version with +vyatta
+    enhancement
+
+ -- Sven-Thorsten Dietrich <sven@Debian-6.0.6-Vyatta-Build>  Mon, 04 Mar 2013 17:08:15 -0800
+
 open-vm-tools (2:9.0.2) kernel; urgency=low
 
   * Adjust package version to match release version
