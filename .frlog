@@ -24,3 +24,4 @@ Wed Oct 24 09:58:31 PDT 2012: [rebuild for kernel update] at [debian/8.8.2+vyatt
 Mon Mar  4 17:05:51 PST 2013: [Adjust package version to match release version] at [debian/9.9.0+vyatta-5]
 Mon Mar  4 17:06:24 PST 2013: [Adjust package version to match release version] at [debian/9.0.1]
 Mon Mar  4 17:08:30 PST 2013: [Adjust package version to match release version] at [debian/9.0.2]
+Mon Mar  4 17:12:28 PST 2013: [Force package version to match release version] at [debian/9.0.0+vyattb]
