@@ -1,13 +1,60 @@
-8.8.2  Dmitry Torokhov <dtor@vmware.com>
-	Release matching the Workstation 8.0.2 release.
+9.0.0  Dmitry Torokhov <dtor@vmware.com>
+	Release matching the vSphere 5.1 release.
 
 
-8.8.1  Marcelo Vanzin  <mvanzin@vmware.com>
-	Release matching the Workstation 8.0.1 release.
+2011.11.20  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	6c197b8e5eccf32bfee0e2452d8926968182aada
 
 
-8.8.0  Marcelo Vanzin  <mvanzin@vmware.com>
-	Release matching the Workstation 8.0 / Fusion 4.0 releases.
+2011.10.26  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	6271fde90248a4fd49e38aa61498db9e1dbf37c3
+
+
+2011.09.23  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	05baddbed1c5e47e9789a44d30bb217d7184232a
+
+
+2011.08.21  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	2b3d76ba776f55d06fb5b62499b189ebd6bc1c75
+
+
+2011.07.19  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	5bed6f1369ca6e9c2c7fbaf4205d86e50f219c5f
+
+
+2011.06.27  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	166bbe1d28da4dab763b9568f163c8dca99ced9c
+
+
+2011.05.27  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	3793ddc9c9b5facf376a2625d4c2252aa9bd3daa
+
+
+2011.04.25  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	3112c27981074deb53e86e30e1c168d55e42220c
+
+
+2011.03.28  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	ec43520f5f3a50f5a980a73d22ae231380f97555
+
+
+2011.02.23  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	96cf4718ac0aff1743e50a2165599306ba442fe1
+
+
+2011.01.24  Marcelo Vanzin  <mvanzin@vmware.com>
+	This release tag contains commits up to the following id:
+	60c470337c8932a6d9564130dcaf06c7a1a3df53
 
 
 2010.12.19  Marcelo Vanzin  <mvanzin@vmware.com>

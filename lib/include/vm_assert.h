@@ -251,7 +251,7 @@ EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
 #define ASSERT_HAS_INTERRUPTS() ASSERT(INTERRUPTS_ENABLED())
 
 #define ASSERT_LOG_UNEXPECTED(bug, cond) \
-           (UNLIKELY(!(cond)) ? LOG_UNEXPECTED(bug) : 0)
+           (UNLIKELY(!(cond)) ? LOG_UNEXPECTED(bug) : (void)0)
 #ifdef VMX86_DEVEL
    #define LOG_UNEXPECTED(bug) \
               Warning(AssertUnexpectedFmt, __FILE__, __LINE__, bug)
@@ -260,7 +260,7 @@ EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
               Log(AssertUnexpectedFmt, __FILE__, __LINE__, bug)
 #endif
 
-#define ASSERT_NOT_TESTED(cond) (UNLIKELY(!(cond)) ? NOT_TESTED() : 0)
+#define ASSERT_NOT_TESTED(cond) (UNLIKELY(!(cond)) ? NOT_TESTED() : (void)0)
 #ifdef VMX86_DEVEL
    #define NOT_TESTED() Warning(AssertNotTestedFmt, __FILE__, __LINE__)
 #else
@@ -277,6 +277,15 @@ EXTERN void WarningThrottled(uint32 *count, const char *fmt, ...)
    } while (0)
 
 #define LOG_ONCE(_s) DO_ONCE(Log _s)
+
+#ifdef VMX86_DEVEL
+   #define DEPRECATED(_fix) DO_ONCE(                                        \
+                               Warning("%s:%d: %s is DEPRECATED; %s\n",     \
+                                          __FILE__, __LINE__, __FUNCTION__, \
+                                          _fix))
+#else
+   #define DEPRECATED(_fix) do {} while (0)
+#endif
 
 
 /*

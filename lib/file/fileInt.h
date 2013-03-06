@@ -104,6 +104,8 @@ typedef struct FileData {
 
 #define FILE_MAX_WAIT_TIME_MS 2000  // maximum wait time in milliseconds
 
+void FileIOResolveLockBits(int *access);
+
 #if defined(_WIN32)
 int FileMapErrorToErrno(const char *functionName,
                         Err_Number status);
@@ -115,10 +117,6 @@ Bool FileRetryThisError(DWORD error,
 int FileAttributesRetry(ConstUnicode pathName,
                         uint32 msecMaxWaitTime,
                         FileData *fileData);
-
-int FileRenameRetry(ConstUnicode fromPath,
-                    ConstUnicode toPath,
-                    uint32 msecMaxWaitTime);
 
 int FileDeletionRetry(ConstUnicode pathName,
                       Bool handleLink,
@@ -136,7 +134,6 @@ int FileListDirectoryRetry(ConstUnicode pathName,
                            Unicode **ids);
 
 #define FileAttributes(a, b)       FileAttributesRetry((a), 0, (b))
-#define FileRename(a, b)           FileRenameRetry((a), (b), 0)
 #define FileDeletion(a, b)         FileDeletionRetry((a), (b), 0)
 #define FileCreateDirectory(a, b)  FileCreateDirectoryRetry((a), (b), 0)
 #define FileRemoveDirectory(a)     FileRemoveDirectoryRetry((a), 0)
@@ -146,7 +143,7 @@ int FileListDirectoryRetry(ConstUnicode pathName,
 #define FileAttributesRobust(a, b) \
                     FileAttributesRetry((a), FILE_MAX_WAIT_TIME_MS, (b))
 #define FileRenameRobust(a, b) \
-                    FileRenameRetry((a), (b), FILE_MAX_WAIT_TIME_MS)
+                    File_RenameRetry((a), (b), FILE_MAX_WAIT_TIME_MS)
 #define FileDeletionRobust(a, b) \
                     FileDeletionRetry((a), (b), FILE_MAX_WAIT_TIME_MS)
 #define FileCreateDirectoryRobust(a, b) \
@@ -166,9 +163,6 @@ char *FilePosixGetBlockDevice(char const *path);
 int FileAttributes(ConstUnicode pathName,
                    FileData *fileData);
 
-int FileRename(ConstUnicode fromPath,
-               ConstUnicode toPath);
-
 int FileDeletion(ConstUnicode pathName,
                  Bool handleLink);
 
@@ -179,7 +173,7 @@ int FileRemoveDirectory(ConstUnicode pathName);
 
 #define FileListDirectoryRobust(a, b)    File_ListDirectory((a), (b))
 #define FileAttributesRobust(a, b)       FileAttributes((a), (b))
-#define FileRenameRobust(a, b)           FileRename((a), (b))
+#define FileRenameRobust(a, b)           File_Rename((a), (b))
 #define FileDeletionRobust(a, b)         FileDeletion((a), (b))
 #define FileCreateDirectoryRobust(a, b)  FileCreateDirectory((a), (b))
 #define FileRemoveDirectoryRobust(a)     FileRemoveDirectory((a))
@@ -201,6 +195,7 @@ typedef struct lock_values
    char         *locationChecksum;
    Unicode       memberName;
    unsigned int  lamportNumber;
+   Bool          exclusivity;
    uint32        waitTime;
    uint32        msecMaxWaitTime;
    ActiveLock   *lockList;
@@ -243,6 +238,9 @@ Bool FileLockIsLocked(ConstUnicode filePath,
 Bool FileLockValidExecutionID(const char *executionID);
 
 Bool FileLockValidName(ConstUnicode fileName);
+
+void FileLockAppendMessage(MsgList **msgs,
+                           int err);
 
 Bool FileIsWritableDir(ConstUnicode dirName);
 

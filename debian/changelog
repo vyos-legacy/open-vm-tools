@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta+daisy1) kernel; urgency=low
+
+  * Upgrade to open-vm-tools 9.0.0
+
+ -- James Davidson <james.davidson@vyatta.com>  Wed, 06 Mar 2013 12:56:02 -0800
+
 open-vm-tools (1:8.8.2+vyatta-10+daisy4) kernel; urgency=low
 
   * Force rebuild; kernel changed

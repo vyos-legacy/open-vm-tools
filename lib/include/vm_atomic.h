@@ -121,10 +121,21 @@ __int64  _InterlockedCompareExchange64(__int64 volatile*, __int64, __int64);
 #endif
 #endif /* _MSC_VER */
 
+/*
+ * LDREX without STREX or CLREX may cause problems in environments where the
+ * context switch may not clear the reference monitor - according ARM manual
+ * the reference monitor should be cleared after a context switch, but some
+ * may not like Linux kernel's non-preemptive context switch path. So use of
+ * ARM routines in kernel code may not be safe.
+ */
 #ifdef __arm__
 #   if defined(__ARM_ARCH_7__) || defined(__ARM_ARCH_7A__) ||  \
        defined(__ARM_ARCH_7R__)|| defined(__ARM_ARCH_7M__)
 #      define VM_ARM_V7
+#      ifdef __KERNEL__
+#         warning LDREX/STREX may not be safe in linux kernel, since it      \
+          does not issue CLREX on context switch (as of 2011-09-29).
+#      endif
 #   else
 #     error Only ARMv7 extends the synchronization primitives ldrex/strex.   \
             For the lower ARM version, please implement the atomic functions \
@@ -371,7 +382,7 @@ Atomic_ReadWrite(Atomic_uint32 *var, // IN
       "bne 1b"
       : [retVal] "=&r" (retVal), [res] "=&r" (res)
       : [var] "r" (&var->value), [val] "r" (val)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -439,14 +450,14 @@ Atomic_ReadIfEqualWrite(Atomic_uint32 *var, // IN
 
    __asm__ __volatile__(
    "1: ldrex %[retVal], [%[var]] \n\t"
-      "mov %[res], #1 \n\t"
+      "mov %[res], #0 \n\t"
       "teq %[retVal], %[oldVal] \n\t"
       "strexeq %[res], %[newVal], [%[var]] \n\t"
       "teq %[res], #0 \n\t"
       "bne 1b"
       : [retVal] "=&r" (retVal), [res] "=&r" (res)
       : [var] "r" (&var->value), [oldVal] "r" (oldVal), [newVal] "r" (newVal)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -491,7 +502,7 @@ Atomic_ReadIfEqualWrite(Atomic_uint32 *var, // IN
 #define Atomic_ReadIfEqualWrite32 Atomic_ReadIfEqualWrite
 
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(VM_ARM_V7)
 /*
  *-----------------------------------------------------------------------------
  *
@@ -514,6 +525,29 @@ Atomic_ReadIfEqualWrite64(Atomic_uint64 *var, // IN
                           uint64 newVal)      // IN
 {
 #if defined(__GNUC__)
+#ifdef VM_ARM_V7
+   register uint64 retVal;
+   register uint32 res;
+
+   dmb();
+
+   __asm__ __volatile__(
+   "1: ldrexd %[retVal], %H[retVal], [%[var]] \n\t"
+      "mov %[res], #0 \n\t"
+      "teq %[retVal], %[oldVal] \n\t"
+      "teqeq %H[retVal], %H[oldVal] \n\t"
+      "strexdeq %[res], %[newVal], %H[newVal], [%[var]] \n\t"
+      "teq %[res], #0 \n\t"
+      "bne 1b"
+      : [retVal] "=&r" (retVal), [res] "=&r" (res)
+      : [var] "r" (&var->value), [oldVal] "r" (oldVal), [newVal] "r" (newVal)
+      : "cc"
+   );
+
+   dmb();
+
+   return retVal;
+#else // VM_ARM_V7 (assume x86*)
    uint64 val;
 
    /* Checked against the AMD manual and GCC --hpreg */
@@ -527,6 +561,7 @@ Atomic_ReadIfEqualWrite64(Atomic_uint64 *var, // IN
    );
    AtomicEpilogue();
    return val;
+#endif //VM_ARM_V7
 #elif defined _MSC_VER
    return _InterlockedCompareExchange64((__int64 *)&var->value,
 					(__int64)newVal,
@@ -567,13 +602,13 @@ Atomic_And(Atomic_uint32 *var, // IN
 
    __asm__ __volatile__(
    "1: ldrex %[tmp], [%[var]] \n\t"
-      "and %[tmp], %[val] \n\t"
+      "and %[tmp], %[tmp], %[val] \n\t"
       "strex %[res], %[tmp], [%[var]] \n\t"
       "teq %[res], #0 \n\t"
       "bne 1b"
       : [res] "=&r" (res), [tmp] "=&r" (tmp)
       : [var] "r" (&var->value), [val] "r" (val)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -631,13 +666,13 @@ Atomic_Or(Atomic_uint32 *var, // IN
 
    __asm__ __volatile__(
    "1: ldrex %[tmp], [%[var]] \n\t"
-      "orr %[tmp], %[val] \n\t"
+      "orr %[tmp], %[tmp], %[val] \n\t"
       "strex %[res], %[tmp], [%[var]] \n\t"
       "teq %[res], #0 \n\t"
       "bne 1b"
       : [res] "=&r" (res), [tmp] "=&r" (tmp)
       : [var] "r" (&var->value), [val] "r" (val)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -695,13 +730,13 @@ Atomic_Xor(Atomic_uint32 *var, // IN
 
    __asm__ __volatile__(
    "1: ldrex %[tmp], [%[var]] \n\t"
-      "eor %[tmp], %[val] \n\t"
+      "eor %[tmp], %[tmp], %[val] \n\t"
       "strex %[res], %[tmp], [%[var]] \n\t"
       "teq %[res], #0 \n\t"
       "bne 1b"
       : [res] "=&r" (res), [tmp] "=&r" (tmp)
       : [var] "r" (&var->value), [val] "r" (val)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -798,13 +833,13 @@ Atomic_Add(Atomic_uint32 *var, // IN
 
    __asm__ __volatile__(
    "1: ldrex %[tmp], [%[var]] \n\t"
-      "add %[tmp], %[val] \n\t"
+      "add %[tmp], %[tmp], %[val] \n\t"
       "strex %[res], %[tmp], [%[var]] \n\t"
       "teq %[res], #0 \n\t"
       "bne 1b"
       : [res] "=&r" (res), [tmp] "=&r" (tmp)
       : [var] "r" (&var->value), [val] "r" (val)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -901,13 +936,13 @@ Atomic_Sub(Atomic_uint32 *var, // IN
 
    __asm__ __volatile__(
       "1: ldrex %[tmp], [%[var]] \n\t"
-      "sub %[tmp], %[val] \n\t"
+      "sub %[tmp], %[tmp], %[val] \n\t"
       "strex %[res], %[tmp], [%[var]] \n\t"
       "teq %[res], #0 \n\t"
       "bne 1b"
       : [res] "=&r" (res), [tmp] "=&r" (tmp)
       : [var] "r" (&var->value), [val] "r" (val)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -1232,13 +1267,13 @@ Atomic_FetchAndAddUnfenced(Atomic_uint32 *var, // IN
 
    __asm__ __volatile__(
       "1: ldrex %[retVal], [%[var]] \n\t"
-      "add %[val], %[retVal] \n\t"
+      "add %[val], %[val], %[retVal] \n\t"
       "strex %[res], %[val], [%[var]] \n\t"
       "teq %[res], #0 \n\t"
       "bne 1b"
       : [res] "=&r" (res), [retVal] "=&r" (retVal)
       : [var] "r" (&var->value), [val] "r" (val)
-      : "memory", "cc"
+      : "cc"
    );
 
    dmb();
@@ -1526,8 +1561,13 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
                  uint64 const *newVal) // IN
 {
 #ifdef __GNUC__
-   Bool equal;
 
+#if defined(VM_ARM_V7)
+   return (Atomic_ReadIfEqualWrite64(var, *oldVal, *newVal) == *oldVal);
+
+#else // VM_ARM_V7
+
+   Bool equal;
    /* Checked against the Intel manual and GCC --walken */
 #if defined(__x86_64__)
    uint64 dummy;
@@ -1541,7 +1581,7 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
         "2" (*oldVal)
       : "cc"
    );
-#elif !defined(VM_ARM_V7) /* 32-bit version for non-ARM */
+#else /* 32-bit version for non-ARM */
    int dummy1, dummy2;
 #   if defined __PIC__
    /*
@@ -1560,8 +1600,14 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
     *    %ebx. (This happens when compiling the Fusion UI with gcc 4.2.1, Apple
     *    build 5577.)
     *
+    * 3) Using register classes even for other values is problematic, as gcc
+    *    can decide e.g. %ecx == %edi == 0 (as compile-time constants) and
+    *    ends up using one register for two things. Which breaks xchg's ability
+    *    to temporarily put the PIC pointer somewhere else. PR772455
+    *
     * For that reason alone, the __asm__ statement should keep the regions
-    * where it temporarily modifies %ebx as small as possible.
+    * where it temporarily modifies %ebx as small as possible, and should
+    * prefer specific register assignments.
     */
 #      if __GNUC__ < 3 // Part of #188541 - for RHL 6.2 etc.
    __asm__ __volatile__(
@@ -1590,20 +1636,22 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
       "lock; cmpxchg8b (%3)" "\n\t"
       "xchgl %%ebx, %6"      "\n\t"
       "sete %0"
-      :	"=qm,qm" (equal),
-	"=a,a" (dummy1),
-	"=d,d" (dummy2)
+      :	"=qm" (equal),
+	"=a" (dummy1),
+	"=d" (dummy2)
       : /*
          * See the "Rules for __asm__ statements in __PIC__ code" above: %3
          * must use a register class which does not contain %ebx.
          * "a"/"c"/"d" are already used, so we are left with either "S" or "D".
+         *
+         * Note that this assembly uses ALL GP registers (with %esp reserved for
+         * stack, %ebp reserved for frame, %ebx reserved for PIC).
          */
-        "S,D" (var),
-        "1,1" (((S_uint64 const *)oldVal)->lowValue),
-        "2,2" (((S_uint64 const *)oldVal)->highValue),
-        // %6 cannot use "m": 'newVal' is read-only.
-        "r,r" (((S_uint64 const *)newVal)->lowValue),
-        "c,c" (((S_uint64 const *)newVal)->highValue)
+        "S" (var),
+        "1" (((S_uint64 const *)oldVal)->lowValue),
+        "2" (((S_uint64 const *)oldVal)->highValue),
+        "D" (((S_uint64 const *)newVal)->lowValue),
+        "c" (((S_uint64 const *)newVal)->highValue)
       : "cc", "memory"
    );
 #      endif
@@ -1622,30 +1670,10 @@ Atomic_CMPXCHG64(Atomic_uint64 *var,   // IN/OUT
       : "cc"
    );
 #   endif
-#elif defined(VM_ARM_V7)
-   volatile uint64 tmp;
-
-   dmb();
-
-   __asm__ __volatile__(
-      "ldrexd %[tmp], %H[tmp], [%[var]] \n\t"
-      "mov %[equal], #1 \n\t"
-      "teq %[tmp], %[oldVal] \n\t"
-      "teqeq %H[tmp], %H[oldVal] \n\t"
-      "strexdeq  %[equal], %[newVal], %H[newVal], [%[var]]"
-      : [equal] "=&r" (equal), [tmp] "=&r" (tmp)
-      : [var] "r" (&var->value), [oldVal] "r" (*oldVal), [newVal] "r" (*newVal)
-      : "memory", "cc"
-   );
-
-   dmb();
-
-   return !equal;
 #endif
-#ifndef VM_ARM_V7
    AtomicEpilogue();
    return equal;
-#endif // VM_ARM_V7
+#endif //VM_ARM_V7
 #elif defined _MSC_VER
 #if defined(__x86_64__)
    return (__int64)*oldVal == _InterlockedCompareExchange64((__int64 *)&var->value,
@@ -1697,26 +1725,10 @@ Atomic_CMPXCHG32(Atomic_uint32 *var,   // IN/OUT
                  uint32 newVal) // IN
 {
 #ifdef __GNUC__
-   Bool equal;
 #ifdef VM_ARM_V7
-   volatile uint64 tmp;
-
-   dmb();
-
-   __asm__ __volatile__(
-      "ldrex %[tmp], [%[var]] \n\t"
-      "mov %[equal], #1 \n\t"
-      "teq %[tmp], %[oldVal] \n\t"
-      "strexeq  %[equal], %[newVal], [%[var]]"
-      : [equal] "=&r" (equal), [tmp] "=&r" (tmp)
-      : [var] "r" (&var->value), [oldVal] "r" (oldVal), [newVal] "r" (newVal)
-      : "memory", "cc"
-   );
-
-   dmb();
-
-   return !equal;
+   return (Atomic_ReadIfEqualWrite(var, oldVal, newVal) == oldVal);
 #else // VM_ARM_V7
+   Bool equal;
    uint32 dummy;
 
    __asm__ __volatile__(

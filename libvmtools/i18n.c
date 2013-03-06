@@ -580,7 +580,7 @@ MsgLoadCatalog(const char *path)
           * If currently name is not NULL, then check if this is a continuation
           * line and, if it is, just append the contents to the current value.
           */
-         if (name != NULL && line[term - 1] == '"') {
+         if (term > 0 && name != NULL && line[term - 1] == '"') {
             for (i = 0; i < len; i++) {
                if (line[i] == '"') {
                   /* OK, looks like a continuation line. */
@@ -738,9 +738,8 @@ VMTools_BindTextDomain(const char *domain,
       dfltdir = Util_SafeStrdup(VMTOOLS_DATA_DIR);
 #else
       dfltdir = GuestApp_GetInstallPath();
-      ASSERT_MEM_ALLOC(dfltdir);
 #endif
-      catdir = dfltdir;
+      catdir = (dfltdir) ? dfltdir : ".";
    }
 
    file = g_strdup_printf("%s%smessages%s%s%s%s.vmsg",

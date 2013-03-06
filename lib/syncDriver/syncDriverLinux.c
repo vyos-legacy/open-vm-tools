@@ -155,29 +155,64 @@ LinuxDriver_Freeze(const char *paths,
     */
    while ((path = StrUtil_GetNextToken(&index, paths, ":")) != NULL) {
       fd = open(path, O_RDONLY);
-      free(path);
-
       if (fd == -1) {
-         err = SD_ERROR;
-         break;
+         switch (errno) {
+         case EACCES:
+            /*
+             * We sometimes get access errors to virtual filesystems mounted
+             * as users with permission 700, so just ignore these.
+             */
+            Debug(LGPFX "cannot access mounted directory '%s'.\n", path);
+            free(path);
+            continue;
+
+         case EIO:
+            /*
+             * A mounted HGFS filesystem with the backend disabled will give
+             * us these; probably could use a better way to detect HFGS, but
+             * this should be enough. Just skip.
+             */
+            Debug(LGPFX "I/O error reading directory '%s'.\n", path);
+            free(path);
+            continue;
+
+         default:
+            Debug(LGPFX "failed to open '%s': %d (%s)\n",
+                  path, errno, strerror(errno));
+            err = SD_ERROR;
+            free(path);
+            goto exit;
+         }
       }
 
       if (ioctl(fd, FIFREEZE) == -1) {
+         int ioctlerr = errno;
          /*
           * If the ioctl does not exist, Linux will return ENOTTY. If it's not
-          * supported on the device, we get EOPNOTSUPP. If filesystem is already
-	  * frozen, then return EBUSY. Ignore the latter two,
+          * supported on the device, we get EOPNOTSUPP. Ignore the latter,
           * since freezing does not make sense for all fs types, and some
           * Linux fs drivers may not have been hooked up in the running kernel.
+          *
+          * Also ignore EBUSY since we may try to freeze the same superblock
+          * more than once depending on the OS configuration (e.g., usage of
+          * bind mounts).
           */
          close(fd);
-         if (errno != EOPNOTSUPP && errno != EBUSY) {
-            Debug(LGPFX "ioctl failed: %d (%s)\n", errno, strerror(errno));
-            err = first ? SD_UNAVAILABLE : SD_ERROR;
+         if (ioctlerr != EBUSY && ioctlerr != EOPNOTSUPP) {
+            Debug(LGPFX "failed to freeze '%s': %d (%s)\n",
+                  path, ioctlerr, strerror(ioctlerr));
+            err = first && ioctlerr == ENOTTY ? SD_UNAVAILABLE : SD_ERROR;
+            free(path);
             break;
          }
       } else {
+         Debug(LGPFX "successfully froze '%s'.\n", path);
          if (!DynBuf_Append(&fds, &fd, sizeof fd)) {
+            if (ioctl(fd, FITHAW) == -1) {
+               Warning(LGPFX "failed to thaw '%s': %d (%s)\n",
+                       path, errno, strerror(errno));
+            }
+            free(path);
             close(fd);
             err = SD_ERROR;
             break;
@@ -185,17 +220,18 @@ LinuxDriver_Freeze(const char *paths,
          count++;
       }
 
+      free(path);
       first = FALSE;
    }
+
+exit:
+   sync->fds = DynBuf_Detach(&fds);
+   sync->fdCnt = count;
 
    if (err != SD_SUCCESS) {
       LinuxFiThaw(&sync->driver);
       LinuxFiClose(&sync->driver);
-      DynBuf_Destroy(&fds);
-      free(sync);
    } else {
-      sync->fds = DynBuf_Detach(&fds);
-      sync->fdCnt = count;
       *handle = &sync->driver;
    }
    return err;

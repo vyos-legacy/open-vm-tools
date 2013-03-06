@@ -45,15 +45,16 @@
 # include <sys/sysctl.h>
 #endif
 #if defined(__APPLE__)
-#include <assert.h>
-#include <CoreServices/CoreServices.h>
 #include <mach-o/dyld.h>
-#include <mach/host_info.h>
 #include <mach/mach_host.h>
 #include <mach/mach_init.h>
-#include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <mach/vm_map.h>
 #include <sys/mman.h>
+#include <AvailabilityMacros.h>
+#if MAC_OS_X_VERSION_MIN_REQUIRED < 1070 // Must run on Mac OS versions < 10.7
+#   include <dlfcn.h>
+#endif
 #elif defined(__FreeBSD__)
 #if !defined(RLIMIT_AS)
 #  if defined(RLIMIT_VMEM)
@@ -1417,7 +1418,7 @@ HostinfoGetLoadAverage(float *avg0,  // IN/OUT:
                        float *avg1,  // IN/OUT:
                        float *avg2)  // IN/OUT:
 {
-#if defined(__linux__) || defined(__APPLE__)
+#if (defined(__linux__) && !defined(__UCLIBC__)) || defined(__APPLE__)
    double avg[3];
    int res;
 
@@ -1603,8 +1604,15 @@ HostinfoSystemTimerMach(VmTimeType *result)  // OUT
 {
 #if __APPLE__
 #  define vmx86_apple 1
+
+   typedef struct {
+      mach_timebase_info_data_t timeBase;
+      double                    scalingFactor;
+      Bool                      unity;
+   } timerData;
+
    VmTimeType raw;
-   mach_timebase_info_data_t *ptr;
+   timerData *ptr;
    static Atomic_Ptr atomic; /* Implicitly initialized to NULL. --mbellon */
 
    /*
@@ -1613,31 +1621,33 @@ HostinfoSystemTimerMach(VmTimeType *result)  // OUT
     */
 
    /* Ensure that the time base values are correct. */
-   ptr = (mach_timebase_info_data_t *) Atomic_ReadPtr(&atomic);
+   ptr = Atomic_ReadPtr(&atomic);
 
    if (UNLIKELY(ptr == NULL)) {
-      char *p;
+      timerData *new = Util_SafeMalloc(sizeof *new);
 
-      p = Util_SafeMalloc(sizeof(mach_timebase_info_data_t));
+      mach_timebase_info(&new->timeBase);
 
-      mach_timebase_info((mach_timebase_info_data_t *) p);
+      new->scalingFactor = ((double) new->timeBase.numer) /
+                           ((double) new->timeBase.denom);
 
-      if (Atomic_ReadIfEqualWritePtr(&atomic, NULL, p)) {
-         free(p);
+      new->unity = ((new->timeBase.numer == 1) && (new->timeBase.denom == 1));
+
+      if (Atomic_ReadIfEqualWritePtr(&atomic, NULL, new)) {
+         free(new);
       }
 
-      ptr = (mach_timebase_info_data_t *) Atomic_ReadPtr(&atomic);
+      ptr = Atomic_ReadPtr(&atomic);
    }
 
    raw = mach_absolute_time();
 
-   if ((ptr->numer == 1) && (ptr->denom == 1)) {
-      /* The scaling values are unity, save some time/arithmetic */
+   if (LIKELY(ptr->unity)) {
       *result = raw;
    } else {
-      /* The scaling values are not unity. Prevent overflow when scaling */
-      *result = ((double) raw) * (((double) ptr->numer) / ((double) ptr->denom));
+      *result = ((double) raw) * ptr->scalingFactor;
    }
+
    return TRUE;
 #else
 #  define vmx86_apple 0
@@ -2405,7 +2415,7 @@ Hostinfo_GetRatedCpuMhz(int32 cpuNumber,  // IN:
    uint32 hz;
    size_t hzSize = sizeof hz;
 
-   /* 'cpuNumber' is ignored: Intel Macs are always perfectly symetric. */
+   /* 'cpuNumber' is ignored: Intel Macs are always perfectly symmetric. */
 
    if (sysctlbyname(CPUMHZ_SYSCTL_NAME, &hz, &hzSize, NULL, 0) == -1) {
       return FALSE;
@@ -2418,21 +2428,85 @@ Hostinfo_GetRatedCpuMhz(int32 cpuNumber,  // IN:
    return FALSE;
 #  endif
 #else
-   float fMhz = 0;
-   char *readVal = HostinfoGetCpuInfo(cpuNumber, "cpu MHz");
+#if defined(VMX86_SERVER)
+   if (HostType_OSIsVMK()) {
+      uint32 tscKhzEstimate;
+      VMK_ReturnStatus status = VMKernel_GetTSCkhzEstimate(&tscKhzEstimate);
 
-   if (readVal == NULL) {
-      return FALSE;
-   }
+      /*
+       * The TSC frequency matches the CPU frequency in all modern CPUs.
+       * Regardless, the TSC frequency is a much better estimate of
+       * reality than failing or returning zero.
+       */
 
-   if (sscanf(readVal, "%f", &fMhz) == 1) {
-      *mHz = (unsigned int)(fMhz + 0.5);
+      *mHz = tscKhzEstimate / 1000;
+
+      return (status == VMK_OK);
    }
-   free(readVal);
+#endif
+
+   {
+      float fMhz = 0;
+      char *readVal = HostinfoGetCpuInfo(cpuNumber, "cpu MHz");
+
+      if (readVal == NULL) {
+         return FALSE;
+      }
+
+      if (sscanf(readVal, "%f", &fMhz) == 1) {
+         *mHz = (unsigned int)(fMhz + 0.5);
+      }
+
+      free(readVal);
+   }
 
    return TRUE;
 #endif
 }
+
+
+#if defined(__APPLE__) || defined(__FreeBSD__)
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * HostinfoGetSysctlStringAlloc --
+ *
+ *      Obtains the value of a string-type host sysctl.
+ *
+ * Results:
+ *      On success: Allocated, NUL-terminated string.
+ *      On failure: NULL.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static char *
+HostinfoGetSysctlStringAlloc(char const *sysctlName) // IN
+{
+   char *desc;
+   size_t descSize;
+
+   if (sysctlbyname(sysctlName, NULL, &descSize, NULL, 0) == -1) {
+      return NULL;
+   }
+
+   desc = malloc(descSize);
+   if (!desc) {
+      return NULL;
+   }
+
+   if (sysctlbyname(sysctlName, desc, &descSize, NULL, 0) == -1) {
+      free(desc);
+
+      return NULL;
+   }
+
+   return desc;
+}
+#endif
 
 
 /*
@@ -2455,34 +2529,11 @@ Hostinfo_GetRatedCpuMhz(int32 cpuNumber,  // IN:
 char *
 Hostinfo_GetCpuDescription(uint32 cpuNumber)  // IN:
 {
-#if defined(__APPLE__) || defined(__FreeBSD__)
-#  if defined(__APPLE__)
-#     define CPUDESC_SYSCTL_NAME "machdep.cpu.brand_string"
-#  else
-#     define CPUDESC_SYSCTL_NAME "hw.model"
-#  endif
-
-   char *desc;
-   size_t descSize;
-
-   /* 'cpuNumber' is ignored: Intel Macs are always perfectly symetric. */
-
-   if (sysctlbyname(CPUDESC_SYSCTL_NAME, NULL, &descSize, NULL, 0) == -1) {
-      return NULL;
-   }
-
-   desc = malloc(descSize);
-   if (!desc) {
-      return NULL;
-   }
-
-   if (sysctlbyname(CPUDESC_SYSCTL_NAME, desc, &descSize, NULL, 0) == -1) {
-      free(desc);
-
-      return NULL;
-   }
-
-   return desc;
+#if defined(__APPLE__)
+   /* 'cpuNumber' is ignored: Intel Macs are always perfectly symmetric. */
+   return HostinfoGetSysctlStringAlloc("machdep.cpu.brand_string");
+#elif defined(__FreeBSD__)
+   return HostinfoGetSysctlStringAlloc("hw.model");
 #else
 #ifdef VMX86_SERVER
    if (HostType_OSIsVMK()) {
@@ -2492,7 +2543,7 @@ Hostinfo_GetCpuDescription(uint32 cpuNumber)  // IN:
       mName[0] = '\0';
       if (VMKernel_GetCPUModelName(cpuNumber, mName,
                                    sizeof(mName)) == VMK_OK) {
-	 mName[sizeof(mName) - 1] = '\0';
+         mName[sizeof(mName) - 1] = '\0';
 
          return strdup(mName);
       }
@@ -2570,41 +2621,61 @@ Hostinfo_Execute(const char *path,   // IN:
 
 #ifdef __APPLE__
 /*
+ * How to retrieve kernel zone information. A little bit of history
+ * ---
+ * 1) In Mac OS versions < 10.6, we could retrieve kernel zone information like
+ *    zprint did, i.e. by invoking the host_zone_info() Mach call.
+ *
+ *    osfmk/mach/mach_host.defs defines both arrays passed to host_zone_info()
+ *    as 'out' parameters, but the implementation of the function in
+ *    osfmk/kern/zalloc.c clearly treats them as 'inout' parameters. This issue
+ *    is confirmed in practice: the input values passed by the user process are
+ *    ignored. Now comes the scary part: is the input of the kernel function
+ *    deterministically invalid, or is it some non-deterministic garbage (in
+ *    which case the kernel could corrupt the user address space)? The answer
+ *    is in the Mach IPC code. A cursory kernel debugging session seems to
+ *    imply that the input pointer values are garbage, but the input size
+ *    values are always 0. So host_zone_info() seems safe to use in practice.
+ *
+ * 2) In Mac OS 10.6, Apple introduced the 64-bit kernel.
+ *
+ *    2.1) They modified host_zone_info() to always returns KERN_NOT_SUPPORTED
+ *         when the sizes (32-bit or 64-bit) of the user and kernel virtual
+ *         address spaces do not match. Was bug 377049.
+ *
+ *         zprint got away with it by re-executing itself to match the kernel.
+ *
+ *    2.2) They broke the ABI for 64-bit user processes: the
+ *         'zone_info.zi_*_size' fields are 32-bit in the Mac OS 10.5 SDK, and
+ *         64-bit in the Mac OS 10.6 SDK. So a 64-bit user process compiled
+ *         against the Mac OS 10.5 SDK works with the Mac OS 10.5 (32-bit)
+ *         kernel but fails with the Mac OS 10.6 64-bit kernel.
+ *
+ *         zprint in Mac OS 10.6 is compiled against the Mac OS 10.6 SDK, so it
+ *         got away with it.
+ *
+ *    The above two things made it very impractical for us to keep calling
+ *    host_zone_info(). Instead we invoked zprint and parsed its non-localized
+ *    output.
+ *
+ * 3) In Mac OS 10.7, Apple cleaned their mess and solved all the above
+ *    problems by introducing a new mach_zone_info() Mach call. So this is what
+ *    we use now, when available. Was bug 816610.
+ *
+ * 4) In Mac OS 10.8, Apple appears to have modified mach_zone_info() to always
+ *    return KERN_INVALID_HOST(!) when the calling process (not the calling
+ *    thread!) is not root.
+ */
+
+
+#if MAC_OS_X_VERSION_MIN_REQUIRED < 1070 // Must run on Mac OS versions < 10.7
+/*
  *-----------------------------------------------------------------------------
  *
- * Hostinfo_GetKernelZoneElemSize --
+ * HostinfoGetKernelZoneElemSizeZprint --
  *
- *      Retrieve the size of the elements in a named kernel zone.
- *
- *      We used to do it like zprint (see
- *      darwinsource-10.4.5/system_cmds-336.10/zprint.tproj/zprint.c::main()),
- *      i.e. by calling host_zone_info(), but there are 3 problems with that:
- *
- *      1) mach/mach_host.defs defines both arrays passed to host_zone_info()
- *         as 'out' parameters, but the implementation of the function in
- *         xnu-792.13.8/osfmk/kern/zalloc.c clearly expects them as 'inout'
- *         parameters. This issue is confirmed in practice: the input values
- *         passed by the user process are ignored. Now comes the scary part: is
- *         the input of the kernel function deterministically invalid, or is it
- *         some non-deterministic garbage (in which case the user process can
- *         corrupt its address space)? The answer is in the Mach IPC code. A
- *         cursory kernel debugging session seems to imply that the input
- *         pointer values are garbage, but the input size values are always 0.
- *         So the function seems safe to use in practice.
- *
- *      2) Starting with Mac OS 10.6, host_zone_info() always returns
- *         KERN_NOT_SUPPORTED when the sizes of the user and kernel virtual
- *         address spaces (32-bit or 64-bit) do not match. Was bug 377049.
- *
- *      3) Apple broke the ABI: For 64-bit code, the 'zone_info.zi_*_size'
- *         fields are 32-bit in the Mac OS 10.5 SDK, but 64-bit in the Mac OS
- *         10.6 SDK. So a 64-bit VMX compiled against the Mac OS 10.5 SDK works
- *         with the Mac OS 10.5 (32-bit) kernel but fails with the Mac OS 10.6
- *         64-bit kernel.
- *
- *      So now we just let Apple deal with their own mess: we invoke zprint,
- *      and we parse its non-localized output. Should Apple stop shipping
- *      zprint, we can always ship our own replacement for it.
+ *      Retrieve the size of the elements in a named kernel zone, by invoking
+ *      zprint.
  *
  * Results:
  *      On success: the size (in bytes) > 0.
@@ -2616,8 +2687,8 @@ Hostinfo_Execute(const char *path,   // IN:
  *-----------------------------------------------------------------------------
  */
 
-size_t
-Hostinfo_GetKernelZoneElemSize(char const *name) // IN: Kernel zone name
+static size_t
+HostinfoGetKernelZoneElemSizeZprint(char const *name) // IN: Kernel zone name
 {
    size_t retval = 0;
    struct {
@@ -2722,6 +2793,117 @@ Hostinfo_GetKernelZoneElemSize(char const *name) // IN: Kernel zone name
    munmap((void *)shared, sizeof *shared);
 
    return retval;
+}
+#endif
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Hostinfo_GetKernelZoneElemSize --
+ *
+ *      Retrieve the size of the elements in a named kernel zone.
+ *
+ * Results:
+ *      On success: the size (in bytes) > 0.
+ *      On failure: 0.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+size_t
+Hostinfo_GetKernelZoneElemSize(char const *name) // IN: Kernel zone name
+{
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 1070 // Compiles against SDK version < 10.7
+   typedef struct {
+      char mzn_name[80];
+   } mach_zone_name_t;
+   typedef struct {
+      uint64_t mzi_count;
+      uint64_t mzi_cur_size;
+      uint64_t mzi_max_size;
+      uint64_t mzi_elem_size;
+      uint64_t mzi_alloc_size;
+      uint64_t mzi_sum_size;
+      uint64_t mzi_exhaustible;
+      uint64_t mzi_collectable;
+   } mach_zone_info_t;
+#endif
+   size_t result = 0;
+   mach_zone_name_t *namesPtr;
+   mach_msg_type_number_t namesSize;
+   mach_zone_info_t *infosPtr;
+   mach_msg_type_number_t infosSize;
+   kern_return_t kr;
+   mach_msg_type_number_t i;
+
+#if MAC_OS_X_VERSION_MIN_REQUIRED < 1070 // Must run on Mac OS versions < 10.7
+   kern_return_t (*mach_zone_info)(host_t host,
+      mach_zone_name_t **names, mach_msg_type_number_t *namesCnt,
+      mach_zone_info_t **info, mach_msg_type_number_t *infoCnt) =
+         dlsym(RTLD_DEFAULT, "mach_zone_info");
+   if (!mach_zone_info) {
+      return HostinfoGetKernelZoneElemSizeZprint(name);
+   }
+#endif
+
+   ASSERT(name);
+
+   kr = mach_zone_info(mach_host_self(), &namesPtr, &namesSize, &infosPtr,
+                       &infosSize);
+   if (kr != KERN_SUCCESS) {
+      Warning("%s: mach_zone_info failed %u.\n", __FUNCTION__, kr);
+      return result;
+   }
+
+   ASSERT(namesSize == infosSize);
+   for (i = 0; i < namesSize; i++) {
+      if (!strcmp(namesPtr[i].mzn_name, name)) {
+         result = infosPtr[i].mzi_elem_size;
+         /* Check that nothing of value was lost during the cast. */
+         ASSERT(result == infosPtr[i].mzi_elem_size);
+         break;
+      }
+   }
+
+   ASSERT_ON_COMPILE(sizeof namesPtr <= sizeof (vm_address_t));
+   kr = vm_deallocate(mach_task_self(), (vm_address_t)namesPtr,
+                      namesSize * sizeof *namesPtr);
+   ASSERT(kr == KERN_SUCCESS);
+
+   ASSERT_ON_COMPILE(sizeof infosPtr <= sizeof (vm_address_t));
+   kr = vm_deallocate(mach_task_self(), (vm_address_t)infosPtr,
+                      infosSize * sizeof *infosPtr);
+   ASSERT(kr == KERN_SUCCESS);
+
+   return result;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * Hostinfo_GetHardwareModel --
+ *
+ *      Obtains the hardware model identifier (i.e. "MacPro5,1") from the host.
+ *
+ * Results:
+ *      On success: Allocated, NUL-terminated string.
+ *      On failure: NULL.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+char *
+Hostinfo_GetHardwareModel(void)
+{
+   return HostinfoGetSysctlStringAlloc("hw.model");
 }
 #endif /* __APPLE__ */
 

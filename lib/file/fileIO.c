@@ -37,6 +37,19 @@
 #include "fileInt.h"
 #include "msg.h"
 #include "unicodeOperations.h"
+#include "hostType.h"
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+#if defined(VMX86_SERVER)
+#include "fs_public.h"
+#endif
 
 
 /*
@@ -227,14 +240,68 @@ FileIO_Cleanup(FileIODescriptor *fd)  // IN/OUT:
 /*
  *----------------------------------------------------------------------
  *
+ * FileIOResolveLockBits --
+ *
+ *      Resolve the multitude of lock bits from historical public names
+ *      to newer internal names.
+ *
+ *      Input flags: FILEIO_OPEN_LOCKED a.k.a. FILEIO_OPEN_LOCK_BEST,
+ *                   FILEIO_OPEN_EXCLUSIVE_LOCK
+ *      Output flags: FILEIO_OPEN_LOCK_MANDATORY, FILEIO_OPEN_LOCK_ADVISORY
+ *
+ * Results:
+ *      None
+ *
+ * Side effects:
+ *      Only output flags are set in *access.
+ *
+ *----------------------------------------------------------------------
+ */
+
+void
+FileIOResolveLockBits(int *access)  // IN/OUT: FILEIO_OPEN_* bits
+{
+   /*
+    * Lock types:
+    *    none: no locking at all
+    *    advisory: open() ignores lock, FileIO_ respects lock.
+    *    mandatory: open() and FileIO_ respect lock.
+    *    "best": downgrades to advisory or mandatory based on OS support
+    */
+   if ((*access & FILEIO_OPEN_EXCLUSIVE_LOCK) != 0) {
+      *access &= ~FILEIO_OPEN_EXCLUSIVE_LOCK;
+      *access |= FILEIO_OPEN_LOCK_MANDATORY;
+   }
+   if ((*access & FILEIO_OPEN_LOCK_BEST) != 0) {
+      /* "Best effort" bit: mandatory if OS supports, advisory otherwise */
+      *access &= ~FILEIO_OPEN_LOCK_BEST;
+      if (HostType_OSIsVMK()) {
+         *access |= FILEIO_OPEN_LOCK_MANDATORY;
+      } else {
+         *access |= FILEIO_OPEN_LOCK_ADVISORY;
+      }
+   }
+
+   /* Only one lock type (or none at all) allowed */
+   ASSERT(((*access & FILEIO_OPEN_LOCK_ADVISORY) == 0) ||
+          ((*access & FILEIO_OPEN_LOCK_MANDATORY) == 0));
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
  * FileIO_Lock --
  *
  *      Call the FileLock module to lock the given file.
  *
  * Results:
- *      FILEIO_SUCCESS      All is well
- *      FILEIO_LOCK_FAILED  Requested lock on file was not acquired
- *      FILEIO_ERROR        A serious error occured.
+ *      FILEIO_ERROR               A serious error occured.
+ *      FILEIO_SUCCESS             All is well
+ *      FILEIO_LOCK_FAILED         Requested lock on file was not acquired
+ *      FILEIO_FILE_NOT_FOUND      Unable to find the specified file
+ *      FILEIO_NO_PERMISSION       Permissions issues
+ *      FILEIO_FILE_NAME_TOO_LONG  The path name is too long
  *
  * Side effects:
  *      None
@@ -253,17 +320,23 @@ FileIO_Lock(FileIODescriptor *file,  // IN/OUT:
     */
 
    ASSERT(file);
+   ASSERT(file->lockToken == NULL);
+
+   FileIOResolveLockBits(&access);
+   ASSERT((access & FILEIO_OPEN_LOCKED) == 0);
 
 #if !defined(__FreeBSD__) && !defined(sun)
-   if (access & FILEIO_OPEN_LOCKED) {
-      int err;
-
-      ASSERT(file->lockToken == NULL);
+   if ((access & FILEIO_OPEN_LOCK_MANDATORY) != 0) {
+      /* Mandatory file locks are available only when opening a file */
+      ret = FILEIO_LOCK_FAILED;
+   } else if ((access & FILEIO_OPEN_LOCK_ADVISORY) != 0) {
+      int err = 0;
 
       file->lockToken = FileLock_Lock(file->fileName,
                                       (access & FILEIO_OPEN_ACCESS_WRITE) == 0,
                                       FILELOCK_DEFAULT_WAIT,
-                                      &err);
+                                      &err,
+                                      NULL);
 
       if (file->lockToken == NULL) {
          /* Describe the lock not acquired situation in detail */
@@ -291,8 +364,6 @@ FileIO_Lock(FileIODescriptor *file,  // IN/OUT:
          }
       }
    }
-#else
-   ASSERT(file->lockToken == NULL);
 #endif // !__FreeBSD__ && !sun
 
    return ret;
@@ -325,11 +396,9 @@ FileIO_Unlock(FileIODescriptor *file)  // IN/OUT:
 
 #if !defined(__FreeBSD__) && !defined(sun)
    if (file->lockToken != NULL) {
-      int err;
+      int err = 0;
 
-      err = FileLock_Unlock(file->lockToken);
-
-      if (err != 0) {
+      if (!FileLock_Unlock(file->lockToken, &err, NULL)) {
          Warning(LGPFX" %s on '%s' failed: %s\n",
                  __FUNCTION__, UTF8(file->fileName), strerror(err));
 
@@ -422,6 +491,40 @@ FileIO_Filename(FileIODescriptor *fd)  // IN:
    ASSERT(fd);
 
    return fd->fileName;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * FileIO_CloseAndUnlink
+ *
+ *      Closes and unlinks the file associated with a FileIODescriptor.
+ *
+ * Results:
+ *      TRUE: An error occurred.
+ *      FALSE: The file was closed and unlinked.
+ *
+ * Side effects:
+ *      File is probably closed and unlinked.
+ *
+ *----------------------------------------------------------------------
+ */
+
+Bool
+FileIO_CloseAndUnlink(FileIODescriptor *fd)  // IN:
+{
+   Unicode path;
+   Bool ret;
+
+   ASSERT(fd);
+   ASSERT(FileIO_IsValid(fd));
+
+   path = Unicode_Duplicate(fd->fileName);
+   ret = FileIO_Close(fd) || File_Unlink(path);
+   Unicode_Free(path);
+
+   return ret;
 }
 
 
@@ -526,3 +629,383 @@ FileIO_IsSuccess(FileIOResult res)  // IN:
    return res == FILEIO_SUCCESS;
 }
 #endif
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * FileIO_AtomicTempPath
+ *
+ *      Return a temp path name in the same directory as the argument path.
+ *      The path is the full path of the source file with a '~' appended.
+ *      The caller must free the path when done.
+ *
+ * Results:
+ *      Unicode path if successful, NULL on failure.
+ *
+ * Side effects:
+ *      None.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+Unicode
+FileIO_AtomicTempPath(ConstUnicode path)  // IN:
+{
+   Unicode srcPath;
+   Unicode retPath;
+
+   srcPath = File_FullPath(path);
+   if (!srcPath) {
+      Log("%s: File_FullPath of '%s' failed.\n", __FUNCTION__, path);
+      return NULL;
+   }
+   retPath = Unicode_Join(srcPath, "~", NULL);
+   Unicode_Free(srcPath);
+
+   return retPath;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * FileIO_AtomicTempFile
+ *
+ *      Create a temp file in the same directory as the argument file. 
+ *      On non-Windows attempts to create the temp file with the same
+ *      permissions and owner/group as the argument file.
+ *
+ * Results:
+ *      FileIOResult of call that failed or FILEIO_SUCCESS
+ *
+ * Side effects:
+ *      Creates a new file.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+FileIOResult
+FileIO_AtomicTempFile(FileIODescriptor *fileFD,  // IN:
+                      FileIODescriptor *tempFD)  // OUT:
+{
+   Unicode tempPath = NULL;
+   int permissions;
+   FileIOResult status;
+#if !defined(_WIN32)
+   int ret;
+   struct stat stbuf;
+#endif
+
+   ASSERT(FileIO_IsValid(fileFD));
+   ASSERT(tempFD && !FileIO_IsValid(tempFD));
+
+   tempPath = FileIO_AtomicTempPath(FileIO_Filename(fileFD));
+   if (!tempPath) {
+      status = FILEIO_ERROR;
+      goto bail;
+   }
+
+#if defined(_WIN32)
+   permissions = 0;
+   File_UnlinkIfExists(tempPath);
+#else
+   if (fstat(fileFD->posix, &stbuf)) {
+      Log("%s: Failed to fstat '%s', errno: %d.\n", __FUNCTION__,
+          FileIO_Filename(fileFD), errno);
+      status = FILEIO_ERROR;
+      goto bail;
+   }
+   permissions = stbuf.st_mode;
+
+   /* Clean up a previously created temp file; if one exists. */
+   ret = Posix_Unlink(tempPath);
+   if (ret != 0 && errno != ENOENT) {
+      Log("%s: Failed to unlink temporary file, errno: %d\n",
+          __FUNCTION__, errno);
+      /* Fall through; FileIO_Create will report the actual error. */
+   }
+#endif
+
+   status = FileIO_Create(tempFD, tempPath,
+                          FILEIO_ACCESS_READ | FILEIO_ACCESS_WRITE,
+                          FILEIO_OPEN_CREATE_SAFE, permissions);
+   if (!FileIO_IsSuccess(status)) {
+      Log("%s: Failed to create temporary file, %s (%d). errno: %d\n",
+          __FUNCTION__, FileIO_ErrorEnglish(status), status, Err_Errno());
+      goto bail;
+   }
+
+#if !defined(_WIN32)
+   /*
+    * On ESX we always use the vmkernel atomic file swap primitive, so
+    * there's no need to set the permissions and owner of the temp file.
+    *
+    * XXX this comment is not true for NFS on ESX -- we use rename rather
+    * than "vmkernel atomic file swap primitive" -- but we do not care
+    * because files are always owned by root.  Sigh.  Bug 839283.
+    */
+
+   if (!HostType_OSIsVMK()) {
+      if (fchmod(tempFD->posix, stbuf.st_mode)) {
+         Log("%s: Failed to chmod temporary file, errno: %d\n",
+             __FUNCTION__, errno);
+         status = FILEIO_ERROR;
+         goto bail;
+      }
+      if (fchown(tempFD->posix, stbuf.st_uid, stbuf.st_gid)) {
+         Log("%s: Failed to chown temporary file, errno: %d\n",
+             __FUNCTION__, errno);
+         status = FILEIO_ERROR;
+         goto bail;
+      }
+   }
+#endif
+
+   Unicode_Free(tempPath);
+   return FILEIO_SUCCESS;
+
+bail:
+   ASSERT(!FileIO_IsSuccess(status));
+   if (FileIO_IsValid(tempFD)) {
+      FileIO_Close(tempFD);
+#if defined(_WIN32)
+      File_UnlinkIfExists(tempPath);
+#else
+      ret = Posix_Unlink(tempPath);
+      if (ret != 0) {
+         Log("%s: Failed to clean up temporary file, errno: %d\n",
+             __FUNCTION__, errno);
+      }
+      ASSERT(ret == 0);
+#endif
+   }
+   Unicode_Free(tempPath);
+   return status;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * FileIO_AtomicUpdate --
+ *
+ *      On ESX when the target files reside on vmfs, exchanges the contents
+ *      of two files using code modeled from VmkfsLib_SwapFiles.  Both "curr"
+ *      and "new" are left open.
+ *
+ *      On hosted products, uses rename to swap files, so "new" becomes "curr",
+ *      and path to "new" no longer exists on success.
+ *
+ *      On ESX on NFS:
+ *
+ *      If renameOnNFS is TRUE, use rename, like on hosted.
+ *
+ *      If renameOnNFS is FALSE, returns -1 rather than trying to use rename,
+ *      to avoid various bugs in the vmkernel NFSv3 client.  Bug 839283,
+ *      bug 862647, bug 841185, bug 856752.
+ *
+ *      On success the caller must call FileIO_IsValid on newFD to verify it
+ *      is still open before using it again.
+ *
+ * Results:
+ *      1 if successful, 0 on failure, -1 if not supported on this filesystem.
+ *      errno is preserved.
+ *
+ * Side effects:
+ *      Disk I/O.
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+int
+FileIO_AtomicUpdate(FileIODescriptor *newFD,   // IN/OUT: file IO descriptor
+                    FileIODescriptor *currFD,  // IN/OUT: file IO descriptor
+                    Bool renameOnNFS)          // IN: fall back to rename on NFS
+{
+   char *currPath;
+   char *newPath;
+   uint32 currAccess;
+   uint32 newAccess;
+   int ret = 0;
+   FileIOResult status;
+   FileIODescriptor tmpFD;
+   int savedErrno = 0;
+
+   ASSERT(FileIO_IsValid(newFD));
+   ASSERT(FileIO_IsValid(currFD));
+
+   if (HostType_OSIsVMK()) {
+#if defined(VMX86_SERVER)
+      FS_SwapFilesArgs *args = NULL;
+      char *dirName = NULL;
+      char *fileName = NULL;
+      char *dstDirName = NULL;
+      char *dstFileName = NULL;
+      int fd;
+
+      currPath = File_FullPath(FileIO_Filename(currFD));
+      newPath = File_FullPath(FileIO_Filename(newFD));
+
+      ASSERT(currPath);
+      ASSERT(newPath);
+
+      File_GetPathName(newPath, &dirName, &fileName);
+      File_GetPathName(currPath, &dstDirName, &dstFileName);
+
+      ASSERT(dirName && *dirName);
+      ASSERT(fileName && *fileName);
+      ASSERT(dstDirName && *dstDirName);
+      ASSERT(dstFileName && *dstFileName);
+      ASSERT(!strcmp(dirName, dstDirName));
+
+      args = (FS_SwapFilesArgs *) Util_SafeCalloc(1, sizeof(*args));
+      if (Str_Snprintf(args->srcFile, sizeof(args->srcFile), "%s",
+                       fileName) < 0) {
+         Log("%s: Path too long \"%s\".\n", __FUNCTION__, fileName);
+         savedErrno = ENAMETOOLONG;
+         goto swapdone;
+      }
+      if (Str_Snprintf(args->dstFilePath, sizeof(args->dstFilePath), "%s/%s",
+                       dstDirName, dstFileName) < 0) {
+         Log("%s: Path too long \"%s\".\n", __FUNCTION__, dstFileName);
+         savedErrno = ENAMETOOLONG;
+         goto swapdone;
+      }
+
+      /*
+       * Issue the ioctl on the directory rather than on the file,
+       * because the file could be open.
+       */
+
+      fd = Posix_Open(dirName, O_RDONLY);
+      if (fd < 0) {
+         Log("%s: Open failed \"%s\" %d.\n", __FUNCTION__, dirName,
+             errno);
+         ASSERT_BUG_DEBUGONLY(615124, errno != EBUSY);
+         savedErrno = errno;
+         goto swapdone;
+      }
+
+      if (ioctl(fd, IOCTLCMD_VMFS_SWAP_FILES, args) != 0) {
+         savedErrno = errno;
+         if (errno != ENOSYS) {
+            Log("%s: ioctl failed %d.\n", __FUNCTION__, errno);
+            ASSERT_BUG_DEBUGONLY(615124, errno != EBUSY);
+         }
+      } else {
+         ret = 1;
+      }
+
+      close(fd);
+
+      /*
+       * Did we fail because we are on NFS?
+       */
+      if (savedErrno == ENOSYS) {
+         if (renameOnNFS) {
+            /*
+             * NFS allows renames of locked files, even if both files
+             * are locked.  The file lock follows the file handle, not
+             * the name, so after the rename we can swap the underlying
+             * file descriptors instead of closing and reopening the
+             * target file.
+             *
+             * This is different than the hosted path below because
+             * ESX uses native file locks and hosted does not.
+             */
+
+            if (File_Rename(newPath, currPath)) {
+               Log("%s: rename of '%s' to '%s' failed %d.\n",
+                   __FUNCTION__, newPath, currPath, errno);
+               savedErrno = errno;
+               goto swapdone;
+            }
+            ret = 1;
+            fd = newFD->posix;
+            newFD->posix = currFD->posix;
+            currFD->posix = fd;
+            FileIO_Close(newFD);
+         } else {
+            ret = -1;
+         }
+      }
+
+swapdone:
+      free(args);
+      free(dirName);
+      free(fileName);
+      free(dstDirName);
+      free(dstFileName);
+      free(currPath);
+      free(newPath);
+
+      errno = savedErrno;
+      return ret;
+#else
+      NOT_REACHED();
+#endif
+   }
+
+   currPath = Unicode_Duplicate(FileIO_Filename(currFD));
+   newPath = Unicode_Duplicate(FileIO_Filename(newFD));
+
+   newAccess = newFD->flags;
+   currAccess = currFD->flags;
+
+   FileIO_Close(newFD);
+
+   /*
+    * The current file needs to be closed and reopened,
+    * but we don't want to drop the file lock by calling
+    * FileIO_Close() on it.  Instead, use native close primitives.
+    * We'll reopen it later with FileIO_Open.  Set the
+    * descriptor/handle to an invalid value while we're in the
+    * middle of transferring ownership.
+    */
+
+#if defined(_WIN32)
+   CloseHandle(currFD->win32);
+   currFD->win32 = INVALID_HANDLE_VALUE;
+#else
+   close(currFD->posix);
+   currFD->posix = -1;
+#endif
+   if (File_RenameRetry(newPath, currPath, 10) == 0) {
+      ret = TRUE;
+   } else {
+      savedErrno = errno;
+      ASSERT(!ret);
+   }
+
+   FileIO_Invalidate(&tmpFD);
+
+   /*
+    * Clear the locking bits from the requested access so that reopening
+    * the file ignores the advisory lock.
+    */
+
+   ASSERT((currAccess & FILEIO_OPEN_LOCK_MANDATORY) == 0);
+   currAccess &= ~(FILEIO_OPEN_LOCK_MANDATORY | FILEIO_OPEN_LOCK_ADVISORY |
+                   FILEIO_OPEN_LOCK_BEST | FILEIO_OPEN_LOCKED);
+   status = FileIO_Open(&tmpFD, currPath, currAccess, FILEIO_OPEN);
+   if (!FileIO_IsSuccess(status)) {
+      Panic("Failed to reopen dictionary after renaming "
+            "\"%s\" to \"%s\": %s (%d)\n", newPath, currPath,
+            FileIO_ErrorEnglish(status), status);
+   }
+   ASSERT(tmpFD.lockToken == NULL);
+
+#if defined(_WIN32)
+   currFD->win32 = tmpFD.win32;
+#else
+   currFD->posix = tmpFD.posix;
+#endif
+
+   FileIO_Cleanup(&tmpFD);
+   Unicode_Free(currPath);
+   Unicode_Free(newPath);
+   errno = savedErrno;
+
+   return ret;
+}

@@ -119,6 +119,10 @@ CPUIDQuery;
    CPUIDLEVEL(FALSE, A,  0xA)                   \
    CPUIDLEVEL(TRUE,  D,  0xD)                   \
    CPUIDLEVEL(FALSE,400, 0x40000000)            \
+   CPUIDLEVEL(FALSE,401, 0x40000001)            \
+   CPUIDLEVEL(FALSE,402, 0x40000002)            \
+   CPUIDLEVEL(FALSE,403, 0x40000003)            \
+   CPUIDLEVEL(FALSE,404, 0x40000004)            \
    CPUIDLEVEL(FALSE,410, 0x40000010)            \
    CPUIDLEVEL(FALSE, 80, 0x80000000)            \
    CPUIDLEVEL(TRUE,  81, 0x80000001)            \
@@ -270,10 +274,6 @@ typedef enum {
    CPUID_NUM_FIELD_SUPPORTEDS
 } CpuidFieldSupported;
 
-
-#define CPUID_1_ECX_29
-
-
 /*    LEVEL, SUB-LEVEL, REG, VENDOR, POS, SIZE, NAME,        MON SUPP, CPL3 */
 #define CPUID_FIELD_DATA_LEVEL_0                                               \
 FIELD(  0,  0, EAX, COMMON,  0, 32, NUMLEVELS,                     ANY, FALSE) \
@@ -313,7 +313,7 @@ FLAG(   1,  0, ECX, INTEL,  17,  1, PCID,                          YES, FALSE) \
 FLAG(   1,  0, ECX, INTEL,  18,  1, DCA,                           NO,  FALSE) \
 FLAG(   1,  0, ECX, COMMON, 19,  1, SSE41,                         YES, TRUE)  \
 FLAG(   1,  0, ECX, COMMON, 20,  1, SSE42,                         YES, TRUE)  \
-FLAG(   1,  0, ECX, INTEL,  21,  1, x2APIC,                        ANY, FALSE) \
+FLAG(   1,  0, ECX, COMMON, 21,  1, x2APIC,                        ANY, FALSE) \
 FLAG(   1,  0, ECX, INTEL,  22,  1, MOVBE,                         YES, TRUE)  \
 FLAG(   1,  0, ECX, COMMON, 23,  1, POPCNT,                        YES, TRUE)  \
 FLAG(   1,  0, ECX, COMMON, 24,  1, TSC_DEADLINE,                  NO,  FALSE) \
@@ -321,9 +321,9 @@ FLAG(   1,  0, ECX, COMMON, 25,  1, AES,                           YES, TRUE)  \
 FLAG(   1,  0, ECX, COMMON, 26,  1, XSAVE,                         YES, FALSE) \
 FLAG(   1,  0, ECX, COMMON, 27,  1, OSXSAVE,                       ANY, FALSE) \
 FLAG(   1,  0, ECX, COMMON, 28,  1, AVX,                           YES, FALSE) \
-CPUID_1_ECX_29                                                                 \
+FLAG(   1,  0, ECX, COMMON, 29,  1, F16C,                          YES, TRUE)  \
 FLAG(   1,  0, ECX, COMMON, 30,  1, RDRAND,                        YES, TRUE)  \
-FLAG(   1,  0, ECX, COMMON, 31,  1, HYPERVISOR,                    ANY, FALSE) \
+FLAG(   1,  0, ECX, COMMON, 31,  1, HYPERVISOR,                    ANY, TRUE)  \
 FLAG(   1,  0, EDX, COMMON, 0,   1, FPU,                           YES, TRUE)  \
 FLAG(   1,  0, EDX, COMMON, 1,   1, VME,                           YES, FALSE) \
 FLAG(   1,  0, EDX, COMMON, 2,   1, DE,                            YES, FALSE) \
@@ -344,7 +344,7 @@ FLAG(   1,  0, EDX, COMMON, 17,  1, PSE36,                         YES, FALSE) \
 FLAG(   1,  0, EDX, INTEL,  18,  1, PSN,                           YES, FALSE) \
 FLAG(   1,  0, EDX, COMMON, 19,  1, CLFSH,                         YES, TRUE)  \
 FLAG(   1,  0, EDX, INTEL,  21,  1, DS,                            YES, FALSE) \
-FLAG(   1,  0, EDX, INTEL,  22,  1, ACPI,                          YES, FALSE) \
+FLAG(   1,  0, EDX, INTEL,  22,  1, ACPI,                          ANY, FALSE) \
 FLAG(   1,  0, EDX, COMMON, 23,  1, MMX,                           YES, TRUE)  \
 FLAG(   1,  0, EDX, COMMON, 24,  1, FXSR,                          YES, TRUE)  \
 FLAG(   1,  0, EDX, COMMON, 25,  1, SSE,                           YES, TRUE)  \
@@ -391,15 +391,13 @@ FIELD(  6,  0, EBX, INTEL,   0,  4, NUM_INTR_THRESHOLDS,           NA,  FALSE) \
 FLAG(   6,  0, ECX, INTEL,   0,  1, HW_COORD_FEEDBACK,             NA,  FALSE) \
 FLAG(   6,  0, ECX, INTEL,   3,  1, ENERGY_PERF_BIAS,              NA,  FALSE)
 
-
-#define CPUID_7_EBX_3
-
 /*    LEVEL, SUB-LEVEL, REG, VENDOR, POS, SIZE, NAME,        MON SUPP, CPL3 */
 #define CPUID_FIELD_DATA_LEVEL_7                                               \
 FLAG(   7,  0, EBX, INTEL,   0,  1, FSGSBASE,                      YES, FALSE) \
-CPUID_7_EBX_3 \
+FLAG(   7,  0, EBX, AMD,     3,  1, BMI1,                          YES, TRUE ) \
 FLAG(   7,  0, EBX, INTEL,   7,  1, SMEP,                          YES, FALSE) \
-FLAG(   7,  0, EBX, INTEL,   9,  1, ENFSTRG,                       YES, FALSE)
+FLAG(   7,  0, EBX, INTEL,   9,  1, ENFSTRG,                       YES, FALSE) \
+FLAG(   7,  0, EBX, INTEL,  10,  1, INVPCID,                       NO,  FALSE)
 
 /*    LEVEL, SUB-LEVEL, REG, VENDOR, POS, SIZE, NAME,        MON SUPP, CPL3 */
 #define CPUID_FIELD_DATA_LEVEL_A                                               \
@@ -433,8 +431,19 @@ FLAG(   D,  0, EAX, COMMON,  2,  1, XCR0_MASTER_YMM_H,             YES, FALSE) \
 FIELD(  D,  0, EAX, COMMON,  3, 29, XCR0_MASTER_LOWER,             NO,  FALSE) \
 FIELD(  D,  0, EBX, COMMON,  0, 32, XSAVE_ENABLED_SIZE,            ANY, FALSE) \
 FIELD(  D,  0, ECX, COMMON,  0, 32, XSAVE_MAX_SIZE,                YES, FALSE) \
-FIELD(  D,  0, EDX, COMMON,  0, 32, XCR0_MASTER_UPPER,             NO,  FALSE) \
-FLAG(   D,  1, EAX, COMMON,  0,  1, XSAVEOPT,                      NO,  FALSE)
+FIELD(  D,  0, EDX, COMMON,  0, 29, XCR0_MASTER_UPPER,             NO,  FALSE) \
+FLAG(   D,  0, EDX, AMD,     30, 1, XCR0_MASTER_LWP,               NO,  FALSE) \
+FLAG(   D,  0, EDX, COMMON,  31, 1, XCR0_MASTER_EXTENDED_XSAVE,    NO,  FALSE) \
+FLAG(   D,  1, EAX, COMMON,  0,  1, XSAVEOPT,                      NO,  FALSE) \
+FIELD(  D,  2, EAX, COMMON,  0, 32, XSAVE_YMM_SIZE,                YES, FALSE) \
+FIELD(  D,  2, EBX, COMMON,  0, 32, XSAVE_YMM_OFFSET,              YES, FALSE) \
+FIELD(  D,  2, ECX, COMMON,  0, 32, XSAVE_YMM_RSVD1,               YES, FALSE) \
+FIELD(  D,  2, EDX, COMMON,  0, 32, XSAVE_YMM_RSVD2,               YES, FALSE) \
+FIELD(  D, 62, EAX, AMD,     0, 32, XSAVE_LWP_SIZE,                NO,  FALSE) \
+FIELD(  D, 62, EBX, AMD,     0, 32, XSAVE_LWP_OFFSET,              NO,  FALSE) \
+FIELD(  D, 62, ECX, AMD,     0, 32, XSAVE_LWP_RSVD1,               NO,  FALSE) \
+FIELD(  D, 62, EDX, AMD,     0, 32, XSAVE_LWP_RSVD2,               NO,  FALSE)
+
 
 /*    LEVEL, SUB-LEVEL, REG, VENDOR, POS, SIZE, NAME,        MON SUPP, CPL3 */
 #define CPUID_FIELD_DATA_LEVEL_400                                             \
@@ -454,6 +463,9 @@ FIELD( 80,  0, EAX, COMMON,  0, 32, NUM_EXT_LEVELS,                NA,  FALSE) \
 FIELD( 80,  0, EBX, AMD,     0, 32, LEAF80_VENDOR1,                NA,  FALSE) \
 FIELD( 80,  0, ECX, AMD,     0, 32, LEAF80_VENDOR3,                NA,  FALSE) \
 FIELD( 80,  0, EDX, AMD,     0, 32, LEAF80_VENDOR2,                NA,  FALSE)
+
+#define CPUID_81_ECX_17
+
                                                         
 /*    LEVEL, SUB-LEVEL, REG, VENDOR, POS, SIZE, NAME,        MON SUPP, CPL3 */
 #define CPUID_FIELD_DATA_LEVEL_81                                              \
@@ -483,7 +495,9 @@ FLAG(  81,  0, ECX, AMD,    12,  1, SKINIT,                        NO,  FALSE) \
 FLAG(  81,  0, ECX, AMD,    13,  1, WATCHDOG,                      NO,  FALSE) \
 FLAG(  81,  0, ECX, AMD,    15,  1, LWP,                           NO,  FALSE) \
 FLAG(  81,  0, ECX, AMD,    16,  1, FMA4,                          YES, TRUE)  \
+CPUID_81_ECX_17 \
 FLAG(  81,  0, ECX, AMD,    19,  1, NODEID_MSR,                    NO,  FALSE) \
+FLAG(  81,  0, ECX, AMD,    21,  1, TBM,                           YES, TRUE)  \
 FLAG(  81,  0, ECX, AMD,    22,  1, TOPOLOGY,                      NO,  FALSE) \
 FLAG(  81,  0, EDX, AMD,     0,  1, LEAF81_FPU,                    YES, TRUE)  \
 FLAG(  81,  0, EDX, AMD,     1,  1, LEAF81_VME,                    YES, FALSE) \
@@ -779,7 +793,7 @@ enum {
  * other compilers.
  */
 
-#ifdef __GNUC__
+#if defined(__GNUC__) && !defined(__clang__)
 
 #define CPUID_MASK(eaxIn, reg, flag)                                    \
    ({                                                                   \
@@ -932,7 +946,13 @@ CPUIDCheck(uint32 eaxIn, uint32 eaxInCheck,
 #define CPUID_MODEL_PIII_0A    10
 
 /* AMD model information */
-#define CPUID_MODEL_BARCELONA_02 0x02 // Barcelona (both Opteron & Phenom kind)
+#define CPUID_MODEL_BARCELONA_02      0x02 // Barcelona (Opteron & Phenom)
+#define CPUID_MODEL_SHANGHAI_04       0x04 // Shanghai RB
+#define CPUID_MODEL_SHANGHAI_05       0x05 // Shanghai BL
+#define CPUID_MODEL_SHANGHAI_06       0x06 // Shanghai DA
+#define CPUID_MODEL_ISTANBUL_MAGNY_08 0x08 // Istanbul (6 core) & Magny-cours (12) HY
+#define CPUID_MODEL_ISTANBUL_MAGNY_09 0x09 // HY - G34 package
+#define CPUID_MODEL_PHAROAH_HOUND_0A  0x0A // Pharoah Hound
 
 /* VIA model information */
 #define CPUID_MODEL_NANO       15     // Isaiah
@@ -1089,6 +1109,44 @@ CPUID_UARCH_IS_SANDYBRIDGE(uint32 v) // IN: %eax from CPUID with %eax=1.
 
 
 static INLINE Bool
+CPUID_UARCH_IS_ATOM(uint32 v) // IN: %eax from CPUID with %eax=1.
+{
+   /* Assumes the CPU manufacturer is Intel. */
+   uint32 effectiveModel = CPUID_EFFECTIVE_MODEL(v);
+
+   return CPUID_FAMILY_IS_P6(v) &&
+          effectiveModel == CPUID_MODEL_ATOM_1C;
+}
+
+
+static INLINE Bool
+CPUID_MODEL_IS_WESTMERE(uint32 v) // IN: %eax from CPUID with %eax=1.
+{
+   /* Assumes the CPU manufacturer is Intel. */
+   uint32 effectiveModel = CPUID_EFFECTIVE_MODEL(v);
+
+   return CPUID_FAMILY_IS_P6(v) &&
+          (effectiveModel == CPUID_MODEL_NEHALEM_25 || // Clarkdale
+           effectiveModel == CPUID_MODEL_NEHALEM_2C || // Westmere-EP
+           effectiveModel == CPUID_MODEL_NEHALEM_2F);  // Westmere-EX
+}
+
+
+static INLINE Bool
+CPUID_MODEL_IS_SANDYBRIDGE(uint32 v) // IN: %eax from CPUID with %eax=1.
+{
+   /* Assumes the CPU manufacturer is Intel. */
+   uint32 effectiveModel = CPUID_EFFECTIVE_MODEL(v);
+
+   return CPUID_FAMILY_IS_P6(v) &&
+          (effectiveModel == CPUID_MODEL_SANDYBRIDGE_2A ||
+           effectiveModel == CPUID_MODEL_SANDYBRIDGE_2D);
+}
+
+
+
+
+static INLINE Bool
 CPUID_FAMILY_IS_K7(uint32 eax)
 {
    return CPUID_EFFECTIVE_FAMILY(eax) == CPUID_FAMILY_K7;
@@ -1116,6 +1174,12 @@ CPUID_FAMILY_IS_K8L(uint32 eax)
 {
    return CPUID_EFFECTIVE_FAMILY(eax) == CPUID_FAMILY_K8L ||
           CPUID_EFFECTIVE_FAMILY(eax) == CPUID_FAMILY_LLANO;
+}
+
+static INLINE Bool
+CPUID_FAMILY_IS_LLANO(uint32 eax)
+{
+   return CPUID_EFFECTIVE_FAMILY(eax) == CPUID_FAMILY_LLANO;
 }
 
 static INLINE Bool
@@ -1158,6 +1222,43 @@ CPUID_MODEL_IS_BARCELONA(uint32 v) // IN: %eax from CPUID with %eax=1.
    return CPUID_EFFECTIVE_FAMILY(v) == CPUID_FAMILY_K8L &&
           CPUID_EFFECTIVE_MODEL(v)  == CPUID_MODEL_BARCELONA_02;
 }
+
+
+static INLINE Bool
+CPUID_MODEL_IS_SHANGHAI(uint32 v) // IN: %eax from CPUID with %eax=1.
+{
+   /* Assumes the CPU manufacturer is AMD. */
+   return CPUID_EFFECTIVE_FAMILY(v) == CPUID_FAMILY_K8L &&
+          (CPUID_MODEL_SHANGHAI_04  <= CPUID_EFFECTIVE_MODEL(v) && 
+           CPUID_EFFECTIVE_MODEL(v) <= CPUID_MODEL_SHANGHAI_06);
+}
+
+
+static INLINE Bool
+CPUID_MODEL_IS_ISTANBUL_MAGNY(uint32 v) // IN: %eax from CPUID with %eax=1.
+{
+   /* Assumes the CPU manufacturer is AMD. */
+   return CPUID_EFFECTIVE_FAMILY(v) == CPUID_FAMILY_K8L &&
+          (CPUID_MODEL_ISTANBUL_MAGNY_08 <= CPUID_EFFECTIVE_MODEL(v) &&
+           CPUID_EFFECTIVE_MODEL(v)      <= CPUID_MODEL_ISTANBUL_MAGNY_09);
+}
+
+
+static INLINE Bool
+CPUID_MODEL_IS_PHAROAH_HOUND(uint32 v) // IN: %eax from CPUID with %eax=1.
+{
+   /* Assumes the CPU manufacturer is AMD. */
+   return CPUID_EFFECTIVE_FAMILY(v) == CPUID_FAMILY_K8L &&
+          CPUID_EFFECTIVE_MODEL(v)  == CPUID_MODEL_PHAROAH_HOUND_0A;
+}
+
+
+static INLINE Bool
+CPUID_MODEL_IS_BULLDOZER(uint32 eax)
+{
+   return CPUID_EFFECTIVE_FAMILY(eax) == CPUID_FAMILY_BULLDOZER;
+}
+
 
 
 #define CPUID_TYPE_PRIMARY     0
@@ -1273,7 +1374,8 @@ CPUID_IsHypervisorLevel(uint32 level)
 
 static INLINE Bool
 CPUID_LevelUsesEcx(uint32 level) {
-   return level == 4 || level == 7 || level == 0xb || level == 0xd;
+   return level == 4 || level == 7 || level == 0xb || level == 0xd ||
+          level == 0x8000001d;
 }
 
 /*
@@ -1322,4 +1424,23 @@ CPUID_IsValidDSubleaf(uint32 subleaf)  // IN: subleaf to check
 {
    return subleaf <= 63;
 }
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * CPUID_SupportsMsrPlatformInfo --
+ *
+ *    Uses vendor and cpuid.1.0.eax to determine if the processor
+ *    supports MSR_PLATFORM_INFO.
+ *
+ *----------------------------------------------------------------------
+ */
+static INLINE Bool
+CPUID_SupportsMsrPlatformInfo(CpuidVendor vendor, uint32 version)
+{
+   return vendor == CPUID_VENDOR_INTEL &&
+          (CPUID_UARCH_IS_NEHALEM(version) ||
+           CPUID_UARCH_IS_SANDYBRIDGE(version));
+}
+
 #endif

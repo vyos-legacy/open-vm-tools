@@ -54,7 +54,8 @@
 #define VMW_LOG_DEBUG_09 (VMW_LOG_DEBUG_00 +  9)
 #define VMW_LOG_DEBUG_10 (VMW_LOG_DEBUG_00 + 10) // lowest priority; least noisy
 
-#define VMW_LOG_NO_ROUTE 0x80000000  // Force routing to Log
+#define VMW_LOG_NO_ROUTE        0x80000000  // Force routing to Log
+#define VMW_LOG_NO_ROUTE_STDERR 0x40000000  // Allow stderr on suitable msgs
 
 void LogV(uint32 routing,
           const char *fmt,
@@ -155,9 +156,8 @@ Log_Trivia(const char *fmt,
 /* Forward decl */
 struct MsgList;
 
-typedef void (LogOutputFunc)(int level,
-                             const char *fmt,
-                             va_list args);
+typedef void (LogOverrideFunc)(int level,
+                               const char *msg);
 
 
 typedef enum {
@@ -236,7 +236,7 @@ Bool Log_CopyFile(const char *fileName,
                   struct MsgList **errs);
 uint32 Log_MaxLineLength(void);
 
-void Log_RegisterOutputFunction(LogOutputFunc *func);
+void Log_OverrideFunction(LogOverrideFunc *func);
 
 Bool Log_SetOutput(const char *fileName,
                    const char *config,

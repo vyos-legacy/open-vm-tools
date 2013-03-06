@@ -20,6 +20,7 @@ noinst_LTLIBRARIES = libMisc.la
 libMisc_la_SOURCES =
 libMisc_la_SOURCES += atomic.c
 libMisc_la_SOURCES += base64.c
+libMisc_la_SOURCES += codeset.c
 libMisc_la_SOURCES += codesetBase.c
 libMisc_la_SOURCES += codesetOld.c
 libMisc_la_SOURCES += dynarray.c
@@ -36,6 +37,8 @@ libMisc_la_SOURCES += iovector.c
 libMisc_la_SOURCES += logFixed.c
 libMisc_la_SOURCES += machineID.c
 libMisc_la_SOURCES += miscSolaris.c
+libMisc_la_SOURCES += msgfmt.c
+libMisc_la_SOURCES += msgList.c
 libMisc_la_SOURCES += posixDlopen.c
 libMisc_la_SOURCES += posixPosix.c
 libMisc_la_SOURCES += random.c
@@ -45,8 +48,4 @@ libMisc_la_SOURCES += utilMem.c
 libMisc_la_SOURCES += vmstdio.c
 libMisc_la_SOURCES += strutil.c
 libMisc_la_SOURCES += vthreadBase.c
-
-if HAVE_ICU
-libMisc_la_SOURCES += codeset.c
-endif
 

@@ -24,14 +24,11 @@
 #include "ulInt.h"
 #include "vm_atomic.h"
 
-#define MXUSER_EXCL_SIGNATURE 0x58454B4C // 'LKEX' in memory
-
 typedef struct
 {
    MXUserAcquisitionStats  acquisitionStats;
    Atomic_Ptr              acquisitionHisto;
 
-   void                   *holder;
    VmTimeType              holdStart;
    MXUserBasicStats        heldStats;
    Atomic_Ptr              heldHisto;
@@ -65,7 +62,7 @@ static void
 MXUserStatsActionExcl(MXUserHeader *header)  // IN:
 {
    MXUserExclLock *lock = (MXUserExclLock *) header;
-   MXUserStats *stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
+   MXUserStats *stats = Atomic_ReadPtr(&lock->statsMem);
 
    if (stats) {
       Bool isHot;
@@ -117,43 +114,6 @@ MXUserStatsActionExcl(MXUserHeader *header)  // IN:
 /*
  *-----------------------------------------------------------------------------
  *
- * MXUserDumpExclLock --
- *
- *      Dump an exclusive lock.
- *
- * Results:
- *      A dump.
- *
- * Side effects:
- *      None
- *
- *-----------------------------------------------------------------------------
- */
-
-static void
-MXUserDumpExclLock(MXUserHeader *header)  // IN:
-{
-   MXUserExclLock *lock = (MXUserExclLock *) header;
-   MXUserStats *stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
-
-   Warning("%s: Exclusive lock @ 0x%p\n", __FUNCTION__, lock);
-
-   Warning("\tsignature 0x%X\n", lock->header.signature);
-   Warning("\tname %s\n", lock->header.name);
-   Warning("\trank 0x%X\n", lock->header.rank);
-   Warning("\tserial number %u\n", lock->header.serialNumber);
-
-   Warning("\tcount %u\n", lock->recursiveLock.referenceCount);
-
-   if (stats && (stats->holder != NULL)) {
-      Warning("\tholder %p\n", stats->holder);
-   }
-}
-
-
-/*
- *-----------------------------------------------------------------------------
- *
  * MXUser_ControlExclLock --
  *
  *      Perform the specified command on the specified lock.
@@ -175,26 +135,32 @@ MXUser_ControlExclLock(MXUserExclLock *lock,  // IN/OUT:
 {
    Bool result;
 
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
    switch (command) {
    case MXUSER_CONTROL_ACQUISITION_HISTO: {
-      MXUserStats *stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
+      if (vmx86_stats) {
+         MXUserStats *stats = Atomic_ReadPtr(&lock->statsMem);
 
-      if (stats) {
-         va_list a;
-         uint64 minValue;
-         uint32 decades;
+         if (stats == NULL) {
+            result = FALSE;
+         } else {
+            va_list a;
+            uint32 decades;
+            uint64 minValue;
 
-         va_start(a, command);
-         minValue = va_arg(a, uint64);
-         decades = va_arg(a, uint32);
-         va_end(a);
+            va_start(a, command);
+            minValue = va_arg(a, uint64);
+            decades = va_arg(a, uint32);
+            va_end(a);
 
-         MXUserForceHisto(&stats->acquisitionHisto,
-                          MXUSER_STAT_CLASS_ACQUISITION, minValue, decades);
+            MXUserForceHisto(&stats->acquisitionHisto,
+                             MXUSER_STAT_CLASS_ACQUISITION, minValue, decades);
 
-         result = TRUE;
+            result = TRUE;
+         }
+
       } else {
          result = FALSE;
       }
@@ -203,22 +169,26 @@ MXUser_ControlExclLock(MXUserExclLock *lock,  // IN/OUT:
    }
 
    case MXUSER_CONTROL_HELD_HISTO: {
-      MXUserStats *stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
+      if (vmx86_stats) {
+         MXUserStats *stats = Atomic_ReadPtr(&lock->statsMem);
 
-      if (stats) {
-         va_list a;
-         uint32 minValue;
-         uint32 decades;
+         if (stats == NULL) {
+            result = FALSE;
+         } else {
+            va_list a;
+            uint32 decades;
+            uint32 minValue;
 
-         va_start(a, command);
-         minValue = va_arg(a, uint64);
-         decades = va_arg(a, uint32);
-         va_end(a);
+            va_start(a, command);
+            minValue = va_arg(a, uint64);
+            decades = va_arg(a, uint32);
+            va_end(a);
 
-         MXUserForceHisto(&stats->heldHisto, MXUSER_STAT_CLASS_HELD,
-                          minValue, decades);
+            MXUserForceHisto(&stats->heldHisto, MXUSER_STAT_CLASS_HELD,
+                             minValue, decades);
 
-         result = TRUE;
+            result = TRUE;
+         }
       } else {
          result = FALSE;
       }
@@ -227,9 +197,8 @@ MXUser_ControlExclLock(MXUserExclLock *lock,  // IN/OUT:
    }
 
    case MXUSER_CONTROL_ENABLE_STATS: {
-      MXUserStats *stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
-
-      if (LIKELY(stats == NULL)) {
+      if (vmx86_stats) {
+         MXUserStats *stats;
          MXUserStats *before;
 
          stats = Util_SafeCalloc(1, sizeof(*stats));
@@ -237,19 +206,19 @@ MXUser_ControlExclLock(MXUserExclLock *lock,  // IN/OUT:
          MXUserAcquisitionStatsSetUp(&stats->acquisitionStats);
          MXUserBasicStatsSetUp(&stats->heldStats, MXUSER_STAT_CLASS_HELD);
 
-         before = (MXUserStats *) Atomic_ReadIfEqualWritePtr(&lock->statsMem,
-                                                             NULL,
-                                                             (void *) stats);
+         before = Atomic_ReadIfEqualWritePtr(&lock->statsMem, NULL,
+                                             (void *) stats);
 
          if (before) {
             free(stats);
          }
 
          lock->header.statsFunc = MXUserStatsActionExcl;
-      }
 
-      result = TRUE;
-      break;
+         result = TRUE;
+      } else {
+         result = FALSE;
+      }
    }
 
    default:
@@ -257,6 +226,41 @@ MXUser_ControlExclLock(MXUserExclLock *lock,  // IN/OUT:
    }
 
    return result;
+}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * MXUserDumpExclLock --
+ *
+ *      Dump an exclusive lock.
+ *
+ * Results:
+ *      A dump.
+ *
+ * Side effects:
+ *      None
+ *
+ *-----------------------------------------------------------------------------
+ */
+
+static void
+MXUserDumpExclLock(MXUserHeader *header)  // IN:
+{
+   MXUserExclLock *lock = (MXUserExclLock *) header;
+
+   Warning("%s: Exclusive lock @ %p\n", __FUNCTION__, lock);
+
+   Warning("\tsignature 0x%X\n", lock->header.signature);
+   Warning("\tname %s\n", lock->header.name);
+   Warning("\trank 0x%X\n", lock->header.rank);
+   Warning("\tserial number %u\n", lock->header.serialNumber);
+
+   Warning("\tcount %d\n", MXRecLockCount(&lock->recursiveLock));
+
+   Warning("\taddress of owner data %p\n",
+           &lock->recursiveLock.nativeThreadID);
 }
 
 
@@ -281,6 +285,7 @@ MXUserExclLock *
 MXUser_CreateExclLock(const char *userName,  // IN:
                       MX_Rank rank)          // IN:
 {
+   Bool doStats;
    char *properName;
    MXUserExclLock *lock;
 
@@ -299,13 +304,19 @@ MXUser_CreateExclLock(const char *userName,  // IN:
       return NULL;
    }
 
-   lock->header.signature = MXUSER_EXCL_SIGNATURE;
+   lock->header.signature = MXUserGetSignature(MXUSER_TYPE_EXCL);
    lock->header.name = properName;
    lock->header.rank = rank;
    lock->header.serialNumber = MXUserAllocSerialNumber();
    lock->header.dumpFunc = MXUserDumpExclLock;
 
-   if (MXUserStatsEnabled()) {
+   if (vmx86_stats) {
+      doStats = MXUserStatsEnabled();
+   } else {
+      doStats = FALSE;
+   }
+
+   if (doStats) {
       MXUser_ControlExclLock(lock, MXUSER_CONTROL_ENABLE_STATS);
    } else {
       lock->header.statsFunc = NULL;
@@ -338,9 +349,7 @@ void
 MXUser_DestroyExclLock(MXUserExclLock *lock)  // IN:
 {
    if (lock != NULL) {
-      MXUserStats *stats;
-
-      ASSERT(lock->header.signature == MXUSER_EXCL_SIGNATURE);
+      MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
       if (MXRecLockCount(&lock->recursiveLock) > 0) {
          MXUserDumpAndPanic(&lock->header,
@@ -348,22 +357,26 @@ MXUser_DestroyExclLock(MXUserExclLock *lock)  // IN:
                             __FUNCTION__);
       }
 
+      lock->header.signature = 0;  // just in case...
+
       MXRecLockDestroy(&lock->recursiveLock);
 
       MXUserRemoveFromList(&lock->header);
 
-      stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
+      if (vmx86_stats) {
+         MXUserStats *stats = Atomic_ReadPtr(&lock->statsMem);
 
-      if (stats) {
-         MXUserAcquisitionStatsTearDown(&stats->acquisitionStats);
-         MXUserBasicStatsTearDown(&stats->heldStats);
-         MXUserHistoTearDown(Atomic_ReadPtr(&stats->acquisitionHisto));
-         MXUserHistoTearDown(Atomic_ReadPtr(&stats->heldHisto));
+         if (LIKELY(stats != NULL)) {
+            MXUserAcquisitionStatsTearDown(&stats->acquisitionStats);
+            MXUserHistoTearDown(Atomic_ReadPtr(&stats->acquisitionHisto));
 
-         free(stats);
+            MXUserBasicStatsTearDown(&stats->heldStats);
+            MXUserHistoTearDown(Atomic_ReadPtr(&stats->heldHisto));
+
+            free(stats);
+         }
       }
 
-      lock->header.signature = 0;  // just in case...
       free(lock->header.name);
       lock->header.name = NULL;
       free(lock);
@@ -390,46 +403,40 @@ MXUser_DestroyExclLock(MXUserExclLock *lock)  // IN:
 void
 MXUser_AcquireExclLock(MXUserExclLock *lock)  // IN/OUT:
 {
-   MXUserStats *stats;
-
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
-
-   stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
    MXUserAcquisitionTracking(&lock->header, TRUE);
 
-   if (stats) {
-      VmTimeType begin = Hostinfo_SystemTimerNS();
-      VmTimeType value;
-      Bool contended;
-      MXUserHisto *histo;
+   if (vmx86_stats) {
+      VmTimeType value = 0;
+      MXUserStats *stats = Atomic_ReadPtr(&lock->statsMem);
 
-      contended = MXRecLockAcquire(&lock->recursiveLock);
+      MXRecLockAcquire(&lock->recursiveLock, (stats == NULL) ? NULL : &value);
 
-      value = Hostinfo_SystemTimerNS() - begin;
+      if (LIKELY(stats != NULL)) {
+         MXUserHisto *histo;
 
-      MXUserAcquisitionSample(&stats->acquisitionStats, TRUE, contended,
-                              value);
+         MXUserAcquisitionSample(&stats->acquisitionStats, TRUE, value != 0,
+                                 value);
 
-      stats->holder = GetReturnAddress();
+         histo = Atomic_ReadPtr(&stats->acquisitionHisto);
 
-      histo = Atomic_ReadPtr(&stats->acquisitionHisto);
+         if (UNLIKELY(histo != NULL)) {
+            MXUserHistoSample(histo, value, GetReturnAddress());
+         }
 
-      if (UNLIKELY(histo != NULL)) {
-         MXUserHistoSample(histo, value, stats->holder);
+         stats->holdStart = Hostinfo_SystemTimerNS();
       }
    } else {
-      MXRecLockAcquire(&lock->recursiveLock);
+      MXRecLockAcquire(&lock->recursiveLock,
+                       NULL);  // non-stats
    }
 
-   if (MXRecLockCount(&lock->recursiveLock) > 1) {
+   if (vmx86_debug && (MXRecLockCount(&lock->recursiveLock) > 1)) {
       MXUserDumpAndPanic(&lock->header,
                          "%s: Acquire on an acquired exclusive lock\n",
                          __FUNCTION__);
-   }
-
-   if (stats) {
-      stats->holdStart = Hostinfo_SystemTimerNS();
    }
 }
 
@@ -453,28 +460,28 @@ MXUser_AcquireExclLock(MXUserExclLock *lock)  // IN/OUT:
 void
 MXUser_ReleaseExclLock(MXUserExclLock *lock)  // IN/OUT:
 {
-   MXUserStats *stats;
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
+   if (vmx86_stats) {
+      MXUserStats *stats = Atomic_ReadPtr(&lock->statsMem);
 
-   stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
+      if (LIKELY(stats != NULL)) {
+         MXUserHisto *histo;
+         VmTimeType value = Hostinfo_SystemTimerNS() - stats->holdStart;
 
-   if (stats) {
-      VmTimeType value = Hostinfo_SystemTimerNS() - stats->holdStart;
-      MXUserHisto *histo;
+         MXUserBasicStatsSample(&stats->heldStats, value);
 
-      MXUserBasicStatsSample(&stats->heldStats, value);
+         histo = Atomic_ReadPtr(&stats->heldHisto);
 
-      histo = Atomic_ReadPtr(&stats->heldHisto);
-
-      if (UNLIKELY(histo != NULL)) {
-         MXUserHistoSample(histo, value, stats->holder);
-         stats->holder = NULL;
+         if (UNLIKELY(histo != NULL)) {
+            MXUserHistoSample(histo, value, GetReturnAddress());
+         }
       }
    }
 
-   if (!MXRecLockIsOwner(&lock->recursiveLock)) {
-      uint32 lockCount = MXRecLockCount(&lock->recursiveLock);
+   if (vmx86_debug && !MXRecLockIsOwner(&lock->recursiveLock)) {
+      int lockCount = MXRecLockCount(&lock->recursiveLock);
 
       MXUserDumpAndPanic(&lock->header,
                          "%s: Non-owner release of an %s exclusive lock\n",
@@ -513,9 +520,9 @@ Bool
 MXUser_TryAcquireExclLock(MXUserExclLock *lock)  // IN/OUT:
 {
    Bool success;
-   MXUserStats *stats;
 
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
    if (MXUserTryAcquireFail(lock->header.name)) {
       return FALSE;
@@ -526,18 +533,20 @@ MXUser_TryAcquireExclLock(MXUserExclLock *lock)  // IN/OUT:
    if (success) {
       MXUserAcquisitionTracking(&lock->header, FALSE);
 
-      if (MXRecLockCount(&lock->recursiveLock) > 1) {
+      if (vmx86_debug && (MXRecLockCount(&lock->recursiveLock) > 1)) {
          MXUserDumpAndPanic(&lock->header,
                             "%s: Acquire on an acquired exclusive lock\n",
                             __FUNCTION__);
       }
    }
 
-   stats = (MXUserStats *) Atomic_ReadPtr(&lock->statsMem);
+   if (vmx86_stats) {
+      MXUserStats *stats = Atomic_ReadPtr(&lock->statsMem);
 
-   if (stats) {
-      MXUserAcquisitionSample(&stats->acquisitionStats, success, !success,
-                              0ULL);
+      if (LIKELY(stats != NULL)) {
+         MXUserAcquisitionSample(&stats->acquisitionStats, success, !success,
+                                 0ULL);
+      }
    }
 
    return success;
@@ -562,9 +571,10 @@ MXUser_TryAcquireExclLock(MXUserExclLock *lock)  // IN/OUT:
  */
 
 Bool
-MXUser_IsCurThreadHoldingExclLock(const MXUserExclLock *lock)  // IN:
+MXUser_IsCurThreadHoldingExclLock(MXUserExclLock *lock)  // IN:
 {
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
    return MXRecLockIsOwner(&lock->recursiveLock);
 }
@@ -598,18 +608,17 @@ MXUser_CreateSingletonExclLock(Atomic_Ptr *lockStorage,  // IN/OUT:
 
    ASSERT(lockStorage);
 
-   lock = (MXUserExclLock *) Atomic_ReadPtr(lockStorage);
+   lock = Atomic_ReadPtr(lockStorage);
 
    if (UNLIKELY(lock == NULL)) {
       MXUserExclLock *newLock = MXUser_CreateExclLock(name, rank);
 
-      lock = (MXUserExclLock *) Atomic_ReadIfEqualWritePtr(lockStorage, NULL,
-                                                           (void *) newLock);
+      lock = Atomic_ReadIfEqualWritePtr(lockStorage, NULL, (void *) newLock);
 
       if (lock) {
          MXUser_DestroyExclLock(newLock);
       } else {
-         lock = (MXUserExclLock *) Atomic_ReadPtr(lockStorage);
+         lock = Atomic_ReadPtr(lockStorage);
       }
    }
 
@@ -637,7 +646,8 @@ MXUser_CreateSingletonExclLock(Atomic_Ptr *lockStorage,  // IN/OUT:
 MXUserCondVar *
 MXUser_CreateCondVarExclLock(MXUserExclLock *lock)
 {
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
    return MXUserCreateCondVar(&lock->header, &lock->recursiveLock);
 }
@@ -666,7 +676,8 @@ void
 MXUser_WaitCondVarExclLock(MXUserExclLock *lock,    // IN:
                            MXUserCondVar *condVar)  // IN:
 {
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
    MXUserWaitCondVar(&lock->header, &lock->recursiveLock, condVar,
                      MXUSER_WAIT_INFINITE);
@@ -697,7 +708,8 @@ MXUser_TimedWaitCondVarExclLock(MXUserExclLock *lock,    // IN:
                                 MXUserCondVar *condVar,  // IN:
                                 uint32 msecWait)         // IN:
 {
-   ASSERT(lock && (lock->header.signature == MXUSER_EXCL_SIGNATURE));
+   ASSERT(lock);
+   MXUserValidateHeader(&lock->header, MXUSER_TYPE_EXCL);
 
    MXUserWaitCondVar(&lock->header, &lock->recursiveLock, condVar, msecWait);
 }

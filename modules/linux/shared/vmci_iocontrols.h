@@ -318,7 +318,7 @@ enum IOCTLCmd_VMCI {
  */
 #include "vmware_pack_begin.h"
 struct IOCTLCmd_VMCIMacOS_PrivSyms {
-   char data[328];
+   char data[336];
 }
 #include "vmware_pack_end.h"
 ;
@@ -742,12 +742,7 @@ enum VMCrossTalkSockOpt {
    VMCI_SO_USERFD,
 };
 
-#  define VMCI_MACOS_HOST_DEVICE_BASE    "com.vmware.kext.vmci"
-#  ifdef VMX86_DEVEL
-#     define VMCI_MACOS_HOST_DEVICE VMCI_MACOS_HOST_DEVICE_BASE ".devel"
-#  else
-#     define VMCI_MACOS_HOST_DEVICE VMCI_MACOS_HOST_DEVICE_BASE
-#  endif
+#define VMCI_MACOS_HOST_DEVICE "com.vmware.kext.vmci"
 
 #endif
 

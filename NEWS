@@ -1,21 +1,95 @@
-open-vm-tools 8.8.2 changes:
-	* Updated code for compatibility with newer Linux kernel releases.
+open-vm-tools 9.0.0 changes:
+	* Release of open-vm-tools matching vSphere 5.1.
 
-	* Minor tweaks in Unity and Resolution set plugins.
+	* Branch was cut from commit id e611d054aa26d88f92 (tagged as
+	2011.11.20-535097).
 
-open-vm-tools 8.8.1 changes:
-	* Updated code for compatibility with newer Linux kernel releases
-	and with newer NetworkManager releases.
+open-vm-tools 2011.11.20 changes:
+	* Updates for new Linux kernel releases.
 
-open-vm-tools 8.8.0 changes:
-	* Release of open-vm-tools matching the Workstation 8.0 / Fusion 4.0
-	releases.
+	* Better Unity and DnD compatibility with newer Linux distros.
 
-	* Branch was cut from commit id 2e5c7281, and overwritten with the
-	source code from the released version of VMware Tools.
+	* Other minor fixes and cleanups.
 
-	* Some changes from the master branch were cherry-picked to fix
-	some build issues.
+open-vm-tools 2011.10.26 changes:
+	* Mostly cleanups and bug fixes.
+
+	* Code can now compile with uClibc, with some caveats.
+
+open-vm-tools 2011.09.23 changes:
+	* open-vm-tools now can use the built in Linux freeze / thaw
+	support for block devices, making the vmsync driver unnecessary
+	in kernels supporting that feature.
+
+	* The VMCI driver has been simplified, removing VM-to-VM
+	communication support (which is being removed from VMware products).
+
+	* The Unity team decided to remove the Unity plugin from open-vm-tools,
+	given its partial brokenness due to reliance on internally-modified
+	version of GNOME libraries, among other reasons.
+
+	* Other bug fixes and code cleanup.
+
+open-vm-tools 2011.08.21 changes:
+	* Enabled several VIX APIs on FreeBSD.
+
+	* Minor bug fixes and code cleanup.
+
+open-vm-tools 2011.07.19 changes:
+	* Fix an issue in the HGFS driver that could lead to a kernel
+	  panic.
+
+	* Update some code to support new compiler and kernel versions.
+
+	* Minor bug fixes and code cleanup.
+
+open-vm-tools 2011.06.27 changes:
+	* A few enhancements to Unity: XFCE support, better interaction
+	  with "the other" (Ubuntu's) Unity and compositing window
+	  managers, better X error handling, and a few bug fixes.
+
+	* A few bug fixes in HGFS, and minor bug fixes in other components.
+
+	* Otherwise, mostly code cleanup.
+
+open-vm-tools 2011.05.27 changes:
+	* Mostly cleanups and a few bug fixes.
+
+open-vm-tools 2011.04.25 changes:
+	* Mostly cleanups and small bug fixes in this release.
+
+	* Logging is enabled by default in vmtoolsd, writing to syslog.
+	  The default log level is not chatty, so few messages should
+	  make it to syslog during normal operation.
+
+	* The GUI version of the toolbox was removed.
+
+open-vm-tools 2011.03.28 changes:
+	* HGFS mounter and vmusr's suid wrapper were changed to avoid
+	  issues with symlink attacks. A new mount utility for vmblock on
+	  Solaris and FreeBSD was added.
+  
+	* The VMCI driver was thoroughly reworked so that it can serve as
+	  both the host and guest VMCI driver. This is mostly targeted at
+	  supporting nested VMs.
+  
+	* vmusr got better integration with X's session manager, including
+	  proper cleanup during session teardown.
+  
+	* Unity has been enhanced to better handle some desktop environments.
+
+	* Many small bug fixes in other areas, including updates for newer
+	  Linux kernels.
+
+open-vm-tools 2011.02.23 changes:
+	* Some copy & paste issues with KDE were fixed.
+
+	* Mostly cleanups and bug fixes, with a few build enhancements.
+
+open-vm-tools 2011.01.24 changes:
+	* Mostly cleanups and bug fixes.
+
+	* Install code fixed to handle translation catalogs correctly.
 
 open-vm-tools 2010.12.19 changes:
 	* New version of DnD code lands in open-vm-tools. The host part

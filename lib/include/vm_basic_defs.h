@@ -160,6 +160,14 @@ Max(int a, int b)
 
 #define MASK(n)		((1 << (n)) - 1)	    /* make an n-bit mask */
 #define MASK64(n)	((CONST64U(1) << (n)) - 1)  /* make an n-bit mask */
+/*
+ * MASKRANGE64 makes a bit vector starting at bit lo and ending at bit hi.  No
+ * checking for lo < hi is done.
+ */
+#define MASKRANGE64(hi, lo)      (MASK64((hi) - (lo) + 1) << (lo))
+
+/* SIGNEXT64 sign extends a n-bit value to 64-bits. */
+#define SIGNEXT64(val, n)       (((int64)(val) << (64 - (n))) >> (64 - (n)))
 
 #define DWORD_ALIGN(x)          ((((x) + 3) >> 2) << 2)
 #define QWORD_ALIGN(x)          ((((x) + 7) >> 3) << 3)
@@ -715,5 +723,14 @@ typedef int pid_t;
       }                                                                 \
    } while (0)
 
+/*
+ * Bug 827422 and 838523.
+ */
+
+#if defined __GNUC__ && __GNUC__ >= 4
+#define VISIBILITY_HIDDEN __attribute__((visibility("hidden")))
+#else
+#define VISIBILITY_HIDDEN /* nothing */
+#endif
 
 #endif // ifndef _VM_BASIC_DEFS_H_

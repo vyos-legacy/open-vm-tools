@@ -104,11 +104,16 @@ Bool FileMacos_IsOnSparseDmg(int fd);
 Bool FileMacos_IsSliceDevice(char const *bsdDev);
 
 char *FileMacos_DiskDevToUserFriendlyName(char const *bsdDiskDev);
+char *FileMacos_DiskDevToVolumeName(char const *bsdDiskDev);
 
 char *FileMacos_DiskDeviceToUniqueID(char const *bsdPath);
 char *FileMacos_UniqueIDToDiskDevice(char const *identifier);
 
 #elif defined VMX86_SERVER
+struct FS_PartitionListResult;
+
+int File_GetVMFSAttributes(ConstUnicode pathName,
+                           struct FS_PartitionListResult **fsAttrs);
 int File_GetVMFSVersion(ConstUnicode pathName,
                         uint32 *versionNum);
 int File_GetVMFSBlockSize(ConstUnicode pathName,
@@ -125,6 +130,8 @@ int File_GetVMFSMountInfo(ConstUnicode pathName,
 Bool File_SupportsZeroedThick(ConstUnicode pathName);
 
 Bool File_SupportsMultiWriter(ConstUnicode pathName);
+
+Bool File_SupportsMandatoryLock(ConstUnicode pathName);
 
 Bool File_Exists(ConstUnicode pathName);
 
@@ -155,7 +162,8 @@ Bool File_EnsureDirectory(ConstUnicode pathName);
 
 Bool File_DeleteEmptyDirectory(ConstUnicode pathName);
 
-Bool File_CreateDirectoryHierarchy(ConstUnicode pathName);
+Bool File_CreateDirectoryHierarchy(ConstUnicode pathName,
+                                   Unicode *topmostCreated);
 
 Bool File_DeleteDirectoryTree(ConstUnicode pathName);
 
@@ -276,6 +284,13 @@ Bool File_CopyTree(ConstUnicode srcName,
 Bool File_Replace(ConstUnicode oldFile,
                   ConstUnicode newFile);
 
+int File_Rename(ConstUnicode oldFile,
+                ConstUnicode newFile);
+
+int File_RenameRetry(ConstUnicode oldFile,
+                     ConstUnicode newFile,
+                     uint32 msecMaxWaitTime);
+
 Bool File_Move(ConstUnicode oldFile,
                ConstUnicode newFile,
                Bool *asRename);
@@ -284,6 +299,13 @@ void File_Rotate(const char *pathName,
                  int n,
                  Bool noRename,
                  char **newFileName);
+
+int File_GetFSMountInfo(ConstUnicode pathName,
+                        char **fsType,
+                        uint32 *version,
+                        char **remoteIP,
+                        char **remoteMountPoint,
+                        char **localMountPoint);
 
 /* Get size only for regular file. */
 int64 File_GetSize(ConstUnicode pathName);

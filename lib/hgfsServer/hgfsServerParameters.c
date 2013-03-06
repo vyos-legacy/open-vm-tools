@@ -267,7 +267,7 @@ HgfsGetPayloadSize(char const *packetIn,        // IN: request packet
 
 Bool
 HgfsParseRequest(HgfsPacket *packet,         // IN: request packet
-                 HgfsSessionInfo *session,   // IN: current session
+                 HgfsTransportSessionInfo *transportSession,   // IN: current session
                  HgfsInputParam **input,     // OUT: request parameters
                  HgfsInternalStatus *status) // OUT: error code
 {
@@ -275,9 +275,12 @@ HgfsParseRequest(HgfsPacket *packet,         // IN: request packet
    size_t packetSize;
    HgfsInternalStatus result = HGFS_ERROR_SUCCESS;
    HgfsInputParam *localInput;
+   HgfsSessionInfo *session = NULL;
 
-   request = (HgfsRequest *) HSPU_GetMetaPacket(packet, &packetSize, session);
+   request = (HgfsRequest *) HSPU_GetMetaPacket(packet, &packetSize, transportSession);
    ASSERT_DEVEL(request);
+
+   LOG(4, ("%s: Recieved a request with opcode %d.\n", __FUNCTION__, (int) request->op));
 
    if (!request) {
       /*
@@ -293,8 +296,9 @@ HgfsParseRequest(HgfsPacket *packet,         // IN: request packet
    memset(localInput, 0, sizeof *localInput);
    localInput->metaPacket = (char *)request;
    localInput->metaPacketSize = packetSize;
-   localInput->session = session;
+   localInput->transportSession = transportSession;
    localInput->packet = packet;
+   localInput->session = NULL;
 
    /*
     * Error out if less than HgfsRequest size.
@@ -304,7 +308,7 @@ HgfsParseRequest(HgfsPacket *packet,         // IN: request packet
          localInput->id = request->id;
       }
       ASSERT_DEVEL(0);
-      return HGFS_ERROR_PROTOCOL;
+      return FALSE;
    }
 
    if (request->op < HGFS_OP_OPEN_V3) {
@@ -327,17 +331,24 @@ HgfsParseRequest(HgfsPacket *packet,         // IN: request packet
       HgfsHeader *header = (HgfsHeader *)request;
       localInput->v4header = TRUE;
       localInput->id = header->requestId;
+      localInput->op = header->op;
 
       if (packetSize >= offsetof(HgfsHeader, sessionId) + sizeof header->sessionId) {
-         if (header->sessionId != session->sessionId &&
-            header->op != HGFS_OP_CREATE_SESSION_V4) {
+         if (packetSize < header->packetSize ||
+            header->packetSize < header->headerSize) {
+            LOG(4, ("%s: Malformed HGFS packet received - inconsistent header"
+               " and packet sizes!\n", __FUNCTION__));
+            result = HGFS_ERROR_PROTOCOL;
+         }
+
+         if ((HGFS_ERROR_SUCCESS == result) &&
+             (header->op != HGFS_OP_CREATE_SESSION_V4)) {
+            session = HgfsServerTransportGetSessionInfo(transportSession,
+                                                        header->sessionId);
+            if (!session || session->state != HGFS_SESSION_STATE_OPEN) {
                LOG(4, ("%s: HGFS packet with invalid session id!\n", __FUNCTION__));
                result = HGFS_ERROR_STALE_SESSION;
-         } else if (packetSize < header->packetSize ||
-            header->packetSize < header->headerSize) {
-               LOG(4, ("%s: Malformed HGFS packet received - inconsistent header"
-                  " and packet sizes!\n", __FUNCTION__));
-               result = HGFS_ERROR_PROTOCOL;
+            }
          }
       } else {
          LOG(4, ("%s: Malformed HGFS packet received - header is too small!\n",
@@ -346,7 +357,6 @@ HgfsParseRequest(HgfsPacket *packet,         // IN: request packet
       }
 
       if (HGFS_ERROR_SUCCESS == result) { // Passed all tests
-         localInput->op = header->op;
          localInput->payload = (char *)request + header->headerSize;
          localInput->payloadSize = header->packetSize - header->headerSize;
       }
@@ -355,10 +365,37 @@ HgfsParseRequest(HgfsPacket *packet,         // IN: request packet
               __FUNCTION__));
       result = HGFS_ERROR_PROTOCOL;
    }
+
    if (HGFS_ERROR_SUCCESS != result) {
       LOG(4, ("%s: Malformed HGFS packet received!\n", __FUNCTION__));
+   } else if ((NULL == session) && (!localInput->v4header)) {
+      session = HgfsServerTransportGetSessionInfo(transportSession,
+                                                  transportSession->defaultSessionId);
+      if (NULL == session) {
+         /*
+          * Create a new session if the default session doesn't exist.
+          */
+         if (!HgfsServerAllocateSession(transportSession,
+                                        transportSession->channelCapabilities,
+                                        &session)) {
+            result = HGFS_ERROR_NOT_ENOUGH_MEMORY;
+         } else {
+            result = HgfsServerTransportAddSessionToList(transportSession,
+                                                         session);
+            if (HGFS_ERROR_SUCCESS != result) {
+               LOG(4, ("%s: Could not add session to the list.\n", __FUNCTION__));
+            } else {
+               transportSession->defaultSessionId = session->sessionId;
+               HgfsServerSessionGet(session);
+            }
+         }
+      }
    }
 
+   if (session) {
+      session->isInactive = FALSE;
+   }
+   localInput->session = session;
    localInput->payloadOffset = (char *)localInput->payload -
                                (char *)localInput->metaPacket;
    *status = result;
@@ -4321,7 +4358,7 @@ HgfsUnpackWriteRequest(HgfsInputParam *input,   // IN: Input params
          if (result) {
             *data = HSPU_GetDataPacketBuf(input->packet,
                                           BUF_READABLE,
-                                          input->session);
+                                          input->transportSession);
             if (NULL == *data) {
                LOG(4, ("%s: Failed to get data in guest memory\n", __FUNCTION__));
                result = FALSE;
@@ -5663,7 +5700,7 @@ HgfsPackHgfsName(char *cpName,            // IN: cpName to pack
 /*
  *-----------------------------------------------------------------------------
  *
- * HgfsPackChangeNotificationV4 --
+ * HgfsPackChangeNotifyEventV4 --
  *
  *    Pack single change directory notification event information.
  *
@@ -5678,14 +5715,13 @@ HgfsPackHgfsName(char *cpName,            // IN: cpName to pack
  */
 
 static size_t
-HgfsPackChangeNotificationV4(uint32 mask,              // IN: event mask
-                             char const *shareName,    // IN: share name
-                             char *fileName,           // IN: file name
-                             size_t bufferSize,        // IN: available space
-                             HgfsNotifyEventV4 *reply) // OUT: notificaiton buffer
+HgfsPackChangeNotifyEventV4(uint32 mask,              // IN: event mask
+                            char const *shareName,    // IN: share name
+                            char *fileName,           // IN: file name
+                            size_t bufferSize,        // IN: available space
+                            HgfsNotifyEventV4 *reply) // OUT: notificaiton buffer
 {
-   size_t remainingSize;
-   size_t totalLength = sizeof *reply;
+   size_t totalLength;
 
    if (sizeof *reply > bufferSize) {
       return 0;
@@ -5695,14 +5731,16 @@ HgfsPackChangeNotificationV4(uint32 mask,              // IN: event mask
    reply->mask = mask;
    if (NULL != fileName) {
       char *fullPath;
+      size_t remainingSize;
       size_t nameSize;
+      size_t hgfsNameSize;
 
       nameSize = HgfsBuildCPName(shareName, fileName, &fullPath);
       remainingSize = bufferSize - offsetof(HgfsNotifyEventV4, fileName);
-      if (HgfsPackHgfsName(fullPath, nameSize, remainingSize, &nameSize,
+      if (HgfsPackHgfsName(fullPath, nameSize, remainingSize, &hgfsNameSize,
                            &reply->fileName)) {
-          remainingSize -= nameSize;
-          totalLength += nameSize;
+          remainingSize -= hgfsNameSize;
+          totalLength = bufferSize - remainingSize;
       } else {
          totalLength = 0;
       }
@@ -5761,7 +5799,7 @@ HgfsPackChangeNotifyRequestV4(HgfsSubscriberHandle watchId,  // IN: watch
        */
       reply->count = 1;
       notificationOffset = offsetof(HgfsRequestNotifyV4, events);
-      size = HgfsPackChangeNotificationV4(mask, shareName, fileName,
+      size = HgfsPackChangeNotifyEventV4(mask, shareName, fileName,
                                           bufferSize - notificationOffset,
                                           reply->events);
       if (size != 0) {
@@ -5807,9 +5845,9 @@ HgfsPackChangeNotificationRequest(void *packet,                    // IN/OUT: Hg
                                   HgfsSessionInfo *session,        // IN: session
                                   size_t *bufferSize)              // INOUT: size of packet
 {
-   size_t size;
-   HgfsRequestNotifyV4 *reply;
-   HgfsHeader *header = (HgfsHeader *)packet;
+   size_t notifyRequestSize;
+   HgfsRequestNotifyV4 *notifyRequest;
+   HgfsHeader *header = packet;
    Bool result;
 
    ASSERT(packet);
@@ -5829,14 +5867,16 @@ HgfsPackChangeNotificationRequest(void *packet,                    // IN/OUT: Hg
     *  notifications.
     *  Initialize payload size to 0 - it is not known yet and will be filled later.
     */
-   header->headerSize = sizeof *header;
-
-   HgfsPackReplyHeaderV4(0, 0, HGFS_OP_NOTIFY_V4, session->sessionId, 0, header);
-   reply = (HgfsRequestNotifyV4 *)((char *)header + header->headerSize);
-   size = HgfsPackChangeNotifyRequestV4(subscriber, flags, mask, shareName, fileName,
-                                        *bufferSize - header->headerSize, reply);
-   if (0 != size) {
-      header->packetSize = header->headerSize + size;
+   notifyRequest = (HgfsRequestNotifyV4 *)((char *)header + sizeof *header);
+   notifyRequestSize = HgfsPackChangeNotifyRequestV4(subscriber,
+                                                     flags,
+                                                     mask,
+                                                     shareName,
+                                                     fileName,
+                                                     *bufferSize - sizeof *header,
+                                                     notifyRequest);
+   if (0 != notifyRequestSize) {
+      HgfsPackReplyHeaderV4(0, notifyRequestSize, HGFS_OP_NOTIFY_V4, session->sessionId, 0, header);
       result = TRUE;
    } else {
       result = FALSE;

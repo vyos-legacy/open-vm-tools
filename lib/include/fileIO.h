@@ -148,6 +148,10 @@ typedef enum {
  */
 #define FILEIO_OPEN_MULTIWRITER_LOCK     (1 << 14)
 /*
+ * Flag the file to be cached by the vBlob caching layer
+ */
+#define FILEIO_OPEN_USE_AIO_CACHE        (1 << 15)
+/*
  * Valid only for MacOS. It eventually results into O_EXLOCK flag passed to open
  * system call.
  *
@@ -174,6 +178,21 @@ typedef enum {
  * Valid only on Windows. Set FILE_SHARE_DELETE.
  */
 #define FILEIO_OPEN_SHARE_DELETE (1 << 19)
+/*
+ * Strengths of file lock.
+ * Advisory:
+ *   Must use FileIO plus lock flags to get locking.
+ *   Never uses kernel/fs-level lock, so naked open() bypasses locking.
+ * Mandatory:
+ *   Requires kernel/fs-level, so naked open() respects lock.
+ *   Kernel/fs-level locks are available on ESX but not hosted.
+ * Best:
+ *   Adaptively picks between mandatory and advisory.
+ * Almost all cases should use the "best" lock.
+ */
+#define FILEIO_OPEN_LOCK_BEST      FILEIO_OPEN_LOCKED /* historical */
+#define FILEIO_OPEN_LOCK_ADVISORY  (1 << 20)
+#define FILEIO_OPEN_LOCK_MANDATORY (1 << 21)
 
 /*
  * Flag passed to open() to not attempt to get the lun attributes as part of
@@ -290,6 +309,15 @@ FileIOResult FileIO_Write(FileIODescriptor *file,
                           size_t requested,
                           size_t *actual);
 
+Unicode FileIO_AtomicTempPath(ConstUnicode path);
+
+FileIOResult FileIO_AtomicTempFile(FileIODescriptor *fileFD,
+                                   FileIODescriptor *tempFD);
+
+int FileIO_AtomicUpdate(FileIODescriptor *newFD,
+                        FileIODescriptor *currFD,
+                        Bool renameOnNFS);
+
 #if !defined(VMX86_TOOLS) || !defined(__FreeBSD__)
 
 FileIOResult FileIO_Readv(FileIODescriptor *fd,
@@ -349,6 +377,8 @@ FileIOResult FileIO_GetAllocSizeByPath(ConstUnicode pathName,
 int64   FileIO_GetSizeByPath(ConstUnicode pathName);
 
 Bool    FileIO_Close(FileIODescriptor *file);
+
+Bool    FileIO_CloseAndUnlink(FileIODescriptor *file);
 
 uint32  FileIO_GetFlags(FileIODescriptor *file);
 
