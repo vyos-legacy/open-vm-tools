@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta+daisy3) kernel; urgency=low
+
+  * Add missing files
+
+ -- James Davidson <james.davidson@vyatta.com>  Tue, 12 Mar 2013 16:09:20 -0700
+
 open-vm-tools (1:9.0.0+vyatta+daisy2) kernel; urgency=low
 
   [ James Davidson ]
