@@ -1,3 +1,16 @@
+open-vm-tools (1:9.0.0+vyatta+daisy2) kernel; urgency=low
+
+  [ James Davidson ]
+  * Update to open-vm-tools 9.0.0
+
+  [ Stephen Hemminger ]
+  * Fix linux include path
+  * fix modules install path
+
+  [ James Davidson ]
+
+ -- James Davidson <james.davidson@vyatta.com>  Tue, 12 Mar 2013 14:53:50 -0700
+
 open-vm-tools (1:9.0.0+vyatta+daisy1) kernel; urgency=low
 
   * Upgrade to open-vm-tools 9.0.0
