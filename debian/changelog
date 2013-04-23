@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta-8) kernel; urgency=low
+
+  * force rebuild
+
+ -- Stephen Hemminger <shemming@brocade.com>  Mon, 22 Apr 2013 21:45:58 -0700
+
 open-vm-tools (1:9.0.0+vyatta-7) kernel; urgency=low
 
   * Force package version to match release version
