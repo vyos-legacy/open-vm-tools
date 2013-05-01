@@ -28,8 +28,8 @@
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/mount.h>
-#include <linux/fs.h>
 
+#include "compat_fs.h"
 #include "compat_namei.h"
 
 #include "os.h"
@@ -527,7 +527,6 @@ FsOpReadSuper(struct super_block *sb, // OUT: Superblock object
 
    rootDentry = d_make_root(rootInode);
    if (!rootDentry) {
-      iput(rootInode);
       return -ENOMEM;
    }
    sb->s_root = rootDentry;

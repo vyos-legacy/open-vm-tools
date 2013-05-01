@@ -35,13 +35,13 @@
 #include "vm_assert.h"
 
 /* HGFS dentry operations. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
 static int HgfsDentryRevalidate(struct dentry *dentry,
-				unsigned int flags);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
+                                unsigned int flags
 #else
-static int HgfsDentryRevalidate(struct dentry *dentry,
-                                struct nameidata *nd);
+                                struct nameidata *nd
 #endif
+);
 
 /* HGFS dentry operations structure. */
 struct dentry_operations HgfsDentryOperations = {
@@ -76,12 +76,12 @@ struct dentry_operations HgfsDentryOperations = {
 
 static int
 HgfsDentryRevalidate(struct dentry *dentry,  // IN: Dentry to revalidate
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
-		     unsigned int flags
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
+                     unsigned int flags      // IN: Lookup flags & intent
 #else
-                     struct nameidata *nd   // IN: Lookup flags & intent
+                     struct nameidata *nd    // IN: Lookup flags & intent
 #endif
-		     )
+)
 {
    int error;
    LOG(6, (KERN_DEBUG "VMware hgfs: HgfsDentryRevalidate: calling "
@@ -89,15 +89,14 @@ HgfsDentryRevalidate(struct dentry *dentry,  // IN: Dentry to revalidate
 
    ASSERT(dentry);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 6)
-   if (flags & LOOKUP_RCU)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
+   if (flags & LOOKUP_RCU) {
       return -ECHILD;
-#else
-#  if  defined(LOOKUP_RCU) /* Introduced in 2.6.38 */
+   }
+#elif defined(LOOKUP_RCU) /* Introduced in 2.6.38 */
    if (nd && (nd->flags & LOOKUP_RCU)) {
       return -ECHILD;
    }
-#  endif
 #endif
 
    /* Just call HgfsRevaliate, which does the right thing. */
