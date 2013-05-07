@@ -32,7 +32,6 @@ case "${1}" in
 		log_daemon_msg "Loading open-vm-tools modules"
 		log_progress_msg "vmhgfs"; modprobe vmhgfs
 		log_progress_msg "vmmemctl"; modprobe vmw_balloon
-		log_progress_msg "vmsync"; modprobe vmsync
 		log_end_msg 0
 
 		log_daemon_msg "Starting open-vm daemon" "vmtoolsd"
