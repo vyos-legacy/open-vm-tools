@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta-11) kernel; urgency=low
+
+  * Update to 3.9.1 kernel
+
+ -- Stephen Hemminger <shemming@brocade.com>  Wed, 08 May 2013 10:01:04 -0700
+
 open-vm-tools (1:9.0.0+vyatta-10) kernel; urgency=low
 
   * init: dont modprobe vmsync
