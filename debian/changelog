@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta-13) kernel; urgency=low
+
+  * force rebuild
+
+ -- Stephen Hemminger <shemming@brocade.com>  Sun, 12 May 2013 10:49:33 -0700
+
 open-vm-tools (1:9.0.0+vyatta-12) kernel; urgency=low
 
   * update to 3.9.2
