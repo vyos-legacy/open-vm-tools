@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta-14) kernel; urgency=low
+
+  * force rebuild (kernel config change)
+
+ -- Stephen Hemminger <shemming@brocade.com>  Mon, 13 May 2013 21:41:35 -0700
+
 open-vm-tools (1:9.0.0+vyatta-13) kernel; urgency=low
 
   * force rebuild
