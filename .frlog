@@ -28,3 +28,4 @@ Mon Mar  4 17:12:28 PST 2013: [Force package version to match release version] a
 Mon Apr 22 21:45:57 PDT 2013: [force rebuild] at [debian/9.0.0+vyatta-7]
 Sun May 12 10:49:32 PDT 2013: [force rebuild] at [debian/9.0.0+vyatta-12]
 Mon May 13 21:41:34 PDT 2013: [force rebuild (kernel config change)] at [debian/9.0.0+vyatta-13]
+Fri May 17 10:39:04 PDT 2013: [force rebuild (kernel update)] at [debian/9.0.0+vyatta-14]
