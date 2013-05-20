@@ -69,6 +69,14 @@ void VMCI_Exit(void);
 #endif // _WIN32
 
 /* VMCI Datagram API. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
+/* Wrapper for name change when modules where accepted upstream 
+ * Replace when VmWare releases new open-vm-tools
+ */
+#define VMCIDatagram_Send	vmci_datagram_send
+#define VMCIDatagram_DestroyHnd	vmci_datagram_destroy_handle
+#define VMCIDatagram_CreateHnd	vmci_datagram_create_handle
+#endif
 
 int VMCIDatagram_CreateHnd(VMCIId resourceID, uint32 flags,
                            VMCIDatagramRecvCB recvCB, void *clientData,
