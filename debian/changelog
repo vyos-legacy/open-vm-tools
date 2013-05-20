@@ -1,3 +1,10 @@
+open-vm-tools (1:9.0.0+vyatta-16) kernel; urgency=low
+
+  * Update to 3.9.3 kernel
+  * vmhgfs: adjust for VMCI function name changes
+
+ -- Stephen Hemminger <stephen@networkplumber.org>  Mon, 20 May 2013 10:05:32 -0700
+
 open-vm-tools (1:9.0.0+vyatta-15) kernel; urgency=low
 
   * force rebuild (kernel update)
