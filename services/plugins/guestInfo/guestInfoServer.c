@@ -326,7 +326,7 @@ GuestInfoGather(gpointer data)
 
    if (perfmonEnabled) {
       if (!GuestInfo_PerfMon(&vmStats)) {
-         g_warning("Failed to get vmstats.\n");
+         g_debug("Failed to get vmstats.\n");
       } else {
          vmStats.version = 1;
          if (!GuestInfoUpdateVmdb(ctx, INFO_MEMORY, &vmStats)) {
