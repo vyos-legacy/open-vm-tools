@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta-17) kernel; urgency=low
+
+  * vmsvc: silence warning about get stats
+
+ -- Stephen Hemminger <stephen@networkplumber.org>  Thu, 23 May 2013 14:18:42 -0700
+
 open-vm-tools (1:9.0.0+vyatta-16) kernel; urgency=low
 
   * Update to 3.9.3 kernel
