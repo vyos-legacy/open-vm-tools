@@ -19,7 +19,7 @@ DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 DEB_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
 ifeq ($(DEB_ARCH),i386)
 DEB_KSUBARCH=none
-DEB_KFLAVOR=i586-vyatta-virt
+DEB_KFLAVOR=i586-vyatta
 else
 ifeq ($(DEB_ARCH),amd64)
 DEB_KSUBARCH=none
