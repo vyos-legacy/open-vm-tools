@@ -1,3 +1,14 @@
+open-vm-tools (1:9.0.0+vyatta-19) kernel; urgency=low
+
+  [ Sven-Thorsten Dietrich ]
+  * Add missing i(586): DEB_KFLAVOR=i586-vyatta-virt
+  * Apply changes from 9e9eadc4b6ccf7737679fa1ae89dabbb353dcb4c to i586
+
+  [ Stephen Hemminger ]
+  * update to 3.9.5
+
+ -- Stephen Hemminger <stephen@networkplumber.org>  Mon, 10 Jun 2013 11:39:28 -0700
+
 open-vm-tools (1:9.0.0+vyatta-18) kernel; urgency=low
 
   * update to 3.9.4
