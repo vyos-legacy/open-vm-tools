@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyatta+hydrogen1) kernel; urgency=low
+
+  * New branch
+
+ -- Daniil Baturin <daniil@baturin.org>  Sat, 16 Nov 2013 23:54:54 +0100
+
 open-vm-tools (1:9.0.0+vyatta+daisy3) kernel; urgency=low
 
   * Add missing files
