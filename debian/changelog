@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyos1+helium1) kernel; urgency=low
+
+  * New branch
+
+ -- Daniil Baturin <daniil@baturin.org>  Sat, 15 Feb 2014 15:32:34 +0100
+
 open-vm-tools (1:9.0.0+vyatta+hydrogen1) kernel; urgency=low
 
   * New branch
