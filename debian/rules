@@ -19,11 +19,11 @@ DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 DEB_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
 ifeq ($(DEB_ARCH),i386)
 DEB_KSUBARCH=none
-DEB_KFLAVOR=586-vyatta-virt
+DEB_KFLAVOR=586-vyos
 else
 ifeq ($(DEB_ARCH),amd64)
 DEB_KSUBARCH=none
-DEB_KFLAVOR=amd64-vyatta
+DEB_KFLAVOR=amd64-vyos
 endif
 endif
 kbdir=debian/build/build-$(DEB_ARCH)-$(DEB_KSUBARCH)-$(DEB_KFLAVOR)
@@ -95,6 +95,7 @@ else
 endif
 
 configure: configure.ac Makefile.am
+	automake --add-missing
 	#chmod +x debian/autogen.sh
 	#debian/autogen.sh
 
