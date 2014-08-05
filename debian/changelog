@@ -1,3 +1,9 @@
+open-vm-tools (1:9.0.0+vyos1+helium2) kernel; urgency=low
+
+  * Eliminate remaining Vyatta names.
+
+ -- Daniil Baturin <daniil@baturin.org>  Tue, 05 Aug 2014 16:17:49 +0000
+
 open-vm-tools (1:9.0.0+vyos1+helium1) kernel; urgency=low
 
   * New branch
